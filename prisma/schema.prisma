@@ -1,0 +1,377 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(USER)
+  plan          PlanType  @default(FREE)
+
+  phone          String?
+  nationality    String?
+  passportExpiry DateTime?
+  foodPreference FoodPreference @default(NON_VEG)
+  homeLocation   String?
+  currency       String         @default("INR")
+
+  totalTrips    Int   @default(0)
+  totalDistance Float @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  accounts          Account[]
+  sessions          Session[]
+  trips             Trip[]
+  savedDestinations SavedDestination[]
+  analytics         TripAnalytics[]
+  subscriptions     Subscription[]
+  memories          TravelMemory[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Trip {
+  id     String     @id @default(cuid())
+  userId String
+  title  String
+  status TripStatus @default(PLANNING)
+
+  origin      String
+  destination String
+  originLat   Float?
+  originLng   Float?
+  destLat     Float?
+  destLng     Float?
+
+  startDate DateTime
+  endDate   DateTime
+  duration  Int
+
+  travelers     Int            @default(1)
+  purpose       TripPurpose
+  budget        Float
+  currency      String         @default("INR")
+  foodPref      FoodPreference @default(NON_VEG)
+  hotelPref     HotelType      @default(STANDARD)
+  transportPref TransportType[]
+
+  itinerary       Json?
+  budgetBreakdown Json?
+  packingList     Json?
+  weatherInfo     Json?
+  safetyInfo      Json?
+
+  isShared   Boolean @default(false)
+  shareToken String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  days        TripDay[]
+  expenses    Expense[]
+  companions  TripCompanion[]
+  checkpoints Checkpoint[]
+  chats       ChatMessage[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("trips")
+}
+
+model TripDay {
+  id        String   @id @default(cuid())
+  tripId    String
+  dayNumber Int
+  date      DateTime
+  theme     String?
+  summary   String?
+
+  activities Activity[]
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@map("trip_days")
+}
+
+model Activity {
+  id          String       @id @default(cuid())
+  tripDayId   String
+  time        String
+  duration    Int
+  type        ActivityType
+  title       String
+  description String       @db.Text
+  location    String
+  lat         Float?
+  lng         Float?
+  cost        Float        @default(0)
+  notes       String?
+  bookingUrl  String?
+  isCompleted Boolean      @default(false)
+
+  tripDay TripDay @relation(fields: [tripDayId], references: [id], onDelete: Cascade)
+
+  @@map("activities")
+}
+
+model SavedDestination {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  country   String
+  lat       Float
+  lng       Float
+  image     String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("saved_destinations")
+}
+
+model TripCompanion {
+  id     String  @id @default(cuid())
+  tripId String
+  name   String
+  email  String?
+  role   String  @default("traveler")
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@map("trip_companions")
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  tripId      String
+  category    String
+  amount      Float
+  currency    String   @default("INR")
+  description String
+  paidBy      String?
+  date        DateTime @default(now())
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@map("expenses")
+}
+
+model Checkpoint {
+  id        String   @id @default(cuid())
+  tripId    String
+  lat       Float
+  lng       Float
+  timestamp DateTime @default(now())
+  note      String?
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@map("checkpoints")
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  tripId    String
+  role      MessageRole
+  content   String      @db.Text
+  metadata  Json?
+  createdAt DateTime    @default(now())
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@map("chat_messages")
+}
+
+model TravelMemory {
+  id          String   @id @default(cuid())
+  userId      String
+  destination String
+  visitedAt   DateTime
+  rating      Int?
+  notes       String?
+  preferences Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("travel_memories")
+}
+
+model TripAnalytics {
+  id           String   @id @default(cuid())
+  userId       String
+  month        Int
+  year         Int
+  tripsCount   Int      @default(0)
+  totalSpent   Float    @default(0)
+  topCategory  String?
+  destinations String[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("trip_analytics")
+}
+
+model Subscription {
+  id               String             @id @default(cuid())
+  userId           String
+  stripeCustomerId String?
+  stripePriceId    String?
+  stripeSubId      String?
+  status           SubscriptionStatus @default(INACTIVE)
+  plan             PlanType           @default(FREE)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean          @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum PlanType {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum TripStatus {
+  PLANNING
+  CONFIRMED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum TripPurpose {
+  ADVENTURE
+  DEVOTIONAL
+  HIKING
+  HONEYMOON
+  FAMILY
+  PHOTOGRAPHY
+  BUSINESS
+  FOOD_EXPLORATION
+  WELLNESS
+  CULTURAL
+  SOLO
+  BACKPACKING
+}
+
+enum FoodPreference {
+  VEG
+  JAIN
+  VEGAN
+  HALAL
+  NON_VEG
+}
+
+enum HotelType {
+  BUDGET
+  STANDARD
+  COMFORT
+  LUXURY
+  ULTRA_LUXURY
+  HOSTEL
+  CAMPING
+  HOMESTAY
+}
+
+enum TransportType {
+  FLIGHT
+  TRAIN
+  BUS
+  CAR_RENTAL
+  TAXI
+  METRO
+  FERRY
+  BICYCLE
+  WALKING
+}
+
+enum ActivityType {
+  TRANSPORT
+  ACCOMMODATION
+  SIGHTSEEING
+  RESTAURANT
+  ADVENTURE
+  SHOPPING
+  REST
+  CEREMONY
+  MEETING
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  CANCELLED
+  PAST_DUE
+}

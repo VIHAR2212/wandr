@@ -1,0 +1,165 @@
+'use client';
+import { useEffect, useRef } from 'react';
+import type { GeneratedTrip, TripFormData } from '@/types';
+
+interface Props {
+  trip: GeneratedTrip;
+  formData: TripFormData;
+  userLocation?: { lat: number; lng: number } | null;
+  showRoute?: boolean;
+}
+
+export function TripMap({ trip, userLocation, showRoute = false }: Props) {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<unknown>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !mapRef.current) return;
+    if (mapInstanceRef.current) return;
+
+    let map: unknown;
+
+    import('leaflet').then(L => {
+      // Default center (India)
+      let centerLat = 20.5937;
+      let centerLng = 78.9629;
+      let zoom = 5;
+
+      // Try to find a good center from trip data
+      const firstActivity = trip.days?.[0]?.activities?.find(a => a.lat && a.lng);
+      if (firstActivity?.lat && firstActivity?.lng) {
+        centerLat = firstActivity.lat;
+        centerLng = firstActivity.lng;
+        zoom = 12;
+      } else if (trip.hotels?.[0]?.lat && trip.hotels?.[0]?.lng) {
+        centerLat = trip.hotels[0].lat!;
+        centerLng = trip.hotels[0].lng!;
+        zoom = 12;
+      }
+
+      map = L.map(mapRef.current!, { zoomControl: true, scrollWheelZoom: true });
+      mapInstanceRef.current = map;
+
+      // Tile layer
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(map as ReturnType<typeof L.map>);
+
+      const m = map as ReturnType<typeof L.map>;
+      m.setView([centerLat, centerLng], zoom);
+
+      const bounds: [number, number][] = [];
+
+      const createIcon = (emoji: string, color: string) => L.divIcon({
+        html: `<div style="background:${color};width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:2px solid white;">
+          <span style="transform:rotate(45deg);font-size:14px;">${emoji}</span>
+        </div>`,
+        className: '',
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+        popupAnchor: [0, -34],
+      });
+
+      // Hotels
+      (trip.hotels ?? []).forEach(hotel => {
+        if (!hotel.lat || !hotel.lng) return;
+        bounds.push([hotel.lat, hotel.lng]);
+        L.marker([hotel.lat, hotel.lng], { icon: createIcon('🏨', '#a67040') })
+          .addTo(m)
+          .bindPopup(`<b>${hotel.name}</b><br/>${hotel.type}<br/>⭐ ${hotel.rating}`);
+      });
+
+      // Restaurants
+      (trip.restaurants ?? []).forEach(r => {
+        if (!r.lat || !r.lng) return;
+        bounds.push([r.lat, r.lng]);
+        L.marker([r.lat, r.lng], { icon: createIcon('🍽️', '#f5681a') })
+          .addTo(m)
+          .bindPopup(`<b>${r.name}</b><br/>${r.cuisine}<br/>💰 ${r.priceRange}`);
+      });
+
+      // Hidden gems
+      (trip.hiddenGems ?? []).forEach(gem => {
+        if (!gem.lat || !gem.lng) return;
+        bounds.push([gem.lat, gem.lng]);
+        L.marker([gem.lat, gem.lng], { icon: createIcon('✨', '#1a9951') })
+          .addTo(m)
+          .bindPopup(`<b>${gem.name}</b><br/>${gem.description}<br/>💡 ${gem.insiderTip}`);
+      });
+
+      // Activity locations
+      (trip.days ?? []).forEach(day => {
+        (day.activities ?? []).forEach(act => {
+          if (!act.lat || !act.lng) return;
+          bounds.push([act.lat, act.lng]);
+          const emoji = act.type === 'SIGHTSEEING' ? '📸' : act.type === 'TRANSPORT' ? '🚌' : '📍';
+          L.marker([act.lat, act.lng], { icon: createIcon(emoji, '#1e7fc4') })
+            .addTo(m)
+            .bindPopup(`<b>${act.title}</b><br/>⏰ ${act.time} · ${act.duration}m<br/>${act.description.slice(0, 100)}...`);
+        });
+      });
+
+      // User location
+      if (userLocation) {
+        L.marker([userLocation.lat, userLocation.lng], { icon: createIcon('📍', '#e63946') })
+          .addTo(m)
+          .bindPopup('Your current location')
+          .openPopup();
+        bounds.push([userLocation.lat, userLocation.lng]);
+      }
+
+      // Fit bounds
+      if (bounds.length > 1) {
+        m.fitBounds(bounds as [number, number][], { padding: [40, 40] });
+      }
+
+      // Route polyline
+      if (showRoute && bounds.length > 1) {
+        L.polyline(bounds, { color: '#a67040', weight: 3, opacity: 0.6, dashArray: '8 6' }).addTo(m);
+      }
+
+      // Legend
+      const legend = L.control({ position: 'bottomright' } as L.ControlOptions);
+      legend.onAdd = () => {
+        const div = L.DomUtil.create('div', '');
+        div.style.cssText = 'background:white;padding:8px 12px;border-radius:8px;font-size:11px;box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+        div.innerHTML = [
+          '🏨 Hotels', '🍽️ Restaurants', '✨ Hidden Gems',
+          '📸 Sightseeing', '🚌 Transport'
+        ].map(s => `<div style="margin:2px 0">${s}</div>`).join('');
+        return div;
+      };
+      legend.addTo(m);
+    });
+
+    return () => {
+      if (mapInstanceRef.current) {
+        (mapInstanceRef.current as { remove: () => void }).remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [trip, userLocation, showRoute]);
+
+  return (
+    <div className="space-y-4">
+      <div className="glass-card overflow-hidden rounded-3xl">
+        <div ref={mapRef} className="w-full" style={{ height: '520px' }} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { emoji: '🏨', label: 'Hotels', count: trip.hotels?.length ?? 0 },
+          { emoji: '🍽️', label: 'Restaurants', count: trip.restaurants?.length ?? 0 },
+          { emoji: '✨', label: 'Hidden Gems', count: trip.hiddenGems?.length ?? 0 },
+          { emoji: '📍', label: 'Activities', count: trip.days?.reduce((a, d) => a + (d.activities?.length ?? 0), 0) ?? 0 },
+        ].map(({ emoji, label, count }) => (
+          <div key={label} className="glass-panel rounded-2xl px-4 py-3 text-center">
+            <div className="text-2xl mb-1">{emoji}</div>
+            <div className="text-lg font-bold text-foreground">{count}</div>
+            <div className="text-xs text-muted-foreground">{label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
