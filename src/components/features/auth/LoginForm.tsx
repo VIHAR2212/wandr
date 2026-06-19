@@ -235,3 +235,5 @@ export default function LoginForm() {
     </div>
   );
 }
+
+export { LoginForm as default };
