@@ -1,40 +1,59 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { callAI } from '@/lib/ai';
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { generateAIJson } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
   try {
-    const { destination, duration, purpose, season, travelers } = await req.json();
-    if (!destination || !duration) {
-      return NextResponse.json({ error: 'destination and duration are required' }, { status: 400 });
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const result = await callAI(
-      'You are a travel packing expert. Return ONLY valid JSON with no markdown.',
-      [{
-        role: 'user',
-        content: `Generate a packing list for a ${duration}-day ${purpose ?? 'general'} trip to ${destination} in ${season ?? 'any'} season for ${travelers ?? 1} travelers.
+    const { destination, days, purpose, season } = await req.json();
 
-Return ONLY valid JSON:
+    if (!destination || !days) {
+      return NextResponse.json(
+        { error: "Destination and days are required" },
+        { status: 400 }
+      );
+    }
+
+    const prompt = `Generate a packing list for a ${days}-day trip to ${destination}.
+Purpose: ${purpose || "leisure"}
+Season/Weather: ${season || "not specified"}
+
+Return ONLY this JSON:
 {
-  "packingList": [
-    {
-      "category": "Category Name",
-      "items": [{ "name": "Item name", "essential": true, "quantity": "2 pairs" }]
-    }
+  "essentials": [
+    { "item": "Passport", "reason": "Required for international travel", "checked": false }
+  ],
+  "clothing": [
+    { "item": "T-shirt", "reason": "Comfortable for daytime", "quantity": 3, "checked": false }
+  ],
+  "toiletries": [
+    { "item": "Toothbrush", "reason": "Personal hygiene", "checked": false }
+  ],
+  "electronics": [
+    { "item": "Phone charger", "reason": "Keep devices powered", "checked": false }
+  ],
+  "misc": [
+    { "item": "First aid kit", "reason": "Basic health supplies", "checked": false }
+  ],
+  "destinationSpecific": [
+    { "item": "Adapter plug", "reason": "Outlet type may differ", "checked": false }
   ]
 }
-Categories: Clothing, Footwear, Toiletries, Documents & Money, Electronics, Medical Kit, Snacks & Food, Activity Gear, Miscellaneous.`,
-      }],
-      2048
-    );
 
-    const match = result.text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON in response');
-    const parsed = JSON.parse(match[0]);
-    return NextResponse.json({ ...parsed, aiProvider: result.provider });
-  } catch (error: unknown) {
-    console.error('[Packing List]', error);
-    const message = error instanceof Error ? error.message : 'Failed to generate packing list';
-    return NextResponse.json({ error: message }, { status: 500 });
+Be thorough but practical. Include 3-6 items per category.`;
+
+    const packingList = await generateAIJson(prompt);
+
+    return NextResponse.json({ success: true, packingList });
+  } catch (error: any) {
+    console.error("Packing list error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to generate packing list" },
+      { status: 500 }
+    );
   }
 }
