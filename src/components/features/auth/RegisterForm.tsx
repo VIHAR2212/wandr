@@ -200,3 +200,5 @@ export default function RegisterForm() {
     </div>
   );
 }
+
+export { RegisterForm as default };
