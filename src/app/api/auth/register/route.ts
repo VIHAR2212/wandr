@@ -55,8 +55,27 @@ export async function POST(req: NextRequest) {
     );
   } catch (error: any) {
     console.error("Registration error:", error);
+
+    // Detect database connection errors
+    const msg = error?.message || "";
+    if (
+      msg.includes("connect") ||
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("timeout") ||
+      msg.includes("P1001") ||
+      msg.includes("P1008")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Database is currently unreachable. Please try again in a minute. If this persists, the server may be starting up.",
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
-      { error: error.message || "Registration failed" },
+      { error: msg || "Registration failed" },
       { status: 500 }
     );
   }
