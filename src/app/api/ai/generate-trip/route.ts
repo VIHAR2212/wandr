@@ -2,6 +2,49 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { generateAIJson } from "@/lib/ai";
+import { TripPurpose, FoodPreference } from "@prisma/client";
+
+// Map frontend string to database enum
+function mapPurpose(purpose?: string): TripPurpose {
+  const map: Record<string, TripPurpose> = {
+    adventure: "ADVENTURE",
+    devotional: "DEVOTIONAL",
+    hiking: "HIKING",
+    honeymoon: "HONEYMOON",
+    family: "FAMILY",
+    photography: "PHOTOGRAPHY",
+    business: "BUSINESS",
+    food: "FOOD_EXPLORATION",
+    food_exploration: "FOOD_EXPLORATION",
+    wellness: "WELLNESS",
+    cultural: "CULTURAL",
+    solo: "SOLO",
+    backpacking: "BACKPACKING",
+    leisure: "BACKPACKING",
+    relaxing: "WELLNESS",
+    holiday: "FAMILY",
+    vacation: "FAMILY",
+    trip: "BACKPACKING",
+  };
+  return map[(purpose || "leisure").toLowerCase().trim()] || "BACKPACKING";
+}
+
+// Map diet string to database enum
+function mapFoodPref(diet?: string): FoodPreference {
+  const map: Record<string, FoodPreference> = {
+    veg: "VEG",
+    vegetarian: "VEG",
+    jain: "JAIN",
+    vegan: "VEGAN",
+    halal: "HALAL",
+    non_veg: "NON_VEG",
+    "non-veg": "NON_VEG",
+    nonveg: "NON_VEG",
+    non: "NON_VEG",
+    meat: "NON_VEG",
+  };
+  return map[(diet || "").toLowerCase().trim()] || "NON_VEG";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,8 +75,7 @@ export async function POST(req: NextRequest) {
     const start = new Date(startDate);
     const end = new Date(endDate);
     const days =
-      Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) +
-      1;
+      Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     if (days < 1 || days > 30) {
       return NextResponse.json(
@@ -68,7 +110,7 @@ Return ONLY this JSON structure (no other text):
     {
       "day": 1,
       "date": "${startDate}",
-      "theme": "Morning phrase here",
+      "theme": "Theme of the day",
       "activities": [
         {
           "time": "09:00",
@@ -149,46 +191,65 @@ IMPORTANT RULES:
 5. All restaurant suggestions must respect the diet preference: ${diet || "no restriction"}
 6. Include transport costs between locations`;
 
-    // ===== FIXED: Destructure { data, provider } from generateAIJson =====
+    // ===== Call AI with fallback: z.ai → Groq → Gemini =====
     console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
     const { data: tripData, provider } = await generateAIJson(prompt, systemPrompt);
     console.log(`Trip generated successfully via ${provider}!`);
 
-    // Save trip to database — REMOVED 'diet' field (not in Prisma schema)
+    // ===== Save to database — fields match Prisma schema exactly =====
     const trip = await prisma.trip.create({
       data: {
         userId: session.user.id,
+        title: `Trip to ${destination}`,
+        origin: "Not specified",
         destination: tripData.destination || destination,
         startDate: start,
         endDate: end,
-        budget: Number(budget),
+        duration: days,
         travelers: Number(travelers) || 1,
-        // diet removed — not in database schema
-        purpose: purpose || "leisure",
-        itinerary: tripData.itinerary || [],
-        hotels: tripData.hotels || [],
-        restaurants: tripData.restaurants || [],
+        purpose: mapPurpose(purpose),
+        budget: Number(budget),
+        foodPref: mapFoodPref(diet),
+
+        // Hotels, restaurants, hiddenGems bundled inside itinerary JSON
+        // (these columns don't exist in DB)
+        itinerary: {
+          days: tripData.itinerary || [],
+          hotels: tripData.hotels || [],
+          restaurants: tripData.restaurants || [],
+          hiddenGems: tripData.hiddenGems || [],
+        },
+
+        // These exist as JSON columns in DB
         budgetBreakdown: tripData.budgetBreakdown || {},
-        hiddenGems: tripData.hiddenGems || [],
-        safetyInfo: tripData.safetyInfo || {},
-        weather: tripData.weather || {},
         packingList: tripData.packingList || [],
+        weatherInfo: tripData.weather || {},  // Note: "weatherInfo" not "weather"
+        safetyInfo: tripData.safetyInfo || {},
       },
     });
 
+    // ===== Return full data to frontend =====
+    // Frontend expects top-level hotels, restaurants, etc.
+    // so we extract them from the bundled itinerary
     return NextResponse.json({
       success: true,
       tripId: trip.id,
-      trip,
+      trip: {
+        ...trip,
+        // Override itinerary to just be the days array
+        itinerary: tripData.itinerary || [],
+        // Add these as top-level for frontend
+        hotels: tripData.hotels || [],
+        restaurants: tripData.restaurants || [],
+        hiddenGems: tripData.hiddenGems || [],
+        weather: tripData.weather || {},
+      },
       provider,
     });
   } catch (error: any) {
     console.error("Trip generation error:", error);
     return NextResponse.json(
-      {
-        error:
-          error.message || "Failed to generate trip. Please try again.",
-      },
+      { error: error.message || "Failed to generate trip. Please try again." },
       { status: 500 }
     );
   }
