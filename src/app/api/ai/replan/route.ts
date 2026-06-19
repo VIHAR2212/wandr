@@ -34,7 +34,7 @@ Trip: ${trip.destination}
 Dates: ${trip.startDate} to ${trip.endDate}
 Budget: ${trip.budget}
 Travelers: ${trip.travelers}
-Diet: ${trip.diet}
+Diet: ${trip.foodPref}
 
 Current itinerary:
  ${JSON.stringify(currentItinerary || trip.itinerary, null, 2)}
@@ -67,7 +67,8 @@ Return ONLY this JSON with the UPDATED full itinerary:
 
 Keep the same structure. Only modify what's necessary for the replan reason. Stay within the original budget of ${trip.budget}.`;
 
-    const result = await generateAIJson(prompt);
+    // FIXED: destructure { data, provider } from generateAIJson
+    const { data: result, provider } = await generateAIJson(prompt);
 
     // Update trip in database
     await prisma.trip.update({
@@ -82,6 +83,7 @@ Keep the same structure. Only modify what's necessary for the replan reason. Sta
       itinerary: result.itinerary,
       changesMade: result.changesMade,
       budgetImpact: result.budgetImpact,
+      provider,
     });
   } catch (error: any) {
     console.error("Replan error:", error);
