@@ -1,229 +1,189 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { callAI } from '@/lib/ai';
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { generateAIJson } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.json();
-    const {
-      origin, destination, startDate, endDate, travelers,
-      budget, currency, purpose, foodPreference, hotelPreference,
-      transportPreferences, specialRequests, includeHiddenGems, flexibleBudget,
-    } = formData;
-
-    if (!origin || !destination || !startDate || !endDate || !budget) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const startD = new Date(startDate);
-    const endD = new Date(endDate);
-    const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
+    const body = await req.json();
+    const {
+      destination,
+      startDate,
+      endDate,
+      budget,
+      travelers,
+      diet,
+      purpose,
+      interests,
+    } = body;
 
-    const CURRENCY_SYMBOL: Record<string, string> = {
-      INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', JPY: '¥', SGD: 'S$',
-    };
-    const sym = CURRENCY_SYMBOL[currency] ?? currency;
+    if (!destination || !startDate || !endDate || !budget) {
+      return NextResponse.json(
+        { error: "Destination, dates, and budget are required" },
+        { status: 400 }
+      );
+    }
 
-    const PURPOSE_LABEL: Record<string, string> = {
-      ADVENTURE: 'adventure and thrill-seeking',
-      DEVOTIONAL: 'religious/devotional visits and spiritual experiences',
-      HIKING: 'trekking and nature hiking',
-      HONEYMOON: 'romantic honeymoon experiences',
-      FAMILY: 'family-friendly activities suitable for all ages',
-      PHOTOGRAPHY: 'photography — golden hours, landscapes, architecture',
-      BUSINESS: 'business travel with efficient scheduling',
-      FOOD_EXPLORATION: 'food exploration and culinary discovery',
-      WELLNESS: 'wellness, yoga, meditation, and relaxation',
-      CULTURAL: 'cultural immersion, museums, local heritage',
-      SOLO: 'solo travel with safety and social opportunities',
-      BACKPACKING: 'budget backpacking',
-    };
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const days =
+      Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) +
+      1;
 
-    const FOOD_LABEL: Record<string, string> = {
-      VEG: 'strictly vegetarian (no meat, fish, or eggs)',
-      JAIN: 'Jain diet (no root vegetables like onion, garlic, potato)',
-      VEGAN: 'fully vegan (no animal products)',
-      HALAL: 'halal-certified food only',
-      NON_VEG: 'any cuisine including non-vegetarian',
-    };
+    if (days < 1 || days > 30) {
+      return NextResponse.json(
+        { error: "Trip must be between 1 and 30 days" },
+        { status: 400 }
+      );
+    }
 
-    const systemPrompt = `You are Wandr AI — the world's most advanced AI travel agent. You plan complete, accurate, budget-perfect trips.
+    const systemPrompt = `You are an expert travel planner AI. You create detailed, realistic, budget-accurate trip plans.
+You MUST respond with valid JSON only. No markdown, no explanation, no code blocks — just raw JSON.
+All costs should be in the currency implied by the destination or USD if unclear.`;
 
-CRITICAL RULES:
-1. BUDGET IS A STRICT HARD CONSTRAINT. Total trip cost MUST NOT exceed ${sym}${budget}. Every cost must be realistic.
-2. All food must be ${FOOD_LABEL[foodPreference] ?? 'any cuisine'}.
-3. Trip style: ${PURPOSE_LABEL[purpose] ?? purpose}.
-4. Hotel category: ${hotelPreference}.
-5. Preferred transport: ${(transportPreferences ?? []).join(', ')}.
-6. Plan for ${travelers} travelers.
-7. Return ONLY valid JSON. No markdown. No explanation. Pure JSON object only.`;
+    const interestStr = interests?.length
+      ? interests.join(", ")
+      : "general sightseeing, local culture, food";
 
-    const userPrompt = `Plan a complete ${duration}-day trip from ${origin} to ${destination}.
+    const prompt = `Create a detailed ${days}-day trip plan for ${destination}.
 
-Trip details:
-- Dates: ${startDate} to ${endDate} (${duration} days)
-- Travelers: ${travelers}
-- Hard budget limit: ${sym}${budget} ${currency}
-- Purpose: ${PURPOSE_LABEL[purpose] ?? purpose}
-- Food: ${FOOD_LABEL[foodPreference] ?? foodPreference}
-- Hotel: ${hotelPreference}
-- Transport: ${(transportPreferences ?? []).join(', ')}
-- Hidden gems: ${includeHiddenGems ? 'yes' : 'no'}
-- Budget flexibility: ${flexibleBudget ? 'up to 10% extra if significantly better' : 'strict'}
-${specialRequests ? `- Special requests: ${specialRequests}` : ''}
+Trip Details:
+- Start Date: ${startDate}
+- End Date: ${endDate}
+- Total Budget: ${budget} (for ${travelers || 1} traveler${Number(travelers) > 1 ? "s" : ""})
+- Diet Preference: ${diet || "No preference"}
+- Trip Purpose: ${purpose || "Leisure"}
+- Interests: ${interestStr}
 
-Return this exact JSON structure with real data:
+Return ONLY this JSON structure (no other text):
 {
-  "title": "Creative trip title",
-  "summary": "2-3 compelling sentences",
-  "totalCost": number,
-  "days": [
+  "destination": "${destination}",
+  "totalDays": ${days},
+  "itinerary": [
     {
-      "dayNumber": 1,
+      "day": 1,
       "date": "${startDate}",
-      "theme": "Day theme",
-      "summary": "What makes today special",
-      "totalCost": number,
+      "theme": "Morning phrase here",
       "activities": [
         {
           "time": "09:00",
-          "duration": 90,
-          "type": "SIGHTSEEING",
           "title": "Activity name",
-          "description": "Detailed practical description",
-          "location": "Full area or address",
-          "lat": null,
-          "lng": null,
-          "cost": number,
-          "notes": "Insider tip",
-          "bookingUrl": null,
-          "tips": ["tip1", "tip2"]
+          "description": "Detailed description of what to do",
+          "location": "Exact place name",
+          "cost": 0,
+          "type": "attraction",
+          "tips": "Optional tip"
         }
       ]
     }
   ],
-  "budget": {
-    "total": ${budget},
-    "actualCost": number,
-    "transport": number,
-    "accommodation": number,
-    "food": number,
-    "activities": number,
-    "miscellaneous": number,
-    "emergencyFund": number,
-    "perDay": number,
-    "perPerson": number,
-    "breakdown": [
-      { "category": "string", "amount": number, "percentage": number, "details": "string" }
-    ]
-  },
   "hotels": [
     {
-      "name": "string", "type": "${hotelPreference}", "location": "string",
-      "lat": null, "lng": null, "pricePerNight": number, "totalCost": number,
-      "rating": 4.2, "amenities": ["WiFi", "AC"], "bookingUrl": null,
-      "phone": null, "pros": ["pro1"], "cons": ["con1"]
+      "name": "Hotel Name",
+      "area": "Neighborhood",
+      "pricePerNight": 0,
+      "rating": 4.5,
+      "description": "Why this hotel is good",
+      "bookingTip": "Tip for getting best rate"
     }
   ],
   "restaurants": [
     {
-      "name": "string", "cuisine": "string", "location": "string",
-      "lat": null, "lng": null, "priceRange": "${sym}200-500 per person",
-      "rating": 4.5, "specialties": ["dish1"], "openingHours": "9 AM - 10 PM",
-      "phone": null, "dietaryOptions": ["${foodPreference}"], "mustTry": ["dish1"]
+      "name": "Restaurant Name",
+      "cuisine": "Type of food",
+      "diet": "${diet || "all"}",
+      "priceRange": "$$",
+      "rating": 4.5,
+      "mustTry": "Best dish to order",
+      "location": "Area/address"
     }
   ],
+  "budgetBreakdown": {
+    "accommodation": 0,
+    "food": 0,
+    "transport": 0,
+    "activities": 0,
+    "misc": 0,
+    "total": 0
+  },
   "hiddenGems": [
     {
-      "name": "string", "type": "string", "description": "Why special",
-      "location": "string", "lat": null, "lng": null, "bestTime": "Early morning",
-      "cost": number, "crowdLevel": "LOW", "insiderTip": "Secret tip"
+      "name": "Place name",
+      "description": "What makes it special",
+      "whySpecial": "Why tourists miss it",
+      "howToReach": "Directions"
     }
   ],
-  "safety": {
-    "overallScore": 7, "crimeLevel": "LOW",
-    "scamAlerts": ["scam1"],
-    "emergencyContacts": [
-      { "name": "Police", "number": "100", "type": "POLICE" },
-      { "name": "Ambulance", "number": "108", "type": "AMBULANCE" }
-    ],
-    "hospitals": [{ "name": "Hospital", "address": "Area", "phone": "number", "distance": "2 km" }],
-    "policeStations": [{ "name": "Police station", "address": "Area", "phone": "100", "distance": "1 km" }],
-    "safeAreas": ["area1"], "avoidAreas": ["area2"],
-    "travelAdvisory": null, "vaccinations": ["vaccine1"]
+  "safetyInfo": {
+    "overallScore": 8,
+    "tips": ["Tip 1", "Tip 2"],
+    "emergencyNumber": "911",
+    "scamAlerts": ["Common scam to watch for"],
+    "safeAreas": ["Area 1"],
+    "avoidAreas": ["Area to avoid"]
+  },
+  "weather": {
+    "expected": "Expected weather description",
+    "avgTemp": "25°C",
+    "tips": ["Weather tip 1"]
   },
   "packingList": [
     {
-      "category": "Clothing",
-      "items": [{ "name": "item", "essential": true, "quantity": "3 pairs" }]
+      "item": "Item name",
+      "reason": "Why you need it",
+      "essential": true
     }
-  ],
-  "seasonalTips": ["tip1", "tip2"],
-  "localPhrases": [
-    { "phrase": "Thank you", "translation": "local word", "pronunciation": "pronunciation" }
-  ],
-  "transportGuide": {
-    "primaryRoute": [
-      {
-        "from": "${origin}", "to": "${destination}",
-        "mode": "${(transportPreferences ?? ['FLIGHT'])[0]}",
-        "duration": "2h 30m", "cost": number,
-        "details": "Booking info", "bookingInfo": "How to book"
-      }
-    ],
-    "totalTransportCost": number,
-    "tips": ["transport tip"]
-  },
-  "weatherForecast": [
-    {
-      "date": "${startDate}", "condition": "Sunny",
-      "temperature": { "min": 22, "max": 31, "unit": "C" },
-      "humidity": 65, "rainfall": 0, "icon": "sunny", "alert": null
-    }
-  ],
-  "crowdPrediction": {
-    "peak": ["Saturday", "Sunday"],
-    "bestTimeToVisit": ["Weekday mornings"],
-    "avoidDates": []
-  }
-}`;
+  ]
+}
 
-    const result = await callAI(systemPrompt, [{ role: 'user', content: userPrompt }], 8192);
+IMPORTANT RULES:
+1. Every day must have 4-6 activities covering morning, afternoon, and evening
+2. Total budget in budgetBreakdown must NOT exceed ${budget}
+3. Include at least 2 hotels, 3 restaurants, 2 hidden gems
+4. Activities should have realistic costs based on ${destination}
+5. All restaurant suggestions must respect the diet preference: ${diet || "no restriction"}
+6. Include transport costs between locations`;
 
-    let trip: Record<string, unknown>;
-    try {
-      const text = result.text.trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
-      const match = text.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('No JSON object found in AI response');
-      trip = JSON.parse(match[0]);
-    } catch {
-      throw new Error('AI returned invalid JSON. Please try again.');
-    }
+    console.log("Calling z.ai for trip generation...");
+    const tripData = await generateAIJson(prompt, systemPrompt);
+    console.log("z.ai response received, saving to database...");
 
-    const totalCost = Number(trip.totalCost ?? 0);
-    const maxAllowed = flexibleBudget ? budget * 1.10 : budget;
-    if (totalCost > maxAllowed) {
-      trip.totalCost = budget;
-      if (trip.budget && typeof trip.budget === 'object') {
-        (trip.budget as Record<string, unknown>).actualCost = budget;
-      }
-    }
-
-    const tripId = `trip_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const tripData = {
-      tripId, formData, generatedTrip: trip,
-      createdAt: new Date().toISOString(),
-      aiProvider: result.provider,
-    };
-
-    const encoded = encodeURIComponent(JSON.stringify(tripData));
-    const cookie = `trip_${tripId}=${encoded}; Path=/; Max-Age=7200; SameSite=Lax`;
-
-    return NextResponse.json({ success: true, tripId, aiProvider: result.provider }, {
-      headers: { 'Set-Cookie': cookie },
+    // Save trip to database
+    const trip = await prisma.trip.create({
+      data: {
+        userId: session.user.id,
+        destination: tripData.destination || destination,
+        startDate: start,
+        endDate: end,
+        budget: Number(budget),
+        travelers: Number(travelers) || 1,
+        diet: diet || "no-preference",
+        purpose: purpose || "leisure",
+        itinerary: tripData.itinerary || [],
+        hotels: tripData.hotels || [],
+        restaurants: tripData.restaurants || [],
+        budgetBreakdown: tripData.budgetBreakdown || {},
+        hiddenGems: tripData.hiddenGems || [],
+        safetyInfo: tripData.safetyInfo || {},
+        weather: tripData.weather || {},
+        packingList: tripData.packingList || [],
+      },
     });
-  } catch (error: unknown) {
-    console.error('[Generate Trip]', error);
-    const message = error instanceof Error ? error.message : 'Failed to generate trip';
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    return NextResponse.json({ success: true, tripId: trip.id, trip });
+  } catch (error: any) {
+    console.error("Trip generation error:", error);
+    return NextResponse.json(
+      {
+        error:
+          error.message || "Failed to generate trip. Please try again.",
+      },
+      { status: 500 }
+    );
   }
 }
