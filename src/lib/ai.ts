@@ -1,174 +1,100 @@
-// src/lib/ai.ts
-// Multi-AI provider: Anthropic → Groq → Gemini fallback chain
+// ============================================
+// z.ai Integration — Replace Claude completely
+// ============================================
+// Put your z.ai API key in .env.local as ANTHROPIC_API_KEY
+// Or set ZAI_API_KEY separately
+// Change ZAI_BASE_URL and ZAI_MODEL if needed for your z.ai plan
 
-interface AIMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+const ZAI_BASE_URL =
+  process.env.ZAI_BASE_URL || "https://api.z-ai.ai/v1/chat/completions";
 
-interface AIResponse {
-  text: string;
-  provider: string;
-  model: string;
-}
+const ZAI_API_KEY = process.env.ZAI_API_KEY || process.env.ANTHROPIC_API_KEY || "";
 
-// ── Anthropic ──────────────────────────────────────────────
-async function callAnthropic(
-  system: string,
-  messages: AIMessage[],
-  maxTokens = 8192
-): Promise<AIResponse> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY not set');
+const ZAI_MODEL = process.env.ZAI_MODEL || "default";
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
+export async function generateAIResponse(
+  prompt: string,
+  systemPrompt?: string
+): Promise<string> {
+  if (!ZAI_API_KEY) {
+    throw new Error(
+      "No API key found. Set ZAI_API_KEY or ANTHROPIC_API_KEY in .env.local"
+    );
+  }
+
+  const messages: Array<{ role: string; content: string }> = [];
+
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt });
+  }
+
+  messages.push({ role: "user", content: prompt });
+
+  const response = await fetch(ZAI_BASE_URL, {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ZAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: maxTokens,
-      system,
+      model: ZAI_MODEL,
       messages,
+      max_tokens: 8192,
+      temperature: 0.7,
     }),
   });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Anthropic error ${res.status}: ${JSON.stringify(err)}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("z.ai API error:", response.status, errorText);
+    throw new Error(
+      `z.ai API error (${response.status}): ${errorText.slice(0, 200)}`
+    );
   }
 
-  const data = await res.json();
-  const text = data.content?.[0]?.text ?? '';
-  if (!text) throw new Error('Anthropic returned empty response');
-  return { text, provider: 'anthropic', model: 'claude-sonnet-4-6' };
-}
+  const data = await response.json();
 
-// ── Groq ───────────────────────────────────────────────────
-async function callGroq(
-  system: string,
-  messages: AIMessage[],
-  maxTokens = 8192
-): Promise<AIResponse> {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) throw new Error('GROQ_API_KEY not set');
-
-  const groqMessages = [
-    { role: 'system', content: system },
-    ...messages,
-  ];
-
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: Math.min(maxTokens, 8000),
-      messages: groqMessages,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Groq error ${res.status}: ${JSON.stringify(err)}`);
+  // Handle both OpenAI-style and direct content responses
+  if (data.choices && data.choices[0]) {
+    return data.choices[0].message.content;
+  }
+  if (data.content) {
+    return data.content;
+  }
+  if (typeof data === "string") {
+    return data;
   }
 
-  const data = await res.json();
-  const text = data.choices?.[0]?.message?.content ?? '';
-  if (!text) throw new Error('Groq returned empty response');
-  return { text, provider: 'groq', model: 'llama-3.3-70b-versatile' };
+  throw new Error("Unexpected response format from z.ai");
 }
 
-// ── Gemini ─────────────────────────────────────────────────
-async function callGemini(
-  system: string,
-  messages: AIMessage[],
-  maxTokens = 8192
-): Promise<AIResponse> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error('GEMINI_API_KEY not set');
+/**
+ * Call z.ai and parse JSON from the response.
+ * Handles cases where the AI wraps JSON in markdown code blocks.
+ */
+export async function generateAIJson<T = any>(
+  prompt: string,
+  systemPrompt?: string
+): Promise<T> {
+  const raw = await generateAIResponse(prompt, systemPrompt);
 
-  // Gemini uses a different format
-  const contents = messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
+  let cleaned = raw.trim();
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents,
-        generationConfig: { maxOutputTokens: maxTokens },
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Gemini error ${res.status}: ${JSON.stringify(err)}`);
+  // Remove markdown code block wrapping
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.slice(7);
+  } else if (cleaned.startsWith("```")) {
+    cleaned = cleaned.slice(3);
   }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.slice(0, -3);
+  }
+  cleaned = cleaned.trim();
 
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-  if (!text) throw new Error('Gemini returned empty response');
-  return { text, provider: 'gemini', model: 'gemini-1.5-flash' };
-}
-
-// ── Main: Fallback chain ────────────────────────────────────
-// Order: Anthropic → Groq → Gemini
-export async function callAI(
-  system: string,
-  messages: AIMessage[],
-  maxTokens = 8192
-): Promise<AIResponse> {
-  const errors: string[] = [];
-
-  // Try Anthropic first
   try {
-    return await callAnthropic(system, messages, maxTokens);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errors.push(`Anthropic: ${msg}`);
-    console.warn('[AI Fallback] Anthropic failed:', msg);
+    return JSON.parse(cleaned) as T;
+  } catch (parseError) {
+    console.error("Failed to parse AI JSON response:", cleaned.slice(0, 500));
+    throw new Error("AI returned invalid JSON. Please try again.");
   }
-
-  // Try Groq second
-  try {
-    return await callGroq(system, messages, maxTokens);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errors.push(`Groq: ${msg}`);
-    console.warn('[AI Fallback] Groq failed:', msg);
-  }
-
-  // Try Gemini third
-  try {
-    return await callGemini(system, messages, maxTokens);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errors.push(`Gemini: ${msg}`);
-    console.warn('[AI Fallback] Gemini failed:', msg);
-  }
-
-  throw new Error(
-    `All AI providers failed. Errors: ${errors.join(' | ')}`
-  );
-}
-
-// Chat-optimised (smaller token limit, faster)
-export async function callAIChat(
-  system: string,
-  messages: AIMessage[]
-): Promise<AIResponse> {
-  return callAI(system, messages, 1024);
 }
