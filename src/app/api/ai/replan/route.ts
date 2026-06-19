@@ -1,52 +1,93 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { callAI } from '@/lib/ai';
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { generateAIJson } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
   try {
-    const { tripContext, disruption, currentDay } = await req.json();
-    if (!tripContext || !disruption) {
-      return NextResponse.json({ error: 'tripContext and disruption are required' }, { status: 400 });
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const result = await callAI(
-      'You are Wandr AI, an expert travel replanning assistant. Return ONLY valid JSON with no markdown.',
-      [{
-        role: 'user',
-        content: `Emergency trip replan needed.
-TRIP: ${tripContext.origin} to ${tripContext.destination}
-BUDGET REMAINING: ${tripContext.currency} ${tripContext.budgetRemaining}
-CURRENT DAY: Day ${currentDay} of ${tripContext.duration}
-TRAVELERS: ${tripContext.travelers}
-DISRUPTION: ${disruption}
+    const { tripId, reason, currentItinerary } = await req.json();
 
-Return ONLY valid JSON:
+    if (!tripId || !reason) {
+      return NextResponse.json(
+        { error: "Trip ID and reason are required" },
+        { status: 400 }
+      );
+    }
+
+    // Verify trip belongs to user
+    const trip = await prisma.trip.findFirst({
+      where: { id: tripId, userId: session.user.id },
+    });
+
+    if (!trip) {
+      return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    }
+
+    const prompt = `You are a travel planner AI. The user wants to replan part of their trip.
+
+Trip: ${trip.destination}
+Dates: ${trip.startDate} to ${trip.endDate}
+Budget: ${trip.budget}
+Travelers: ${trip.travelers}
+Diet: ${trip.diet}
+
+Current itinerary:
+ ${JSON.stringify(currentItinerary || trip.itinerary, null, 2)}
+
+Replan reason: "${reason}"
+
+Return ONLY this JSON with the UPDATED full itinerary:
 {
-  "summary": "What changed and why",
-  "revisedDays": [
+  "itinerary": [
     {
-      "dayNumber": number, "date": "YYYY-MM-DD", "theme": "string",
+      "day": 1,
+      "date": "YYYY-MM-DD",
+      "theme": "Theme of the day",
       "activities": [
-        { "time": "HH:MM", "duration": number, "type": "TRANSPORT",
-          "title": "string", "description": "string", "location": "string", "cost": number, "notes": "string" }
-      ],
-      "totalCost": number
+        {
+          "time": "09:00",
+          "title": "Activity",
+          "description": "Details",
+          "location": "Place",
+          "cost": 0,
+          "type": "attraction",
+          "tips": "Optional"
+        }
+      ]
     }
   ],
-  "newTotalCost": number,
-  "alerts": ["alert1"],
-  "alternatives": ["option1"]
-}`,
-      }],
-      2048
-    );
+  "changesMade": "Brief description of what changed and why",
+  "budgetImpact": "How the budget is affected"
+}
 
-    const match = result.text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON in response');
-    const parsed = JSON.parse(match[0]);
-    return NextResponse.json({ ...parsed, aiProvider: result.provider });
-  } catch (error: unknown) {
-    console.error('[Replan]', error);
-    const message = error instanceof Error ? error.message : 'Replan failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+Keep the same structure. Only modify what's necessary for the replan reason. Stay within the original budget of ${trip.budget}.`;
+
+    const result = await generateAIJson(prompt);
+
+    // Update trip in database
+    await prisma.trip.update({
+      where: { id: tripId },
+      data: {
+        itinerary: result.itinerary || trip.itinerary,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      itinerary: result.itinerary,
+      changesMade: result.changesMade,
+      budgetImpact: result.budgetImpact,
+    });
+  } catch (error: any) {
+    console.error("Replan error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to replan trip" },
+      { status: 500 }
+    );
   }
 }
