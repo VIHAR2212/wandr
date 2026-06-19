@@ -1,86 +1,224 @@
 // ============================================
-// z.ai Integration — Replace Claude completely
+// WANDR AI — Multi-Provider Fallback System
+// Primary: z.ai
+// Fallback #1: Groq
+// Fallback #2: Gemini
 // ============================================
-// Put your z.ai API key in .env.local as ANTHROPIC_API_KEY
-// Or set ZAI_API_KEY separately
-// Change ZAI_BASE_URL and ZAI_MODEL if needed for your z.ai plan
 
-const ZAI_BASE_URL =
-  process.env.ZAI_BASE_URL || "https://api.z-ai.ai/v1/chat/completions";
+interface AIResponse {
+  content: string;
+  provider: string;
+}
 
-const ZAI_API_KEY = process.env.ZAI_API_KEY || process.env.ANTHROPIC_API_KEY || "";
+// ── z.ai Configuration ──────────────────────────────────────
+const ZAI_CONFIG = {
+  baseUrl: process.env.ZAI_BASE_URL || "https://api.z-ai.ai/v1/chat/completions",
+  apiKey: process.env.ZAI_API_KEY || "",
+  model: process.env.ZAI_MODEL || "default",
+};
 
-const ZAI_MODEL = process.env.ZAI_MODEL || "default";
+// ── Groq Configuration ──────────────────────────────────────
+const GROQ_CONFIG = {
+  baseUrl: "https://api.groq.com/openai/v1/chat/completions",
+  apiKey: process.env.GROQ_API_KEY || "",
+  model: "llama-3.3-70b-versatile",
+};
 
+// ── Gemini Configuration ────────────────────────────────────
+const GEMINI_CONFIG = {
+  baseUrl: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY || ""}`,
+  apiKey: process.env.GEMINI_API_KEY || "",
+  model: "gemini-2.0-flash",
+};
+
+// ── z.ai Caller ─────────────────────────────────────────────
+async function callZAI(messages: Array<{ role: string; content: string }>): Promise<string | null> {
+  if (!ZAI_CONFIG.apiKey) {
+    console.log("z.ai: No API key, skipping");
+    return null;
+  }
+
+  try {
+    console.log("z.ai: Calling...");
+    const response = await fetch(ZAI_CONFIG.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ZAI_CONFIG.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: ZAI_CONFIG.model,
+        messages,
+        max_tokens: 8192,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error(`z.ai error (${response.status}):`, err.slice(0, 200));
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (data.choices?.[0]?.message?.content) {
+      console.log("z.ai: Success!");
+      return data.choices[0].message.content;
+    }
+    if (data.content) {
+      console.log("z.ai: Success!");
+      return typeof data.content === "string" ? data.content : JSON.stringify(data.content);
+    }
+    if (typeof data === "string") {
+      console.log("z.ai: Success!");
+      return data;
+    }
+
+    console.error("z.ai: Unexpected response format", JSON.stringify(data).slice(0, 200));
+    return null;
+  } catch (error) {
+    console.error("z.ai: Failed:", error);
+    return null;
+  }
+}
+
+// ── Groq Caller ─────────────────────────────────────────────
+async function callGroq(messages: Array<{ role: string; content: string }>): Promise<string | null> {
+  if (!GROQ_CONFIG.apiKey) {
+    console.log("Groq: No API key, skipping");
+    return null;
+  }
+
+  try {
+    console.log("Groq: Calling...");
+    const response = await fetch(GROQ_CONFIG.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_CONFIG.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_CONFIG.model,
+        messages,
+        max_tokens: 8192,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error(`Groq error (${response.status}):`, err.slice(0, 200));
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.choices?.[0]?.message?.content) {
+      console.log("Groq: Success!");
+      return data.choices[0].message.content;
+    }
+
+    console.error("Groq: Unexpected response");
+    return null;
+  } catch (error) {
+    console.error("Groq: Failed:", error);
+    return null;
+  }
+}
+
+// ── Gemini Caller ───────────────────────────────────────────
+async function callGemini(messages: Array<{ role: string; content: string }>): Promise<string | null> {
+  if (!GEMINI_CONFIG.apiKey) {
+    console.log("Gemini: No API key, skipping");
+    return null;
+  }
+
+  try {
+    console.log("Gemini: Calling...");
+
+    const contents = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+
+    const systemInstruction = messages.find((m) => m.role === "system");
+
+    const body: any = { contents };
+    if (systemInstruction) {
+      body.systemInstruction = { parts: [{ text: systemInstruction.content }] };
+    }
+
+    const response = await fetch(GEMINI_CONFIG.baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error(`Gemini error (${response.status}):`, err.slice(0, 200));
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+      console.log("Gemini: Success!");
+      return data.candidates[0].content.parts[0].text;
+    }
+
+    console.error("Gemini: Unexpected response");
+    return null;
+  } catch (error) {
+    console.error("Gemini: Failed:", error);
+    return null;
+  }
+}
+
+// ── Main AI Function with Fallback ──────────────────────────
 export async function generateAIResponse(
   prompt: string,
   systemPrompt?: string
-): Promise<string> {
-  if (!ZAI_API_KEY) {
-    throw new Error(
-      "No API key found. Set ZAI_API_KEY or ANTHROPIC_API_KEY in .env.local"
-    );
-  }
-
+): Promise<AIResponse> {
   const messages: Array<{ role: string; content: string }> = [];
-
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
   }
-
   messages.push({ role: "user", content: prompt });
 
-  const response = await fetch(ZAI_BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ZAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: ZAI_MODEL,
-      messages,
-      max_tokens: 8192,
-      temperature: 0.7,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("z.ai API error:", response.status, errorText);
-    throw new Error(
-      `z.ai API error (${response.status}): ${errorText.slice(0, 200)}`
-    );
+  const zaiResult = await callZAI(messages);
+  if (zaiResult) {
+    return { content: zaiResult, provider: "z.ai" };
   }
 
-  const data = await response.json();
-
-  // Handle both OpenAI-style and direct content responses
-  if (data.choices && data.choices[0]) {
-    return data.choices[0].message.content;
-  }
-  if (data.content) {
-    return data.content;
-  }
-  if (typeof data === "string") {
-    return data;
+  const groqResult = await callGroq(messages);
+  if (groqResult) {
+    return { content: groqResult, provider: "Groq" };
   }
 
-  throw new Error("Unexpected response format from z.ai");
+  const geminiResult = await callGemini(messages);
+  if (geminiResult) {
+    return { content: geminiResult, provider: "Gemini" };
+  }
+
+  throw new Error(
+    "All AI providers failed. Please check your API keys:\n" +
+    "- ZAI_API_KEY (primary)\n" +
+    "- GROQ_API_KEY (fallback #1)\n" +
+    "- GEMINI_API_KEY (fallback #2)"
+  );
 }
 
-/**
- * Call z.ai and parse JSON from the response.
- * Handles cases where the AI wraps JSON in markdown code blocks.
- */
+// ── JSON Parser ─────────────────────────────────────────────
 export async function generateAIJson<T = any>(
   prompt: string,
   systemPrompt?: string
-): Promise<T> {
-  const raw = await generateAIResponse(prompt, systemPrompt);
+): Promise<{ data: T; provider: string }> {
+  const result = await generateAIResponse(prompt, systemPrompt);
 
-  let cleaned = raw.trim();
+  let cleaned = result.content.trim();
 
-  // Remove markdown code block wrapping
   if (cleaned.startsWith("```json")) {
     cleaned = cleaned.slice(7);
   } else if (cleaned.startsWith("```")) {
@@ -92,9 +230,39 @@ export async function generateAIJson<T = any>(
   cleaned = cleaned.trim();
 
   try {
-    return JSON.parse(cleaned) as T;
+    return { data: JSON.parse(cleaned) as T, provider: result.provider };
   } catch (parseError) {
-    console.error("Failed to parse AI JSON response:", cleaned.slice(0, 500));
-    throw new Error("AI returned invalid JSON. Please try again.");
+    console.error("Failed to parse AI JSON:", cleaned.slice(0, 500));
+    throw new Error(
+      `AI returned invalid JSON (via ${result.provider}). Please try again.`
+    );
   }
+}
+
+// ── Provider Check ──────────────────────────────────────────
+export function getAvailableProviders(): string[] {
+  const providers: string[] = [];
+  if (ZAI_CONFIG.apiKey) providers.push("z.ai");
+  if (GROQ_CONFIG.apiKey) providers.push("Groq");
+  if (GEMINI_CONFIG.apiKey) providers.push("Gemini");
+  return providers;
+}
+
+// ── Backward-Compatible Aliases ─────────────────────────────
+// Your chat route and other files import these names
+
+export async function callAIChat(
+  message: string,
+  systemPrompt?: string
+): Promise<string> {
+  const result = await generateAIResponse(message, systemPrompt);
+  return result.content;
+}
+
+export async function callAIGenerate(
+  prompt: string,
+  systemPrompt?: string
+): Promise<string> {
+  const result = await generateAIResponse(prompt, systemPrompt);
+  return result.content;
 }
