@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
-
-function getClient() {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY is not set');
-  return new Anthropic({ apiKey: key });
-}
+import { callAI } from '@/lib/ai';
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,18 +46,16 @@ export async function POST(req: NextRequest) {
       NON_VEG: 'any cuisine including non-vegetarian',
     };
 
-    const client = getClient();
-
     const systemPrompt = `You are Wandr AI — the world's most advanced AI travel agent. You plan complete, accurate, budget-perfect trips.
 
 CRITICAL RULES:
-1. BUDGET IS A STRICT HARD CONSTRAINT. Total trip cost MUST NOT exceed ${sym}${budget}. Every single cost must be realistic and accurate.
+1. BUDGET IS A STRICT HARD CONSTRAINT. Total trip cost MUST NOT exceed ${sym}${budget}. Every cost must be realistic.
 2. All food must be ${FOOD_LABEL[foodPreference] ?? 'any cuisine'}.
 3. Trip style: ${PURPOSE_LABEL[purpose] ?? purpose}.
 4. Hotel category: ${hotelPreference}.
 5. Preferred transport: ${(transportPreferences ?? []).join(', ')}.
 6. Plan for ${travelers} travelers.
-7. Return ONLY valid JSON. No markdown fences. No explanation text. Pure JSON object only.`;
+7. Return ONLY valid JSON. No markdown. No explanation. Pure JSON object only.`;
 
     const userPrompt = `Plan a complete ${duration}-day trip from ${origin} to ${destination}.
 
@@ -75,14 +67,14 @@ Trip details:
 - Food: ${FOOD_LABEL[foodPreference] ?? foodPreference}
 - Hotel: ${hotelPreference}
 - Transport: ${(transportPreferences ?? []).join(', ')}
-- Hidden gems: ${includeHiddenGems ? 'yes, include secret spots' : 'standard attractions only'}
-- Budget flexibility: ${flexibleBudget ? 'up to 10% extra if significantly better' : 'strict, no flexibility'}
+- Hidden gems: ${includeHiddenGems ? 'yes' : 'no'}
+- Budget flexibility: ${flexibleBudget ? 'up to 10% extra if significantly better' : 'strict'}
 ${specialRequests ? `- Special requests: ${specialRequests}` : ''}
 
-Return this exact JSON (fill all fields with real data, null only if genuinely unknown):
+Return this exact JSON structure with real data:
 {
   "title": "Creative trip title",
-  "summary": "2-3 compelling sentences summarizing this trip",
+  "summary": "2-3 compelling sentences",
   "totalCost": number,
   "days": [
     {
@@ -126,93 +118,56 @@ Return this exact JSON (fill all fields with real data, null only if genuinely u
   },
   "hotels": [
     {
-      "name": "string",
-      "type": "${hotelPreference}",
-      "location": "string",
-      "lat": null,
-      "lng": null,
-      "pricePerNight": number,
-      "totalCost": number,
-      "rating": 4.2,
-      "amenities": ["WiFi", "AC"],
-      "bookingUrl": null,
-      "phone": null,
-      "pros": ["pro1"],
-      "cons": ["con1"]
+      "name": "string", "type": "${hotelPreference}", "location": "string",
+      "lat": null, "lng": null, "pricePerNight": number, "totalCost": number,
+      "rating": 4.2, "amenities": ["WiFi", "AC"], "bookingUrl": null,
+      "phone": null, "pros": ["pro1"], "cons": ["con1"]
     }
   ],
   "restaurants": [
     {
-      "name": "string",
-      "cuisine": "string",
-      "location": "string",
-      "lat": null,
-      "lng": null,
-      "priceRange": "${sym}200-500 per person",
-      "rating": 4.5,
-      "specialties": ["dish1"],
-      "openingHours": "9 AM - 10 PM",
-      "phone": null,
-      "dietaryOptions": ["${foodPreference}"],
-      "mustTry": ["dish1"]
+      "name": "string", "cuisine": "string", "location": "string",
+      "lat": null, "lng": null, "priceRange": "${sym}200-500 per person",
+      "rating": 4.5, "specialties": ["dish1"], "openingHours": "9 AM - 10 PM",
+      "phone": null, "dietaryOptions": ["${foodPreference}"], "mustTry": ["dish1"]
     }
   ],
   "hiddenGems": [
     {
-      "name": "string",
-      "type": "string",
-      "description": "Why this place is special",
-      "location": "string",
-      "lat": null,
-      "lng": null,
-      "bestTime": "Early morning",
-      "cost": number,
-      "crowdLevel": "LOW",
-      "insiderTip": "Secret tip"
+      "name": "string", "type": "string", "description": "Why special",
+      "location": "string", "lat": null, "lng": null, "bestTime": "Early morning",
+      "cost": number, "crowdLevel": "LOW", "insiderTip": "Secret tip"
     }
   ],
   "safety": {
-    "overallScore": 7,
-    "crimeLevel": "LOW",
-    "scamAlerts": ["scam1", "scam2"],
+    "overallScore": 7, "crimeLevel": "LOW",
+    "scamAlerts": ["scam1"],
     "emergencyContacts": [
       { "name": "Police", "number": "100", "type": "POLICE" },
-      { "name": "Ambulance", "number": "108", "type": "AMBULANCE" },
-      { "name": "Tourist Helpline", "number": "1800-111-363", "type": "TOURIST_HELPLINE" }
+      { "name": "Ambulance", "number": "108", "type": "AMBULANCE" }
     ],
-    "hospitals": [
-      { "name": "Hospital name", "address": "Area", "phone": "number", "distance": "2 km" }
-    ],
-    "policeStations": [
-      { "name": "Police station name", "address": "Area", "phone": "100", "distance": "1 km" }
-    ],
-    "safeAreas": ["area1"],
-    "avoidAreas": ["area2"],
-    "travelAdvisory": null,
-    "vaccinations": ["vaccine1"]
+    "hospitals": [{ "name": "Hospital", "address": "Area", "phone": "number", "distance": "2 km" }],
+    "policeStations": [{ "name": "Police station", "address": "Area", "phone": "100", "distance": "1 km" }],
+    "safeAreas": ["area1"], "avoidAreas": ["area2"],
+    "travelAdvisory": null, "vaccinations": ["vaccine1"]
   },
   "packingList": [
     {
       "category": "Clothing",
-      "items": [
-        { "name": "item", "essential": true, "quantity": "3 pairs" }
-      ]
+      "items": [{ "name": "item", "essential": true, "quantity": "3 pairs" }]
     }
   ],
-  "seasonalTips": ["tip1", "tip2", "tip3"],
+  "seasonalTips": ["tip1", "tip2"],
   "localPhrases": [
     { "phrase": "Thank you", "translation": "local word", "pronunciation": "pronunciation" }
   ],
   "transportGuide": {
     "primaryRoute": [
       {
-        "from": "${origin}",
-        "to": "${destination}",
+        "from": "${origin}", "to": "${destination}",
         "mode": "${(transportPreferences ?? ['FLIGHT'])[0]}",
-        "duration": "2h 30m",
-        "cost": number,
-        "details": "Booking info",
-        "bookingInfo": "How to book"
+        "duration": "2h 30m", "cost": number,
+        "details": "Booking info", "bookingInfo": "How to book"
       }
     ],
     "totalTransportCost": number,
@@ -220,13 +175,9 @@ Return this exact JSON (fill all fields with real data, null only if genuinely u
   },
   "weatherForecast": [
     {
-      "date": "${startDate}",
-      "condition": "Sunny",
+      "date": "${startDate}", "condition": "Sunny",
       "temperature": { "min": 22, "max": 31, "unit": "C" },
-      "humidity": 65,
-      "rainfall": 0,
-      "icon": "☀️",
-      "alert": null
+      "humidity": 65, "rainfall": 0, "icon": "sunny", "alert": null
     }
   ],
   "crowdPrediction": {
@@ -236,19 +187,11 @@ Return this exact JSON (fill all fields with real data, null only if genuinely u
   }
 }`;
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
-
-    const content = message.content[0];
-    if (content.type !== 'text') throw new Error('Unexpected AI response type');
+    const result = await callAI(systemPrompt, [{ role: 'user', content: userPrompt }], 8192);
 
     let trip: Record<string, unknown>;
     try {
-      const text = content.text.trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
+      const text = result.text.trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
       const match = text.match(/\{[\s\S]*\}/);
       if (!match) throw new Error('No JSON object found in AI response');
       trip = JSON.parse(match[0]);
@@ -256,7 +199,6 @@ Return this exact JSON (fill all fields with real data, null only if genuinely u
       throw new Error('AI returned invalid JSON. Please try again.');
     }
 
-    // Enforce budget constraint
     const totalCost = Number(trip.totalCost ?? 0);
     const maxAllowed = flexibleBudget ? budget * 1.10 : budget;
     if (totalCost > maxAllowed) {
@@ -268,16 +210,15 @@ Return this exact JSON (fill all fields with real data, null only if genuinely u
 
     const tripId = `trip_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const tripData = {
-      tripId,
-      formData,
-      generatedTrip: trip,
+      tripId, formData, generatedTrip: trip,
       createdAt: new Date().toISOString(),
+      aiProvider: result.provider,
     };
 
     const encoded = encodeURIComponent(JSON.stringify(tripData));
     const cookie = `trip_${tripId}=${encoded}; Path=/; Max-Age=7200; SameSite=Lax`;
 
-    return NextResponse.json({ success: true, tripId }, {
+    return NextResponse.json({ success: true, tripId, aiProvider: result.provider }, {
       headers: { 'Set-Cookie': cookie },
     });
   } catch (error: unknown) {

@@ -1,55 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
-
-function getClient() {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY is not set');
-  return new Anthropic({ apiKey: key });
-}
+import { callAI } from '@/lib/ai';
 
 export async function POST(req: NextRequest) {
   try {
     const { tripContext, disruption, currentDay } = await req.json();
-
     if (!tripContext || !disruption) {
       return NextResponse.json({ error: 'tripContext and disruption are required' }, { status: 400 });
     }
 
-    const client = getClient();
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      messages: [{
+    const result = await callAI(
+      'You are Wandr AI, an expert travel replanning assistant. Return ONLY valid JSON with no markdown.',
+      [{
         role: 'user',
         content: `Emergency trip replan needed.
-
-TRIP: ${tripContext.origin} → ${tripContext.destination}
+TRIP: ${tripContext.origin} to ${tripContext.destination}
 BUDGET REMAINING: ${tripContext.currency} ${tripContext.budgetRemaining}
 CURRENT DAY: Day ${currentDay} of ${tripContext.duration}
 TRAVELERS: ${tripContext.travelers}
-FOOD PREFERENCE: ${tripContext.foodPreference ?? 'any'}
-
 DISRUPTION: ${disruption}
 
-Return ONLY valid JSON (no markdown):
+Return ONLY valid JSON:
 {
   "summary": "What changed and why",
   "revisedDays": [
     {
-      "dayNumber": number,
-      "date": "YYYY-MM-DD",
-      "theme": "string",
+      "dayNumber": number, "date": "YYYY-MM-DD", "theme": "string",
       "activities": [
-        {
-          "time": "HH:MM",
-          "duration": number,
-          "type": "TRANSPORT",
-          "title": "string",
-          "description": "string",
-          "location": "string",
-          "cost": number,
-          "notes": "string"
-        }
+        { "time": "HH:MM", "duration": number, "type": "TRANSPORT",
+          "title": "string", "description": "string", "location": "string", "cost": number, "notes": "string" }
       ],
       "totalCost": number
     }
@@ -59,14 +37,13 @@ Return ONLY valid JSON (no markdown):
   "alternatives": ["option1"]
 }`,
       }],
-    });
+      2048
+    );
 
-    const text = (response.content[0] as { type: string; text: string }).text;
-    const match = text.match(/\{[\s\S]*\}/);
+    const match = result.text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('No JSON in response');
     const parsed = JSON.parse(match[0]);
-
-    return NextResponse.json(parsed);
+    return NextResponse.json({ ...parsed, aiProvider: result.provider });
   } catch (error: unknown) {
     console.error('[Replan]', error);
     const message = error instanceof Error ? error.message : 'Replan failed';

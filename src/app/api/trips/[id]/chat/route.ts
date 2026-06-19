@@ -1,15 +1,9 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import Anthropic from '@anthropic-ai/sdk';
+import { callAIChat } from '@/lib/ai';
 import prisma from '@/lib/db';
 
 type Params = { params: Promise<{ id: string }> };
-
-function getClient() {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY is not set');
-  return new Anthropic({ apiKey: key });
-}
 
 export async function GET(_req: Request, { params }: Params) {
   try {
@@ -53,23 +47,19 @@ export async function POST(req: Request, { params }: Params) {
       take: 20,
     });
 
-    const client = getClient();
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: `You are Wandr AI travel assistant for a trip from ${trip.origin} to ${trip.destination} (${trip.startDate.toDateString()} to ${trip.endDate.toDateString()}, ${trip.travelers} travelers, budget ${trip.currency} ${trip.budget}). Be concise, helpful, and specific.`,
-      messages: history.map((m: { role: string; content: string }) => ({
+    const result = await callAIChat(
+      `You are Wandr AI travel assistant for a trip from ${trip.origin} to ${trip.destination} (${trip.startDate.toDateString()} to ${trip.endDate.toDateString()}, ${trip.travelers} travelers, budget ${trip.currency} ${trip.budget}). Be concise, helpful, and specific.`,
+      history.map((m: { role: string; content: string }) => ({
         role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
         content: m.content,
-      })),
-    });
+      }))
+    );
 
-    const reply = response.content[0].type === 'text' ? response.content[0].text : '';
     const saved = await prisma.chatMessage.create({
-      data: { tripId: id, role: 'ASSISTANT', content: reply },
+      data: { tripId: id, role: 'ASSISTANT', content: result.text },
     });
 
-    return NextResponse.json({ message: saved });
+    return NextResponse.json({ message: saved, aiProvider: result.provider });
   } catch (err) {
     console.error('[Trip Chat POST]', err);
     const message = err instanceof Error ? err.message : 'Chat failed';
