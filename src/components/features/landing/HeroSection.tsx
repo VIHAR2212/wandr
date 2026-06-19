@@ -74,8 +74,6 @@ export function HeroSection() {
           <div>
             <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
               <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-panel text-sm font-medium text-muted-foreground mb-8">
-                <span className="w-2 h-2 rounded-full bg-forest-400 animate-pulse-soft" />
-                AI-Powered Travel Planning
               </div>
             </motion.div>
 
