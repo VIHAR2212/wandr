@@ -149,11 +149,12 @@ IMPORTANT RULES:
 5. All restaurant suggestions must respect the diet preference: ${diet || "no restriction"}
 6. Include transport costs between locations`;
 
-    console.log("Calling z.ai for trip generation...");
-    const tripData = await generateAIJson(prompt, systemPrompt);
-    console.log("z.ai response received, saving to database...");
+    // ===== FIXED: Destructure { data, provider } from generateAIJson =====
+    console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
+    const { data: tripData, provider } = await generateAIJson(prompt, systemPrompt);
+    console.log(`Trip generated successfully via ${provider}!`);
 
-    // Save trip to database
+    // Save trip to database — REMOVED 'diet' field (not in Prisma schema)
     const trip = await prisma.trip.create({
       data: {
         userId: session.user.id,
@@ -162,7 +163,7 @@ IMPORTANT RULES:
         endDate: end,
         budget: Number(budget),
         travelers: Number(travelers) || 1,
-        diet: diet || "no-preference",
+        // diet removed — not in database schema
         purpose: purpose || "leisure",
         itinerary: tripData.itinerary || [],
         hotels: tripData.hotels || [],
@@ -175,7 +176,12 @@ IMPORTANT RULES:
       },
     });
 
-    return NextResponse.json({ success: true, tripId: trip.id, trip });
+    return NextResponse.json({
+      success: true,
+      tripId: trip.id,
+      trip,
+      provider,
+    });
   } catch (error: any) {
     console.error("Trip generation error:", error);
     return NextResponse.json(
