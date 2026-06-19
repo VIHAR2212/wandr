@@ -1,38 +1,41 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { callAIChat } from '@/lib/ai';
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { generateAIResponse } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
   try {
-    const { messages, tripContext } = await req.json();
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    if (!messages || !Array.isArray(messages)) {
-      return NextResponse.json({ error: 'messages array required' }, { status: 400 });
+    const { message, tripContext } = await req.json();
+
+    if (!message) {
+      return NextResponse.json(
+        { error: "Message is required" },
+        { status: 400 }
+      );
     }
 
     const systemPrompt = tripContext
-      ? `You are Wandr AI, a friendly and expert travel assistant for this specific trip:
-- Route: ${tripContext.origin ?? 'Unknown'} to ${tripContext.destination ?? 'Unknown'}
-- Dates: ${tripContext.startDate ?? 'N/A'} to ${tripContext.endDate ?? 'N/A'}
-- Travelers: ${tripContext.travelers ?? 1}
-- Budget: ${tripContext.currency ?? 'INR'} ${tripContext.budget ?? 0}
-- Purpose: ${tripContext.purpose ?? 'general travel'}
-- Food preference: ${tripContext.foodPreference ?? 'any'}
-Be concise, practical, and specific. Give actionable advice with real names and costs where possible.`
-      : `You are Wandr AI, a friendly and expert travel assistant. Help travelers plan trips and answer questions. Be concise and practical.`;
+      ? `You are a helpful travel assistant for Wandr. The user is currently on a trip or planning one.
+Here is their trip context:
+ ${JSON.stringify(tripContext, null, 2)}
 
-    const aiMessages = messages
-      .filter((m: { role: string; content: string }) => m.role && m.content)
-      .map((m: { role: string; content: string }) => ({
-        role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
-        content: String(m.content),
-      }));
+Answer their questions about the trip, suggest changes, recommend nearby places, or help with any travel needs.
+Be concise but helpful. If they ask about costs, refer to their budget breakdown.`
+      : `You are a helpful travel assistant for Wandr. Help users with travel planning, destination recommendations,
+packing tips, visa info, and general travel advice. Be concise and practical.`;
 
-    const result = await callAIChat(systemPrompt, aiMessages);
+    const reply = await generateAIResponse(message, systemPrompt);
 
-    return NextResponse.json({ message: result.text, provider: result.provider });
-  } catch (error: unknown) {
-    console.error('[AI Chat]', error);
-    const message = error instanceof Error ? error.message : 'Chat failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ success: true, reply });
+  } catch (error: any) {
+    console.error("Chat error:", error);
+    return NextResponse.json(
+      { error: error.message || "Chat failed" },
+      { status: 500 }
+    );
   }
 }
