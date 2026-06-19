@@ -14,7 +14,6 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.3",
     "@auth/prisma-adapter": "^2.4.1",
     "@prisma/client": "^5.14.0",
     "@radix-ui/react-accordion": "^1.2.0",
