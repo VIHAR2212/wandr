@@ -9,7 +9,7 @@ const testimonials = [
     role: 'Travel Blogger, Delhi',
     avatar: 'PS',
     rating: 5,
-    text: "Wandr planned a 10-day Rajasthan trip for ₹45,000 for two people. Every hotel, every meal, every hidden temple — all within budget. I've been travel blogging for 8 years and this is the most accurate AI planner I've used.",
+    text: 'Wandr planned a 10-day Rajasthan trip for Rs 45,000 for two people. Every hotel, every meal, every hidden temple — all within budget. I have been travel blogging for 8 years and this is the most accurate AI planner I have used.',
     destination: 'Rajasthan, India',
   },
   {
@@ -29,11 +29,11 @@ const testimonials = [
     destination: 'Tokyo, Japan',
   },
   {
-    name: 'Ravi & Meera',
+    name: 'Ravi and Meera',
     role: 'Couple, Hyderabad',
     avatar: 'RM',
     rating: 5,
-    text: 'Honeymoon to Santorini. We said ₹2.5L for two. Wandr fit flights, a cave hotel, sunset cruises, and private dining in that budget. We thought it was impossible. It wasn't.',
+    text: 'Honeymoon to Santorini. We said Rs 2.5L for two. Wandr fit flights, a cave hotel, sunset cruises, and private dining in that budget. We thought it was impossible. It was not.',
     destination: 'Santorini, Greece',
   },
   {
@@ -87,7 +87,7 @@ export function TestimonialsSection() {
                   <Star key={j} className="w-3.5 h-3.5 fill-primary text-primary" />
                 ))}
               </div>
-              <p className="text-sm text-foreground leading-relaxed flex-1">"{t.text}"</p>
+              <p className="text-sm text-foreground leading-relaxed flex-1">&ldquo;{t.text}&rdquo;</p>
               <div className="flex items-center gap-3 pt-2 border-t border-border">
                 <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center text-primary font-semibold text-sm">
                   {t.avatar}

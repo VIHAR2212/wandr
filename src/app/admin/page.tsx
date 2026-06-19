@@ -12,7 +12,6 @@ export default async function AdminPage() {
   if (!session?.user || (session.user as { role?: string }).role !== 'ADMIN') {
     redirect('/dashboard');
   }
-
   return (
     <main className="min-h-screen">
       <Navbar />

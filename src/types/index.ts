@@ -1,24 +1,24 @@
 // src/types/index.ts
-export type TripPurpose = 
+export type TripPurpose =
   | 'ADVENTURE' | 'DEVOTIONAL' | 'HIKING' | 'HONEYMOON' | 'FAMILY'
   | 'PHOTOGRAPHY' | 'BUSINESS' | 'FOOD_EXPLORATION' | 'WELLNESS'
   | 'CULTURAL' | 'SOLO' | 'BACKPACKING';
 
 export type FoodPreference = 'VEG' | 'JAIN' | 'VEGAN' | 'HALAL' | 'NON_VEG';
 
-export type HotelType = 
+export type HotelType =
   | 'BUDGET' | 'STANDARD' | 'COMFORT' | 'LUXURY' | 'ULTRA_LUXURY'
   | 'HOSTEL' | 'CAMPING' | 'HOMESTAY';
 
-export type TransportType = 
+export type TransportType =
   | 'FLIGHT' | 'TRAIN' | 'BUS' | 'CAR_RENTAL' | 'TAXI'
   | 'METRO' | 'FERRY' | 'BICYCLE' | 'WALKING';
 
-export type ActivityType = 
+export type ActivityType =
   | 'TRANSPORT' | 'ACCOMMODATION' | 'SIGHTSEEING' | 'RESTAURANT'
   | 'ADVENTURE' | 'SHOPPING' | 'REST' | 'CEREMONY' | 'MEETING';
 
-export type TripStatus = 
+export type TripStatus =
   | 'PLANNING' | 'CONFIRMED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 
 export interface TripFormData {
@@ -46,11 +46,11 @@ export interface Activity {
   title: string;
   description: string;
   location: string;
-  lat?: number;
-  lng?: number;
+  lat?: number | null;
+  lng?: number | null;
   cost: number;
-  notes?: string;
-  bookingUrl?: string;
+  notes?: string | null;
+  bookingUrl?: string | null;
   isCompleted?: boolean;
   tips?: string[];
   alternatives?: string[];
@@ -69,6 +69,7 @@ export interface TripDay {
 
 export interface BudgetBreakdown {
   total: number;
+  actualCost?: number;
   transport: number;
   accommodation: number;
   food: number;
@@ -94,20 +95,21 @@ export interface WeatherInfo {
   humidity: number;
   rainfall: number;
   icon: string;
-  alert?: string;
+  alert?: string | null;
 }
 
 export interface Hotel {
   name: string;
   type: HotelType;
   location: string;
-  lat?: number;
-  lng?: number;
+  lat?: number | null;
+  lng?: number | null;
   pricePerNight: number;
+  totalCost?: number;
   rating: number;
   amenities: string[];
-  bookingUrl?: string;
-  phone?: string;
+  bookingUrl?: string | null;
+  phone?: string | null;
   distance?: string;
   images?: string[];
   pros?: string[];
@@ -118,13 +120,13 @@ export interface Restaurant {
   name: string;
   cuisine: string;
   location: string;
-  lat?: number;
-  lng?: number;
+  lat?: number | null;
+  lng?: number | null;
   priceRange: string;
   rating: number;
   specialties: string[];
   openingHours: string;
-  phone?: string;
+  phone?: string | null;
   dietaryOptions: FoodPreference[];
   mustTry?: string[];
 }
@@ -134,25 +136,12 @@ export interface HiddenGem {
   type: string;
   description: string;
   location: string;
-  lat?: number;
-  lng?: number;
+  lat?: number | null;
+  lng?: number | null;
   bestTime: string;
   cost: number;
   crowdLevel: 'LOW' | 'MEDIUM' | 'HIGH';
   insiderTip: string;
-}
-
-export interface SafetyInfo {
-  overallScore: number; // 1-10
-  crimeLevel: 'LOW' | 'MEDIUM' | 'HIGH';
-  scamAlerts: string[];
-  emergencyContacts: EmergencyContact[];
-  hospitals: NearbyPlace[];
-  policeStations: NearbyPlace[];
-  safeAreas: string[];
-  avoidAreas: string[];
-  travelAdvisory?: string;
-  vaccinations?: string[];
 }
 
 export interface EmergencyContact {
@@ -164,41 +153,28 @@ export interface EmergencyContact {
 export interface NearbyPlace {
   name: string;
   address: string;
-  lat?: number;
-  lng?: number;
-  phone?: string;
+  lat?: number | null;
+  lng?: number | null;
+  phone?: string | null;
   distance?: string;
+}
+
+export interface SafetyInfo {
+  overallScore: number;
+  crimeLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  scamAlerts: string[];
+  emergencyContacts: EmergencyContact[];
+  hospitals: NearbyPlace[];
+  policeStations?: NearbyPlace[];
+  safeAreas: string[];
+  avoidAreas: string[];
+  travelAdvisory?: string | null;
+  vaccinations?: string[];
 }
 
 export interface PackingItem {
   category: string;
   items: { name: string; essential: boolean; quantity?: string }[];
-}
-
-export interface GeneratedTrip {
-  title: string;
-  summary: string;
-  days: TripDay[];
-  budget: BudgetBreakdown;
-  hotels: Hotel[];
-  restaurants: Restaurant[];
-  hiddenGems: HiddenGem[];
-  safety: SafetyInfo;
-  packingList: PackingItem[];
-  seasonalTips: string[];
-  localPhrases?: { phrase: string; translation: string; pronunciation: string }[];
-  transportGuide?: TransportGuide;
-  alternativeOptions?: {
-    budget: Partial<GeneratedTrip>;
-    premium: Partial<GeneratedTrip>;
-  };
-}
-
-export interface TransportGuide {
-  primaryRoute: RouteSegment[];
-  alternatives: RouteSegment[][];
-  totalTransportCost: number;
-  tips: string[];
 }
 
 export interface RouteSegment {
@@ -211,14 +187,33 @@ export interface RouteSegment {
   bookingInfo?: string;
 }
 
-export interface MapMarker {
-  id: string;
-  lat: number;
-  lng: number;
-  type: 'hotel' | 'restaurant' | 'attraction' | 'airport' | 'station' | 'bus' | 'user' | 'hidden_gem' | 'hospital' | 'police';
+export interface TransportGuide {
+  primaryRoute: RouteSegment[];
+  alternatives?: RouteSegment[][];
+  totalTransportCost: number;
+  tips: string[];
+}
+
+export interface GeneratedTrip {
   title: string;
-  description?: string;
-  cost?: number;
+  summary: string;
+  totalCost?: number;
+  days: TripDay[];
+  budget: BudgetBreakdown;
+  hotels: Hotel[];
+  restaurants: Restaurant[];
+  hiddenGems: HiddenGem[];
+  safety: SafetyInfo;
+  packingList: PackingItem[];
+  seasonalTips: string[];
+  localPhrases?: { phrase: string; translation: string; pronunciation: string }[];
+  transportGuide?: TransportGuide;
+  weatherForecast?: WeatherInfo[];
+  crowdPrediction?: {
+    peak: string[];
+    bestTimeToVisit: string[];
+    avoidDates: string[];
+  };
 }
 
 export interface ChatMessage {

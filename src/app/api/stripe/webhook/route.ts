@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const stripe = new Stripe(stripeSecretKey, { apiVersion: '2024-04-10' });
+  const stripe = new Stripe(stripeSecretKey, { apiVersion: '2024-06-20' });
 
   const body = await req.text();
   const sig = req.headers.get('stripe-signature');

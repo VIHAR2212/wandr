@@ -5,12 +5,13 @@ import { Navbar } from '@/components/layout/Navbar';
 
 export const metadata: Metadata = { title: 'Your Trip — Wandr' };
 
-export default function TripPage({ params }: { params: { id: string } }) {
+export default async function TripPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   return (
     <main className="min-h-screen">
       <Navbar />
       <div className="pt-20">
-        <TripResultView tripId={params.id} />
+        <TripResultView tripId={id} />
       </div>
     </main>
   );

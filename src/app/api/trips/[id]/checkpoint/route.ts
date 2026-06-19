@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -12,11 +13,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: 'lat and lng are required' }, { status: 400 });
     }
 
-    const trip = await prisma.trip.findFirst({ where: { id: params.id, userId: session.user.id } });
+    const trip = await prisma.trip.findFirst({ where: { id, userId: session.user.id } });
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
 
     const checkpoint = await prisma.checkpoint.create({
-      data: { tripId: params.id, lat: Number(lat), lng: Number(lng), note: note ?? null },
+      data: { tripId: id, lat: Number(lat), lng: Number(lng), note: note ?? null },
     });
 
     return NextResponse.json({ checkpoint });
@@ -26,16 +27,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const trip = await prisma.trip.findFirst({ where: { id: params.id, userId: session.user.id } });
+    const trip = await prisma.trip.findFirst({ where: { id, userId: session.user.id } });
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
 
     const checkpoints = await prisma.checkpoint.findMany({
-      where: { tripId: params.id },
+      where: { tripId: id },
       orderBy: { timestamp: 'desc' },
       take: 100,
     });
