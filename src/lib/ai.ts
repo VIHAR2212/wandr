@@ -249,8 +249,6 @@ export function getAvailableProviders(): string[] {
 }
 
 // ── Backward-Compatible Aliases ─────────────────────────────
-// Your chat route and other files import these names
-
 export async function callAIChat(
   message: string,
   systemPrompt?: string
@@ -265,4 +263,25 @@ export async function callAIGenerate(
 ): Promise<string> {
   const result = await generateAIResponse(prompt, systemPrompt);
   return result.content;
+}
+
+// ── Chat with Message History ───────────────────────────────
+export async function callAIChatHistory(
+  systemPrompt: string,
+  messages: Array<{ role: string; content: string }>
+): Promise<{ text: string; provider: string }> {
+  const allMessages: Array<{ role: string; content: string }> = [];
+  allMessages.push({ role: "system", content: systemPrompt });
+  allMessages.push(...messages);
+
+  const zaiResult = await callZAI(allMessages);
+  if (zaiResult) return { text: zaiResult, provider: "z.ai" };
+
+  const groqResult = await callGroq(allMessages);
+  if (groqResult) return { text: groqResult, provider: "Groq" };
+
+  const geminiResult = await callGemini(allMessages);
+  if (geminiResult) return { text: geminiResult, provider: "Gemini" };
+
+  throw new Error("All AI providers failed for chat");
 }
