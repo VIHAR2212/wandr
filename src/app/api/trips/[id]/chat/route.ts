@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { callAIChat } from '@/lib/ai';
+import { callAIChatHistory } from '@/lib/ai';
 import prisma from '@/lib/db';
 
 type Params = { params: Promise<{ id: string }> };
@@ -47,13 +47,14 @@ export async function POST(req: Request, { params }: Params) {
       take: 20,
     });
 
-    const result = await callAIChat(
-      `You are Wandr AI travel assistant for a trip from ${trip.origin} to ${trip.destination} (${trip.startDate.toDateString()} to ${trip.endDate.toDateString()}, ${trip.travelers} travelers, budget ${trip.currency} ${trip.budget}). Be concise, helpful, and specific.`,
-      history.map((m: { role: string; content: string }) => ({
-        role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
-        content: m.content,
-      }))
-    );
+    const systemPrompt = `You are Wandr AI travel assistant for a trip from ${trip.origin} to ${trip.destination} (${trip.startDate.toDateString()} to ${trip.endDate.toDateString()}, ${trip.travelers} travelers, budget ${trip.currency} ${trip.budget}). Be concise, helpful, and specific.`;
+
+    const messageHistory = history.map((m: { role: string; content: string }) => ({
+      role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
+      content: m.content,
+    }));
+
+    const result = await callAIChatHistory(systemPrompt, messageHistory);
 
     const saved = await prisma.chatMessage.create({
       data: { tripId: id, role: 'ASSISTANT', content: result.text },
