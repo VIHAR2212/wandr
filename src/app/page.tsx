@@ -1,17 +1,22 @@
-// src/app/dashboard/page.tsx
-import type { Metadata } from 'next';
-import { DashboardView } from '@/components/features/dashboard/DashboardView';
+// src/app/page.tsx
 import { Navbar } from '@/components/layout/Navbar';
+import { HeroSection } from '@/components/features/landing/HeroSection';
+import { FeaturesSection } from '@/components/features/landing/FeaturesSection';
+import { HowItWorks } from '@/components/features/landing/HowItWorks';
+import { PricingSection } from '@/components/features/landing/PricingSection';
+import { TestimonialsSection } from '@/components/features/landing/TestimonialsSection';
+import { Footer } from '@/components/layout/Footer';
 
-export const metadata: Metadata = { title: 'My Trips — Wandr Dashboard' };
-
-export default function DashboardPage() {
+export default function HomePage() {
   return (
-    <main className="min-h-screen">
+    <main className="relative min-h-screen overflow-x-hidden">
       <Navbar />
-      <div className="pt-24 pb-16">
-        <DashboardView />
-      </div>
+      <HeroSection />
+      <FeaturesSection />
+      <HowItWorks />
+      <TestimonialsSection />
+      <PricingSection />
+      <Footer />
     </main>
   );
 }

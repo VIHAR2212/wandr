@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+type Params = { params: Promise<{ id: string }> };
+
+export async function GET(_req: Request, { params }: Params) {
   try {
     const { id } = await params;
     const session = await auth();
@@ -23,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: Params) {
   try {
     const { id } = await params;
     const session = await auth();
@@ -33,7 +35,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
 
     const { category, amount, description, paidBy, currency } = await req.json();
-
     if (!category || !amount || !description) {
       return NextResponse.json({ error: 'category, amount, and description are required' }, { status: 400 });
     }
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: Params) {
   try {
     const { id } = await params;
     const session = await auth();
