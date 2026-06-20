@@ -54,5 +54,28 @@ export type TransportType =
   | 'CAR_RENTAL'
   | 'TAXI'
   | 'METRO'
+
+export interface GeneratedTrip {
+  title: string;
+  summary: string;
+  days: any[];
+  hotels: any[];
+  restaurants: any[];
+  hiddenGems: any[];
+  budget: any;
+  packingList: any[];
+  safety: any;
+  weather: any;
+  seasonalTips?: string[];
+}
+
+export interface TripDay {
+  dayNumber: number;
+  date: string;
+  theme: string;
+  summary: string;
+  totalCost?: number;
+  activities: any[];
+}
   | 'FERRY'
   | 'BICYCLE';
