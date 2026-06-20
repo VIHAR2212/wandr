@@ -11,10 +11,33 @@ import { TripChat } from '@/components/features/chat/TripChat';
 import { TrackingOverlay } from '@/components/features/tracking/TrackingOverlay';
 import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safetyScoreColor, safetyScoreLabel } from '@/lib/utils';
 import { cn } from '@/lib/utils';
-import type { GeneratedTrip, TripDay, TripFormData } from '@/types';
+import type { TripFormData } from '@/types';
 
 // 🚀 Local flight database registry lookup connection
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
+
+interface TripDay {
+  dayNumber: number;
+  date: string;
+  theme: string;
+  summary: string;
+  totalCost?: number;
+  activities: any[];
+}
+
+interface GeneratedTrip {
+  title: string;
+  summary: string;
+  days: TripDay[];
+  hotels: any[];
+  restaurants: any[];
+  hiddenGems: any[];
+  budget: any;
+  packingList: any[];
+  safety: any;
+  weather: any;
+  seasonalTips?: string[];
+}
 
 interface TripData {
   tripId: string;
@@ -24,6 +47,153 @@ interface TripData {
 }
 
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
+
+// ── Normalize API data into the format the component expects ──
+function normalizeTripData(raw: any, tripId: string): TripData {
+  const fd: TripFormData = {
+    origin: raw.origin || '',
+    destination: raw.destination || '',
+    startDate: raw.startDate ? new Date(raw.startDate).toISOString().split('T')[0] : '',
+    endDate: raw.endDate ? new Date(raw.endDate).toISOString().split('T')[0] : '',
+    travelers: raw.travelers || 1,
+    budget: raw.budget || 0,
+    currency: raw.currency || 'INR',
+    purposes: raw.purposes || (raw.purpose ? [raw.purpose] : ['ADVENTURE']),
+    foodPreference: raw.foodPref || raw.foodPreference || 'NON_VEG',
+    hotelPreference: raw.hotelPref || raw.hotelPreference || 'STANDARD',
+    transportPreferences: raw.transportPref || raw.transportPreferences || [],
+    specialRequests: '',
+    includeHiddenGems: true,
+    flexibleBudget: false,
+    smartBudget: false,
+  };
+
+  // Days
+  const rawDays = Array.isArray(raw.itinerary) ? raw.itinerary : [];
+  const days: TripDay[] = rawDays.map((d: any, i: number) => ({
+    dayNumber: d.day || i + 1,
+    date: d.date || '',
+    theme: d.theme || `Day ${i + 1}`,
+    summary: d.summary || '',
+    totalCost: (d.activities || []).reduce((s: number, a: any) => s + (Number(a.cost) || 0), 0),
+    activities: (d.activities || []).map((a: any) => ({
+      time: a.time || '',
+      title: a.title || '',
+      description: a.description || '',
+      location: a.location || '',
+      cost: Number(a.cost) || 0,
+      type: a.type || 'sightseeing',
+      duration: a.duration || null,
+      notes: a.tips || a.notes || '',
+    })),
+  }));
+
+  // Hotels
+  const rawHotels = Array.isArray(raw.hotels) ? raw.hotels : [];
+  const hotels = rawHotels.map((h: any) => ({
+    name: h.name || '',
+    type: h.area || h.type || '',
+    pricePerNight: Number(h.pricePerNight) || 0,
+    location: h.area || h.location || '',
+    rating: Number(h.rating) || 0,
+    amenities: Array.isArray(h.amenities) ? h.amenities : [],
+    pros: h.description ? [h.description] : (Array.isArray(h.pros) ? h.pros : []),
+    cons: Array.isArray(h.cons) ? h.cons : [],
+    bookingUrl: h.bookingUrl || '',
+  }));
+
+  // Restaurants
+  const rawRestaurants = Array.isArray(raw.restaurants) ? raw.restaurants : [];
+  const restaurants = rawRestaurants.map((r: any) => ({
+    name: r.name || '',
+    cuisine: r.cuisine || '',
+    priceRange: r.priceRange || '',
+    location: r.location || '',
+    rating: Number(r.rating) || 0,
+    openingHours: r.openingHours || '',
+    mustTry: Array.isArray(r.mustTry) ? r.mustTry : (typeof r.mustTry === 'string' ? [r.mustTry] : []),
+  }));
+
+  // Hidden Gems
+  const rawGems = Array.isArray(raw.hiddenGems) ? raw.hiddenGems : [];
+  const hiddenGems = rawGems.map((g: any) => ({
+    name: g.name || '',
+    crowdLevel: g.crowdLevel || 'LOW',
+    description: g.description || '',
+    location: g.howToReach || g.location || '',
+    bestTime: g.bestTime || '',
+    insiderTip: g.whySpecial || g.insiderTip || '',
+  }));
+
+  // Budget
+  const bb = raw.budgetBreakdown || {};
+  const budgetTotal = Number(bb.total) || 0;
+  const dayCount = Math.max(days.length, 1);
+  const travelerCount = Math.max(Number(raw.travelers), 1);
+  const budget = {
+    actualCost: budgetTotal,
+    total: budgetTotal,
+    perDay: Math.round(budgetTotal / dayCount),
+    perPerson: Math.round(budgetTotal / travelerCount),
+    transport: Number(bb.transport) || 0,
+    accommodation: Number(bb.accommodation) || 0,
+    food: Number(bb.food) || 0,
+    activities: Number(bb.activities) || 0,
+    miscellaneous: Number(bb.misc) || 0,
+    emergencyFund: 0,
+    breakdown: [] as any[],
+  };
+
+  // Packing List — AI returns [{item, reason, essential}], component expects [{category, items}]
+  const rawPacking = Array.isArray(raw.packingList) ? raw.packingList : [];
+  let packingList: any[];
+  if (rawPacking.length > 0 && rawPacking[0]?.category) {
+    packingList = rawPacking;
+  } else {
+    const essentials = rawPacking.filter((p: any) => p.essential);
+    const optional = rawPacking.filter((p: any) => !p.essential);
+    packingList = [
+      { category: 'Essentials', items: essentials.map((p: any) => ({ name: p.item || p.name || '', essential: true, quantity: p.quantity || 1 })) },
+      { category: 'Optional', items: optional.map((p: any) => ({ name: p.item || p.name || '', essential: false, quantity: p.quantity || 1 })) },
+    ].filter(c => c.items.length > 0);
+  }
+
+  // Safety — AI returns {overallScore, tips, emergencyNumber, scamAlerts, safeAreas, avoidAreas}
+  const si = raw.safetyInfo || raw.safety || {};
+  const safety = {
+    overallScore: Number(si.overallScore) || 0,
+    scamAlerts: Array.isArray(si.scamAlerts) ? si.scamAlerts : (Array.isArray(si.tips) ? si.tips : []),
+    emergencyContacts: Array.isArray(si.emergencyContacts) ? si.emergencyContacts : (si.emergencyNumber ? [{ name: 'Emergency', number: String(si.emergencyNumber) }] : []),
+    hospitals: Array.isArray(si.hospitals) ? si.hospitals : [],
+    safeAreas: Array.isArray(si.safeAreas) ? si.safeAreas : [],
+    avoidAreas: Array.isArray(si.avoidAreas) ? si.avoidAreas : [],
+    vaccinations: Array.isArray(si.vaccinations) ? si.vaccinations : [],
+  };
+
+  // Weather
+  const weather = raw.weatherInfo || raw.weather || {};
+
+  const generatedTrip: GeneratedTrip = {
+    title: raw.title || `Trip to ${raw.destination || 'Unknown'}`,
+    summary: `A ${dayCount}-day trip to ${raw.destination || 'Unknown'}`,
+    days,
+    hotels,
+    restaurants,
+    hiddenGems,
+    budget,
+    packingList,
+    safety,
+    weather,
+    seasonalTips: [],
+  };
+
+  return {
+    tripId,
+    formData: fd,
+    generatedTrip,
+    createdAt: raw.createdAt || new Date().toISOString(),
+  };
+}
 
 export function TripResultView({ tripId }: { tripId: string }) {
   const [tripData, setTripData] = useState<TripData | null>(null);
@@ -51,12 +221,8 @@ export function TripResultView({ tripId }: { tripId: string }) {
       .then(r => r.json())
       .then(d => {
         if (d.trip) {
-          setTripData({
-            tripId,
-            formData: d.trip as TripFormData,
-            generatedTrip: d.trip.itinerary as GeneratedTrip,
-            createdAt: d.trip.createdAt,
-          });
+          const normalized = normalizeTripData(d.trip, tripId);
+          setTripData(normalized);
         } else {
           setError('Trip not found. It may have expired.');
         }
@@ -87,6 +253,10 @@ export function TripResultView({ tripId }: { tripId: string }) {
     { id: 'chat', label: 'AI Chat', icon: MessageCircle },
   ];
 
+  function handleDownloadPDF() {
+    window.print();
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
       {/* Trip Header */}
@@ -109,7 +279,10 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 <Navigation className="w-4 h-4" />
                 Start Journey
               </button>
-              <button className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+              <button
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
                 <Download className="w-4 h-4" />
                 Download PDF
               </button>
@@ -120,12 +293,12 @@ export function TripResultView({ tripId }: { tripId: string }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
             {[
               { icon: MapPin, label: 'Destination', value: fd.destination },
-              { 
-                icon: Calendar, 
-                label: 'Duration', 
-                value: fd.startDate && fd.endDate 
-                  ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days` 
-                  : '— days' 
+              {
+                icon: Calendar,
+                label: 'Duration',
+                value: fd.startDate && fd.endDate
+                  ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days`
+                  : '— days'
               },
               { icon: Users, label: 'Travelers', value: `${fd.travelers} people` },
               { icon: Wallet, label: 'Total Cost', value: formatCurrency(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0, fd.currency) },
@@ -186,7 +359,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
                 else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
 
-                const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)[sectorKey]?.[0] : null;
+                const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
 
                 const displayDayCost = Number(day.totalCost) || (day.activities ?? []).reduce((sum, act) => {
                   const baseCost = Number(act.cost) || 0;
@@ -225,11 +398,11 @@ export function TripResultView({ tripId }: { tripId: string }) {
                           className="overflow-hidden"
                         >
                           <div className="px-6 pb-6">
-                            <p className="text-sm text-muted-foreground mb-6 pb-4 border-t border-border pt-4">{day.summary}</p>
+                            {day.summary && <p className="text-sm text-muted-foreground mb-6 pb-4 border-t border-border pt-4">{day.summary}</p>}
                             <div className="relative space-y-0">
                               {(day.activities ?? []).map((act, i) => {
                                 const isFlightRow = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
-                                
+
                                 const finalTitle = isFlightRow && communityFlight ? `Flight via ${communityFlight.airline}` : act.title;
                                 const finalDesc = isFlightRow && communityFlight ? `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}` : act.description;
                                 const finalCost = isFlightRow && communityFlight ? communityFlight.avgPrice : (Number(act.cost) || 0);
@@ -301,7 +474,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
             else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
             else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
 
-            const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)[sectorKey]?.[0] : null;
+            const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
             const flightPrice = communityFlight ? communityFlight.avgPrice : 0;
 
             const bTransport = flightPrice > 0 ? flightPrice : (Number(trip.budget.transport) || 0);
@@ -372,7 +545,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                   <div className="glass-card p-6">
                     <h3 className="font-semibold text-foreground mb-4">Detailed Breakdown</h3>
                     <div className="space-y-3">
-                      {trip.budget.breakdown.map((item, i) => (
+                      {trip.budget.breakdown.map((item: any, i: number) => (
                         <div key={i} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                           <div>
                             <div className="text-sm font-medium text-foreground">{item.category}</div>
@@ -394,7 +567,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           {/* HOTELS */}
           {activeTab === 'hotels' && (
             <div className="grid sm:grid-cols-2 gap-4">
-              {(trip.hotels ?? []).map((hotel, i) => (
+              {(trip.hotels ?? []).map((hotel: any, i: number) => (
                 <div key={i} className="glass-card p-6">
                   <div className="flex items-start justify-between mb-3">
                     <div>
@@ -409,19 +582,23 @@ export function TripResultView({ tripId }: { tripId: string }) {
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mb-3">
                     <MapPin className="w-3 h-3" />{hotel.location}
                   </div>
-                  <div className="flex items-center gap-1 mb-3">
-                    <Star className="w-3.5 h-3.5 fill-primary text-primary" />
-                    <span className="text-sm font-medium">{hotel.rating}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    {(hotel.amenities ?? []).map(a => (
-                      <span key={a} className="tag-pill">{a}</span>
-                    ))}
-                  </div>
+                  {hotel.rating > 0 && (
+                    <div className="flex items-center gap-1 mb-3">
+                      <Star className="w-3.5 h-3.5 fill-primary text-primary" />
+                      <span className="text-sm font-medium">{hotel.rating}</span>
+                    </div>
+                  )}
+                  {(hotel.amenities ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {(hotel.amenities as string[]).map((a: string) => (
+                        <span key={a} className="tag-pill">{a}</span>
+                      ))}
+                    </div>
+                  )}
                   {(hotel.pros ?? []).length > 0 && (
                     <div className="space-y-1">
-                      {hotel.pros!.map(p => <div key={p} className="text-xs text-forest-600 dark:text-forest-400">✓ {p}</div>)}
-                      {(hotel.cons ?? []).map(c => <div key={c} className="text-xs text-muted-foreground">· {c}</div>)}
+                      {(hotel.pros as string[]).map((p: string) => <div key={p} className="text-xs text-forest-600 dark:text-forest-400">✓ {p}</div>)}
+                      {(hotel.cons as string[]).map((c: string) => <div key={c} className="text-xs text-muted-foreground">· {c}</div>)}
                     </div>
                   )}
                   {hotel.bookingUrl && (
@@ -439,7 +616,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           {activeTab === 'food' && (
             <div className="space-y-4">
               <div className="grid sm:grid-cols-2 gap-4">
-                {(trip.restaurants ?? []).map((r, i) => (
+                {(trip.restaurants ?? []).map((r: any, i: number) => (
                   <div key={i} className="glass-card p-5">
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="font-semibold text-foreground">{r.name}</h3>
@@ -449,15 +626,17 @@ export function TripResultView({ tripId }: { tripId: string }) {
                     <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
                       <MapPin className="w-3 h-3" />{r.location}
                     </div>
-                    <div className="flex items-center gap-1 mb-3">
-                      <Star className="w-3.5 h-3.5 fill-primary text-primary" />
-                      <span className="text-sm">{r.rating}</span>
-                      <span className="text-xs text-muted-foreground ml-2">{r.openingHours}</span>
-                    </div>
+                    {r.rating > 0 && (
+                      <div className="flex items-center gap-1 mb-3">
+                        <Star className="w-3.5 h-3.5 fill-primary text-primary" />
+                        <span className="text-sm">{r.rating}</span>
+                        {r.openingHours && <span className="text-xs text-muted-foreground ml-2">{r.openingHours}</span>}
+                      </div>
+                    )}
                     {(r.mustTry ?? []).length > 0 && (
                       <div className="text-xs">
                         <span className="text-muted-foreground">Must try: </span>
-                        <span className="text-foreground">{(r.mustTry ?? []).join(', ')}</span>
+                        <span className="text-foreground">{(r.mustTry as string[]).join(', ')}</span>
                       </div>
                     )}
                   </div>
@@ -470,7 +649,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                     <Sparkles className="w-4 h-4 text-primary" />Hidden Gems
                   </h3>
                   <div className="grid sm:grid-cols-2 gap-4">
-                    {trip.hiddenGems.map((gem, i) => (
+                    {trip.hiddenGems.map((gem: any, i: number) => (
                       <div key={i} className="glass-card p-5 border-primary/20 border">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-semibold text-foreground">{gem.name}</h4>
@@ -479,38 +658,44 @@ export function TripResultView({ tripId }: { tripId: string }) {
                             gem.crowdLevel === 'LOW' ? 'bg-forest-500/10 text-forest-600' :
                             gem.crowdLevel === 'MEDIUM' ? 'bg-yellow-500/10 text-yellow-600' :
                             'bg-red-500/10 text-red-600'
-                          )}>{gem.crowdLevel} crowds</span>
+                          )}>{gem.crowdLevel || 'LOW'} crowds</span>
                         </div>
                         <p className="text-sm text-muted-foreground mb-2">{gem.description}</p>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
-                          <MapPin className="w-3 h-3" />{gem.location}
-                          <span className="ml-2">· Best: {gem.bestTime}</span>
-                        </div>
-                        <div className="text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
-                          💡 {gem.insiderTip}
-                        </div>
+                        {gem.location && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                            <MapPin className="w-3 h-3" />{gem.location}
+                            {gem.bestTime && <span className="ml-2">· Best: {gem.bestTime}</span>}
+                          </div>
+                        )}
+                        {gem.insiderTip && (
+                          <div className="text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
+                            💡 {gem.insiderTip}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
               )}
             </div>
-               {/* PACKING */}
+          )}
+
+          {/* PACKING */}
           {activeTab === 'packing' && (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(trip.packingList ?? []).map((cat, i) => (
+              {(trip.packingList ?? []).map((cat: any, i: number) => (
                 <div key={i} className="glass-card p-5">
                   <h3 className="font-semibold text-foreground mb-3">{cat.category}</h3>
                   <div className="space-y-2">
-                    {(cat.items ?? []).map((item, j) => (
+                    {(cat.items ?? []).map((item: any, j: number) => (
                       <div key={j} className="flex items-center gap-2 text-sm">
-                        <div className={cn('w-4 h-4 rounded flex items-center justify-center text-xs', item.essential ? 'bg-primary/15 text-primary' : 'bg-muted')} >
+                        <div className={cn('w-4 h-4 rounded flex items-center justify-center text-xs', item.essential ? 'bg-primary/15 text-primary' : 'bg-muted')}>
                           {item.essential ? '!' : '·'}
                         </div>
                         <span className={item.essential ? 'text-foreground font-medium' : 'text-muted-foreground'}>
                           {item.name}
                         </span>
-                        {item.quantity && <span className="text-xs text-muted-foreground ml-auto">{item.quantity}</span>}
+                        {item.quantity > 1 && <span className="text-xs text-muted-foreground ml-auto">x{item.quantity}</span>}
                       </div>
                     ))}
                   </div>
@@ -540,9 +725,9 @@ export function TripResultView({ tripId }: { tripId: string }) {
                       <AlertTriangle className="w-4 h-4 text-yellow-500" />Scam Alerts
                     </h3>
                     <div className="space-y-2">
-                      {(trip.safety.scamAlerts ?? []).map((alert, i) => (
+                      {(trip.safety.scamAlerts ?? []).map((alert: any, i: number) => (
                         <div key={i} className="text-sm text-foreground flex items-start gap-2">
-                          <span className="text-yellow-500 mt-0.5">⚠</span>{alert}
+                          <span className="text-yellow-500 mt-0.5">⚠</span><span>{alert}</span>
                         </div>
                       ))}
                     </div>
@@ -553,7 +738,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                   <div className="glass-card p-6">
                     <h3 className="font-semibold text-foreground mb-3">Emergency Contacts</h3>
                     <div className="space-y-3">
-                      {(trip.safety.emergencyContacts ?? []).map((c, i) => (
+                      {(trip.safety.emergencyContacts ?? []).map((c: any, i: number) => (
                         <div key={i} className="flex items-center justify-between">
                           <span className="text-sm text-foreground">{c.name}</span>
                           <a href={`tel:${c.number}`} className="text-sm font-mono font-semibold text-primary">{c.number}</a>
@@ -562,12 +747,11 @@ export function TripResultView({ tripId }: { tripId: string }) {
                     </div>
                   </div>
                   <div className="glass-card p-6">
-                    <h3 className="font-semibold text-foreground mb-3">Nearby Hospitals</h3>
-                    <div className="space-y-3">
-                      {(trip.safety.hospitals ?? []).map((h, i) => (
-                        <div key={i} className="mb-2 last:mb-0">
-                          <div className="text-sm font-medium text-foreground">{h.name}</div>
-                          <div className="text-xs text-muted-foreground">{h.address} · {h.distance}</div>
+                    <h3 className="font-semibold text-foreground mb-3">Safety Tips</h3>
+                    <div className="space-y-2">
+                      {(trip.safety.tips ?? []).map((tip: any, i: number) => (
+                        <div key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                          <span className="text-primary mt-0.5">·</span><span>{typeof tip === 'string' ? tip : JSON.stringify(tip)}</span>
                         </div>
                       ))}
                     </div>
@@ -578,28 +762,20 @@ export function TripResultView({ tripId }: { tripId: string }) {
                   <div className="glass-card p-5">
                     <h3 className="text-sm font-semibold text-forest-600 dark:text-forest-400 mb-2">✓ Safe Areas</h3>
                     <div className="flex flex-wrap gap-2">
-                      {(trip.safety.safeAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
+                      {(trip.safety.safeAreas ?? []).map((a: any) => <span key={a} className="tag-pill">{a}</span>)}
                     </div>
                   </div>
                   <div className="glass-card p-5">
                     <h3 className="text-sm font-semibold text-red-500 mb-2">⚠ Avoid</h3>
                     <div className="flex flex-wrap gap-2">
-                      {(trip.safety.avoidAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
+                      {(trip.safety.avoidAreas ?? []).map((a: any) => <span key={a} className="tag-pill">{a}</span>)}
                     </div>
                   </div>
                 </div>
-
-                {(trip.safety.vaccinations ?? []).length > 0 && (
-                  <div className="glass-card p-5">
-                    <h3 className="font-semibold text-foreground mb-3">Recommended Vaccinations</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {(trip.safety.vaccinations ?? []).map(v => <span key={v} className="tag-pill">{v}</span>)}
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })()}
+
           {/* CHAT */}
           {activeTab === 'chat' && (
             <TripChat tripId={tripId} tripContext={fd} />
@@ -612,9 +788,9 @@ export function TripResultView({ tripId }: { tripId: string }) {
         <div className="mt-6 glass-card p-5">
           <h3 className="font-semibold text-foreground mb-3">🌤 Seasonal Tips</h3>
           <div className="grid sm:grid-cols-2 gap-2">
-            {trip.seasonalTips.map((tip, i) => (
+            {trip.seasonalTips.map((tip: string, i: number) => (
               <div key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                <span className="text-primary mt-0.5">·</span>{tip}
+                <span className="text-primary mt-0.5">·</span><span>{tip}</span>
               </div>
             ))}
           </div>
