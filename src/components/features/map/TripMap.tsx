@@ -24,7 +24,7 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
       let centerLng = 78.9629;
       let zoom = 5;
 
-      const firstActivity = trip.days?.[0]?.activities?.find((a) => a.lat && a.lng);
+      const firstActivity = trip.days?.[0]?.activities?.find((a: any) => a.lat && a.lng);
       if (firstActivity?.lat && firstActivity?.lng) {
         centerLat = firstActivity.lat;
         centerLng = firstActivity.lng;
