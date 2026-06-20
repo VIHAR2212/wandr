@@ -52,7 +52,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
     // Google Provider REMOVED — no billing required
   ],
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  jwt: {
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  
   pages: {
     signIn: "/auth/login",
   },
