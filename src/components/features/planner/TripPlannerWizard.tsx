@@ -1,22 +1,22 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   MapPin, Calendar, Users, Wallet, Compass, Utensils,
-  Hotel, Train, ChevronRight, ChevronLeft, Sparkles, Loader2
+  Hotel, Train, ChevronRight, ChevronLeft, Sparkles, Loader2, Wand2
 } from 'lucide-react';
 import type { TripFormData, TripPurpose, FoodPreference, HotelType, TransportType } from '@/types';
 import { cn, formatCurrency } from '@/lib/utils';
 
-const STEPS = ['Route', 'Dates & Travelers', 'Budget', 'Purpose & Food', 'Accommodation', 'Review'];
+const STEPS = ['Route', 'Budget & Travelers', 'Purpose & Food', 'Accommodation', 'Review'];
 
 const PURPOSES: { value: TripPurpose; label: string; emoji: string }[] = [
   { value: 'ADVENTURE', label: 'Adventure', emoji: '🧗' },
   { value: 'DEVOTIONAL', label: 'Devotional', emoji: '🛕' },
   { value: 'HIKING', label: 'Hiking', emoji: '🥾' },
-  { value: 'HONEYMOON', label: 'Honeymoon', emoji: '💍' },
+  { value: 'HONEYMOON', label: 'Romantic', emoji: '💍' },
   { value: 'FAMILY', label: 'Family', emoji: '👨‍👩‍👧' },
   { value: 'PHOTOGRAPHY', label: 'Photography', emoji: '📷' },
   { value: 'BUSINESS', label: 'Business', emoji: '💼' },
@@ -57,22 +57,40 @@ const TRANSPORT_TYPES: { value: TransportType; label: string; emoji: string }[] 
   { value: 'BICYCLE', label: 'Bicycle', emoji: '🚲' },
 ];
 
+// Auto-select transport & hotel based on budget
+function getSmartRecommendations(budget: number, travelers: number, days: number) {
+  const perDayPerPerson = days > 0 ? budget / (days * travelers) : budget;
+  let transport: TransportType[] = [];
+  let hotel: HotelType = 'STANDARD';
+
+  if (perDayPerPerson <= 1500) {
+    transport = ['BUS', 'TRAIN', 'BICYCLE', 'WALKING' as TransportType];
+    hotel = 'HOSTEL';
+  } else if (perDayPerPerson <= 3000) {
+    transport = ['TRAIN', 'BUS', 'TAXI'];
+    hotel = 'BUDGET';
+  } else if (perDayPerPerson <= 6000) {
+    transport = ['TRAIN', 'BUS', 'CAR_RENTAL', 'TAXI'];
+    hotel = 'STANDARD';
+  } else if (perDayPerPerson <= 12000) {
+    transport = ['FLIGHT', 'TRAIN', 'CAR_RENTAL', 'TAXI'];
+    hotel = 'COMFORT';
+  } else {
+    transport = ['FLIGHT', 'CAR_RENTAL', 'TAXI'];
+    hotel = 'LUXURY';
+  }
+
+  return { transport, hotel };
+}
+
+// Format date to dd-mm-yyyy
 function fmtDate(dateStr: string): string {
-  if (!dateStr) return '—';
+  if (!dateStr) return '';
   const d = new Date(dateStr);
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(-2);
-  return `${dd}/${mm}/${yy}`;
-}
-
-function getSmartTransport(budget: number, currency: string): TransportType[] {
-  const b = currency === 'INR' ? budget : budget * 83;
-  if (b < 15000) return ['BUS', 'TRAIN'];
-  if (b < 30000) return ['TRAIN', 'BUS', 'TAXI'];
-  if (b < 60000) return ['TRAIN', 'BUS', 'TAXI', 'METRO'];
-  if (b < 100000) return ['TRAIN', 'FLIGHT', 'TAXI', 'CAR_RENTAL'];
-  return ['FLIGHT', 'TRAIN', 'CAR_RENTAL', 'TAXI'];
+  const yy = d.getFullYear();
+  return `${dd}-${mm}-${yy}`;
 }
 
 const defaultForm: TripFormData = {
@@ -83,13 +101,14 @@ const defaultForm: TripFormData = {
   travelers: 2,
   budget: 50000,
   currency: 'INR',
-  purpose: 'ADVENTURE',
+  purposes: ['ADVENTURE'],
   foodPreference: 'NON_VEG',
   hotelPreference: 'STANDARD',
   transportPreferences: ['FLIGHT', 'TRAIN'],
   specialRequests: '',
   includeHiddenGems: true,
   flexibleBudget: false,
+  smartBudget: true,
 };
 
 export function TripPlannerWizard() {
@@ -97,13 +116,21 @@ export function TripPlannerWizard() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<TripFormData>(defaultForm);
   const [loading, setLoading] = useState(false);
-  const [selectedPurposes, setSelectedPurposes] = useState<TripPurpose[]>(['ADVENTURE']);
 
   const totalSteps = STEPS.length;
   const progress = ((step + 1) / totalSteps) * 100;
 
   function update<K extends keyof TripFormData>(key: K, value: TripFormData[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
+  }
+
+  function togglePurpose(p: TripPurpose) {
+    setForm(prev => ({
+      ...prev,
+      purposes: prev.purposes.includes(p)
+        ? prev.purposes.filter(x => x !== p)
+        : [...prev.purposes, p],
+    }));
   }
 
   function toggleTransport(t: TransportType) {
@@ -115,39 +142,35 @@ export function TripPlannerWizard() {
     }));
   }
 
-  function togglePurpose(p: TripPurpose) {
-    setSelectedPurposes(prev =>
-      prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]
-    );
-  }
-
-  function handleSmartTransport() {
-    const smart = getSmartTransport(form.budget, form.currency);
-    update('transportPreferences', smart);
-    toast.success('Transport selected based on your budget!');
-  }
+  // Auto-fill transport & hotel when budget changes and smart mode is on
+  useEffect(() => {
+    if (form.smartBudget && form.budget > 0 && form.travelers > 0) {
+      const duration = form.startDate && form.endDate
+        ? Math.max(1, Math.ceil((new Date(form.endDate).getTime() - new Date(form.startDate).getTime()) / 86400000) + 1)
+        : 5;
+      const rec = getSmartRecommendations(form.budget, form.travelers, duration);
+      setForm(prev => ({
+        ...prev,
+        transportPreferences: rec.transport,
+        hotelPreference: rec.hotel,
+      }));
+    }
+  }, [form.budget, form.travelers, form.startDate, form.endDate, form.smartBudget]);
 
   function canProceed() {
     if (step === 0) return form.origin && form.destination;
-    if (step === 1) return form.startDate && form.endDate && form.travelers > 0;
-    if (step === 2) return form.budget > 0;
-    if (step === 3) return selectedPurposes.length > 0;
+    if (step === 1) return form.startDate && form.endDate && form.travelers > 0 && form.budget > 0;
+    if (step === 2) return form.purposes.length > 0;
     return true;
   }
 
   async function handleGenerate() {
     setLoading(true);
     try {
-      const payload = {
-        ...form,
-        purpose: selectedPurposes,
-        primaryPurpose: selectedPurposes[0],
-      };
-
       const res = await fetch('/api/ai/generate-trip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(form),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate trip');
@@ -169,7 +192,6 @@ export function TripPlannerWizard() {
   const duration = getDuration();
   const perDay = duration > 0 ? Math.round(form.budget / duration) : 0;
   const perPerson = form.travelers > 0 ? Math.round(form.budget / form.travelers) : 0;
-  const selectedPurposeLabels = selectedPurposes.map(p => PURPOSES.find(x => x.value === p)?.label || p);
 
   return (
     <div className="glass-card p-2">
@@ -252,114 +274,47 @@ export function TripPlannerWizard() {
                       type="text"
                       value={form.destination}
                       onChange={e => update('destination', e.target.value)}
-                      placeholder="Manali, Himachal Pradesh"
+                      placeholder="Gujarat, India"
                       className="glass-input"
                     />
                   </div>
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-3">
-                    <Train className="w-4 h-4 text-muted-foreground" />
-                    Preferred Transport
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {TRANSPORT_TYPES.map(t => (
-                      <button
-                        key={t.value}
-                        onClick={() => toggleTransport(t.value)}
-                        className={cn(
-                          'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all',
-                          form.transportPreferences.includes(t.value)
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
-                        )}
-                      >
-                        {t.emoji} {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={handleSmartTransport}
-                    className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 transition-all"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    Good for Trip — Auto select by budget
-                  </button>
-                </div>
               </div>
             )}
 
-            {/* Step 1: Dates & Travelers */}
+            {/* Step 1: Budget & Travelers (moved up before purpose) */}
             {step === 1 && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">When & Who?</h2>
-                  <p className="text-muted-foreground text-sm">Pick your travel dates and group size.</p>
+                  <h2 className="text-2xl font-bold text-foreground mb-1">Budget & Travelers</h2>
+                  <p className="text-muted-foreground text-sm">AI will optimize everything within your budget.</p>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-muted-foreground" />
-                      Start Date
-                    </label>
-                    <input
-                      type="date"
-                      value={form.startDate}
-                      min={new Date().toISOString().split('T')[0]}
-                      onChange={e => update('startDate', e.target.value)}
-                      className="glass-input"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-muted-foreground" />
-                      End Date
-                    </label>
-                    <input
-                      type="date"
-                      value={form.endDate}
-                      min={form.startDate || new Date().toISOString().split('T')[0]}
-                      onChange={e => update('endDate', e.target.value)}
-                      className="glass-input"
-                    />
-                  </div>
-                </div>
-                {duration > 0 && (
-                  <div className="glass-panel px-4 py-3 rounded-2xl text-sm text-foreground">
-                    📅 <strong>{duration} {duration === 1 ? 'day' : 'days'}</strong> trip ({fmtDate(form.startDate)} — {fmtDate(form.endDate)})
-                  </div>
-                )}
-                <div>
-                  <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                    <Users className="w-4 h-4 text-muted-foreground" />
-                    Number of Travelers
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => update('travelers', Math.max(1, form.travelers - 1))}
-                      className="w-10 h-10 rounded-xl border border-border hover:bg-muted/60 flex items-center justify-center text-foreground transition-colors"
-                    >
-                      −
-                    </button>
-                    <span className="text-2xl font-bold text-foreground w-12 text-center">{form.travelers}</span>
-                    <button
-                      onClick={() => update('travelers', Math.min(20, form.travelers + 1))}
-                      className="w-10 h-10 rounded-xl border border-border hover:bg-muted/60 flex items-center justify-center text-foreground transition-colors"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
 
-            {/* Step 2: Budget */}
-            {step === 2 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">What's your budget?</h2>
-                  <p className="text-muted-foreground text-sm">AI will never exceed this amount. This is a hard constraint.</p>
+                {/* Smart Budget Toggle */}
+                <div className="glass-panel rounded-2xl p-4 border-primary/20 border">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Wand2 className="w-5 h-5 text-primary" />
+                      <div>
+                        <div className="text-sm font-medium text-foreground">Good for Trip</div>
+                        <div className="text-xs text-muted-foreground">Auto-selects transport & hotel based on budget</div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => update('smartBudget', !form.smartBudget)}
+                      className={cn(
+                        'relative w-10 h-6 rounded-full transition-colors',
+                        form.smartBudget ? 'bg-primary' : 'bg-muted'
+                      )}
+                    >
+                      <span className={cn(
+                        'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
+                        form.smartBudget ? 'left-5' : 'left-1'
+                      )} />
+                    </button>
+                  </div>
                 </div>
+
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
@@ -413,6 +368,63 @@ export function TripPlannerWizard() {
                   </div>
                 </div>
 
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
+                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      Start Date
+                    </label>
+                    <input
+                      type="date"
+                      value={form.startDate}
+                      min={new Date().toISOString().split('T')[0]}
+                      onChange={e => update('startDate', e.target.value)}
+                      className="glass-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
+                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      End Date
+                    </label>
+                    <input
+                      type="date"
+                      value={form.endDate}
+                      min={form.startDate || new Date().toISOString().split('T')[0]}
+                      onChange={e => update('endDate', e.target.value)}
+                      className="glass-input"
+                    />
+                  </div>
+                </div>
+
+                {duration > 0 && (
+                  <div className="glass-panel px-4 py-3 rounded-2xl text-sm text-foreground">
+                    📅 <strong>{duration} {duration === 1 ? 'day' : 'days'}</strong> trip ({fmtDate(form.startDate)} to {fmtDate(form.endDate)})
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                    Number of Travelers
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => update('travelers', Math.max(1, form.travelers - 1))}
+                      className="w-10 h-10 rounded-xl border border-border hover:bg-muted/60 flex items-center justify-center text-foreground transition-colors"
+                    >
+                      −
+                    </button>
+                    <span className="text-2xl font-bold text-foreground w-12 text-center">{form.travelers}</span>
+                    <button
+                      onClick={() => update('travelers', Math.min(20, form.travelers + 1))}
+                      className="w-10 h-10 rounded-xl border border-border hover:bg-muted/60 flex items-center justify-center text-foreground transition-colors"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
                 {duration > 0 && (
                   <div className="grid grid-cols-3 gap-3">
                     {[
@@ -428,36 +440,33 @@ export function TripPlannerWizard() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => update('flexibleBudget', !form.flexibleBudget)}
-                    className={cn(
-                      'relative w-10 h-6 rounded-full transition-colors',
-                      form.flexibleBudget ? 'bg-primary' : 'bg-muted'
-                    )}
-                  >
-                    <span className={cn(
-                      'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
-                      form.flexibleBudget ? 'left-5' : 'left-1'
-                    )} />
-                  </button>
-                  <span className="text-sm text-foreground">Allow up to 10% flexibility for significantly better options</span>
-                </div>
+                {/* Show smart recommendations */}
+                {form.smartBudget && form.budget > 0 && (
+                  <div className="glass-panel rounded-2xl p-4 border-primary/20 border">
+                    <div className="text-xs text-primary font-medium mb-2">✨ Smart Budget selected:</div>
+                    <div className="text-sm text-muted-foreground">
+                      Transport: {form.transportPreferences.map(t => TRANSPORT_TYPES.find(x => x.value === t)?.label).join(', ')}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Stay: {HOTEL_TYPES.find(h => h.value === form.hotelPreference)?.label} ({HOTEL_TYPES.find(h => h.value === form.hotelPreference)?.price})
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Step 3: Purpose & Food */}
-            {step === 3 && (
+            {/* Step 2: Purpose & Food */}
+            {step === 2 && (
               <div className="space-y-6">
                 <div>
                   <h2 className="text-2xl font-bold text-foreground mb-1">Trip style & food</h2>
-                  <p className="text-muted-foreground text-sm">Select one or more purposes. This shapes every recommendation.</p>
+                  <p className="text-muted-foreground text-sm">Select multiple purposes and your food preference.</p>
                 </div>
 
                 <div>
                   <label className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
                     <Compass className="w-4 h-4 text-muted-foreground" />
-                    Trip Purpose <span className="text-xs text-muted-foreground font-normal">(select multiple)</span>
+                    Trip Purposes <span className="text-xs text-muted-foreground">(select multiple)</span>
                   </label>
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                     {PURPOSES.map(p => (
@@ -466,16 +475,13 @@ export function TripPlannerWizard() {
                         onClick={() => togglePurpose(p.value)}
                         className={cn(
                           'flex flex-col items-center gap-1.5 px-3 py-3 rounded-2xl text-xs font-medium border transition-all',
-                          selectedPurposes.includes(p.value)
+                          form.purposes.includes(p.value)
                             ? 'border-primary bg-primary/10 text-primary'
                             : 'border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/40'
                         )}
                       >
                         <span className="text-xl">{p.emoji}</span>
                         {p.label}
-                        {selectedPurposes.includes(p.value) && (
-                          <span className="text-[10px] text-primary">✓</span>
-                        )}
                       </button>
                     ))}
                   </div>
@@ -520,34 +526,66 @@ export function TripPlannerWizard() {
               </div>
             )}
 
-            {/* Step 4: Accommodation */}
-            {step === 4 && (
+            {/* Step 3: Accommodation & Transport */}
+            {step === 3 && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">Where will you stay?</h2>
-                  <p className="text-muted-foreground text-sm">AI selects hotels matching your style and budget.</p>
+                  <h2 className="text-2xl font-bold text-foreground mb-1">Stay & Transport</h2>
+                  <p className="text-muted-foreground text-sm">
+                    {form.smartBudget ? 'Auto-selected by Smart Budget. Turn it off in Step 2 to customize.' : 'Choose your preferences.'}
+                  </p>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {HOTEL_TYPES.map(h => (
-                    <button
-                      key={h.value}
-                      onClick={() => update('hotelPreference', h.value)}
-                      className={cn(
-                        'flex items-center gap-4 px-4 py-4 rounded-2xl border text-left transition-all',
-                        form.hotelPreference === h.value
-                          ? 'border-primary bg-primary/10'
-                          : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                      )}
-                    >
-                      <Hotel className={cn('w-5 h-5', form.hotelPreference === h.value ? 'text-primary' : 'text-muted-foreground')} />
-                      <div>
-                        <div className={cn('font-medium text-sm', form.hotelPreference === h.value ? 'text-primary' : 'text-foreground')}>
-                          {h.label}
+
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                    <Hotel className="w-4 h-4 text-muted-foreground" />
+                    Accommodation Type
+                  </label>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {HOTEL_TYPES.map(h => (
+                      <button
+                        key={h.value}
+                        onClick={() => update('hotelPreference', h.value)}
+                        className={cn(
+                          'flex items-center gap-4 px-4 py-4 rounded-2xl border text-left transition-all',
+                          form.hotelPreference === h.value
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                        )}
+                      >
+                        <Hotel className={cn('w-5 h-5', form.hotelPreference === h.value ? 'text-primary' : 'text-muted-foreground')} />
+                        <div>
+                          <div className={cn('font-medium text-sm', form.hotelPreference === h.value ? 'text-primary' : 'text-foreground')}>
+                            {h.label}
+                          </div>
+                          <div className="text-xs text-muted-foreground">{h.price}</div>
                         </div>
-                        <div className="text-xs text-muted-foreground">{h.price}</div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-3">
+                    <Train className="w-4 h-4 text-muted-foreground" />
+                    Preferred Transport <span className="text-xs text-muted-foreground">(select multiple)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {TRANSPORT_TYPES.map(t => (
+                      <button
+                        key={t.value}
+                        onClick={() => toggleTransport(t.value)}
+                        className={cn(
+                          'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all',
+                          form.transportPreferences.includes(t.value)
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
+                        )}
+                      >
+                        {t.emoji} {t.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -568,8 +606,8 @@ export function TripPlannerWizard() {
               </div>
             )}
 
-            {/* Step 5: Review */}
-            {step === 5 && (
+            {/* Step 4: Review */}
+            {step === 4 && (
               <div className="space-y-6">
                 <div>
                   <h2 className="text-2xl font-bold text-foreground mb-1">Ready to plan!</h2>
@@ -582,7 +620,7 @@ export function TripPlannerWizard() {
                     { label: 'Dates', value: form.startDate && form.endDate ? `${fmtDate(form.startDate)} to ${fmtDate(form.endDate)} (${duration}d)` : '—' },
                     { label: 'Travelers', value: `${form.travelers} ${form.travelers === 1 ? 'person' : 'people'}` },
                     { label: 'Budget', value: formatCurrency(form.budget, form.currency) },
-                    { label: 'Purpose', value: selectedPurposeLabels.join(', ') },
+                    { label: 'Purposes', value: form.purposes.map(p => PURPOSES.find(x => x.value === p)?.emoji + ' ' + PURPOSES.find(x => x.value === p)?.label).join(', ') },
                     { label: 'Food', value: FOOD_PREFS.find(f => f.value === form.foodPreference)?.label || '' },
                     { label: 'Accommodation', value: HOTEL_TYPES.find(h => h.value === form.hotelPreference)?.label || '' },
                     { label: 'Transport', value: form.transportPreferences.map(t => TRANSPORT_TYPES.find(x => x.value === t)?.emoji).join(' ') },
@@ -595,9 +633,9 @@ export function TripPlannerWizard() {
                 </div>
 
                 {form.specialRequests && (
-                  <div className="glass-panel rounded-2xl px-4 py-3 border-primary/20 border">
-                    <div className="text-xs text-muted-foreground mb-0.5">Special Requests</div>
-                    <div className="text-sm font-medium text-primary">{form.specialRequests}</div>
+                  <div className="glass-panel rounded-2xl px-4 py-3 border-yellow-500/20 border">
+                    <div className="text-xs text-yellow-500 font-medium mb-0.5">Special Requests</div>
+                    <div className="text-sm text-foreground">{form.specialRequests}</div>
                   </div>
                 )}
 
