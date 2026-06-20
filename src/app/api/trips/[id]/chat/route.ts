@@ -60,7 +60,7 @@ export async function POST(req: Request, { params }: Params) {
     }));
 
     // Retry up to 2 times if first attempt fails
-    let result;
+    let result: { text: string; provider: string } | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         result = await tryChat(systemPrompt, messageHistory);
@@ -72,10 +72,10 @@ export async function POST(req: Request, { params }: Params) {
     }
 
     const saved = await prisma.chatMessage.create({
-      data: { tripId: id, role: 'ASSISTANT', content: result.text },
+      data: { tripId: id, role: 'ASSISTANT', content: result?.text || 'Sorry, I could not process your request.' },
     });
 
-    return NextResponse.json({ message: saved, aiProvider: result.provider });
+    return NextResponse.json({ message: saved, aiProvider: result?.provider || 'fallback' });
   } catch (err) {
     console.error('[Trip Chat POST]', err);
     // Return a friendly error instead of crashing
