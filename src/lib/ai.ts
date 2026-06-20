@@ -49,7 +49,7 @@ async function callZAI(messages: Array<{ role: string; content: string }>): Prom
       body: JSON.stringify({
         model: ZAI_CONFIG.model,
         messages,
-        max_tokens: 8192,
+        max_tokens: 16384,
         temperature: 0.7,
       }),
     });
@@ -101,7 +101,7 @@ async function callGroq(messages: Array<{ role: string; content: string }>): Pro
       body: JSON.stringify({
         model: GROQ_CONFIG.model,
         messages,
-        max_tokens: 8192,
+        max_tokens: 16384,
         temperature: 0.7,
       }),
     });
