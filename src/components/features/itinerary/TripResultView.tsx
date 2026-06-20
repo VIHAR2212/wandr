@@ -13,7 +13,7 @@ import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safety
 import { cn } from '@/lib/utils';
 import type { GeneratedTrip, TripDay, TripFormData } from '@/types';
 
-// 🚀 IMPORTED: Connecting our local flight database registry here
+// 🚀 Local flight database registry lookup connection
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
 
 interface TripData {
@@ -86,7 +86,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
     { id: 'safety', label: 'Safety', icon: Shield },
     { id: 'chat', label: 'AI Chat', icon: MessageCircle },
   ];
-  
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
       {/* Trip Header */}
@@ -120,11 +120,17 @@ export function TripResultView({ tripId }: { tripId: string }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
             {[
               { icon: MapPin, label: 'Destination', value: fd.destination },
-              { icon: Calendar, label: 'Duration', value: `${fd.startDate ? `${new Date(fd.endDate).getDate() - new Date(fd.startDate).getDate() + 1}` : '—'} days` },
+              { 
+                icon: Calendar, 
+                label: 'Duration', 
+                value: fd.startDate && fd.endDate 
+                  ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days` 
+                  : '— days' 
+              },
               { icon: Users, label: 'Travelers', value: `${fd.travelers} people` },
-              { icon: Wallet, label: 'Total Cost', value: formatCurrency(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget, fd.currency) },
-              { icon: Wallet, label: 'Per Day', value: formatCurrency(trip.budget?.perDay ?? 0, fd.currency) },
-              { icon: Wallet, label: 'Per Person', value: formatCurrency(trip.budget?.perPerson ?? 0, fd.currency) },
+              { icon: Wallet, label: 'Total Cost', value: formatCurrency(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0, fd.currency) },
+              { icon: Wallet, label: 'Per Day', value: formatCurrency(Number(trip.budget?.perDay) || 0, fd.currency) },
+              { icon: Wallet, label: 'Per Person', value: formatCurrency(Number(trip.budget?.perPerson) || 0, fd.currency) },
             ].map(({ icon: Icon, label, value }) => (
               <div key={label} className="glass-panel rounded-2xl px-4 py-3">
                 <Icon className="w-3.5 h-3.5 text-muted-foreground mb-1" />
@@ -170,95 +176,122 @@ export function TripResultView({ tripId }: { tripId: string }) {
           {/* ITINERARY */}
           {activeTab === 'itinerary' && (
             <div className="space-y-4">
-              {(trip.days ?? []).map((day: TripDay) => (
-                <div key={day.dayNumber} className="glass-card overflow-hidden">
-                  <button
-                    className="w-full flex items-center justify-between p-6 text-left"
-                    onClick={() => setExpandedDay(expandedDay === day.dayNumber ? 0 : day.dayNumber)}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-primary/10 flex flex-col items-center justify-center">
-                        <span className="text-xs text-primary font-medium leading-none">Day</span>
-                        <span className="text-lg font-bold text-primary leading-none">{day.dayNumber}</span>
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-foreground">{day.theme}</h3>
-                        <p className="text-sm text-muted-foreground">{formatDate(day.date)} · {formatCurrency(day.totalCost, fd.currency)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground hidden sm:block">{day.activities?.length ?? 0} activities</span>
-                      {expandedDay === day.dayNumber ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-                    </div>
-                  </button>
+              {(trip.days ?? []).map((day: TripDay) => {
+                const destLower = fd.destination?.toLowerCase() || '';
+                let sectorKey = '';
+                if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
+                else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
+                else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
+                else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
+                else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
+                else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
 
-                  <AnimatePresence>
-                    {expandedDay === day.dayNumber && (
-                      <motion.div
-                        initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="px-6 pb-6">
-                          <p className="text-sm text-muted-foreground mb-6 pb-4 border-t border-border pt-4">{day.summary}</p>
-                          <div className="relative space-y-0">
-                            {(day.activities ?? []).map((act, i) => (
-                              <div key={i} className="flex gap-4 pb-6 last:pb-0">
-                                {/* Timeline */}
-                                <div className="flex flex-col items-center">
-                                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-base bg-muted/60 flex-shrink-0">
-                                    {activityTypeIcon(act.type)}
-                                  </div>
-                                  {i < (day.activities?.length ?? 0) - 1 && (
-                                    <div className="w-px flex-1 bg-border mt-1" />
-                                  )}
-                                </div>
-                                {/* Content */}
-                                <div className="flex-1 min-w-0 pb-2">
-                                  <div className="flex items-start justify-between gap-2 mb-1">
-                                    <div>
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-xs font-mono text-muted-foreground">{act.time}</span>
-                                        <span className={cn('text-2xs px-2 py-0.5 rounded-full font-medium', activityTypeColor(act.type))}>
-                                          {act.type}
-                                        </span>
-                                      </div>
-                                      <h4 className="font-medium text-foreground">{act.title}</h4>
-                                    </div>
-                                    {act.cost > 0 && (
-                                      <span className="text-sm font-semibold text-primary whitespace-nowrap">
-                                        {formatCurrency(act.cost, fd.currency)}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-sm text-muted-foreground mb-1">{act.description}</p>
-                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                    <MapPin className="w-3 h-3" />
-                                    {act.location}
-                                    {act.duration && <span className="ml-2 flex items-center gap-1"><Clock className="w-3 h-3" />{act.duration}m</span>}
-                                  </div>
-                                  {act.notes && (
-                                    <div className="mt-2 text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
-                                      💡 {act.notes}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)[sectorKey]?.[0] : null;
+
+                const displayDayCost = Number(day.totalCost) || (day.activities ?? []).reduce((sum, act) => {
+                  const baseCost = Number(act.cost) || 0;
+                  const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
+                  return sum + (isFlight && communityFlight ? communityFlight.avgPrice : baseCost);
+                }, 0);
+
+                return (
+                  <div key={day.dayNumber} className="glass-card overflow-hidden">
+                    <button
+                      className="w-full flex items-center justify-between p-6 text-left"
+                      onClick={() => setExpandedDay(expandedDay === day.dayNumber ? 0 : day.dayNumber)}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-primary/10 flex flex-col items-center justify-center">
+                          <span className="text-xs text-primary font-medium leading-none">Day</span>
+                          <span className="text-lg font-bold text-primary leading-none">{day.dayNumber}</span>
                         </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              ))}
+                        <div>
+                          <h3 className="font-semibold text-foreground">{day.theme}</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {formatDate(day.date)} · {formatCurrency(displayDayCost, fd.currency)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-muted-foreground hidden sm:block">{day.activities?.length ?? 0} activities</span>
+                        {expandedDay === day.dayNumber ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                      </div>
+                    </button>
+
+                    <AnimatePresence>
+                      {expandedDay === day.dayNumber && (
+                        <motion.div
+                          initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-6 pb-6">
+                            <p className="text-sm text-muted-foreground mb-6 pb-4 border-t border-border pt-4">{day.summary}</p>
+                            <div className="relative space-y-0">
+                              {(day.activities ?? []).map((act, i) => {
+                                const isFlightRow = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
+                                
+                                const finalTitle = isFlightRow && communityFlight ? `Flight via ${communityFlight.airline}` : act.title;
+                                const finalDesc = isFlightRow && communityFlight ? `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}` : act.description;
+                                const finalCost = isFlightRow && communityFlight ? communityFlight.avgPrice : (Number(act.cost) || 0);
+
+                                return (
+                                  <div key={i} className="flex gap-4 pb-6 last:pb-0">
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-base bg-muted/60 flex-shrink-0">
+                                        {activityTypeIcon(act.type)}
+                                      </div>
+                                      {i < (day.activities?.length ?? 0) - 1 && (
+                                        <div className="w-px flex-1 bg-border mt-1" />
+                                      )}
+                                    </div>
+                                    <div className="flex-1 min-w-0 pb-2">
+                                      <div className="flex items-start justify-between gap-2 mb-1">
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-xs font-mono text-muted-foreground">{act.time}</span>
+                                            <span className={cn('text-2xs px-2 py-0.5 rounded-full font-medium', activityTypeColor(act.type))}>
+                                              {act.type}
+                                            </span>
+                                          </div>
+                                          <h4 className="font-medium text-foreground">{finalTitle}</h4>
+                                        </div>
+                                        {finalCost > 0 && (
+                                          <span className="text-sm font-semibold text-primary whitespace-nowrap">
+                                            {formatCurrency(finalCost, fd.currency)}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-sm text-muted-foreground mb-1">{finalDesc}</p>
+                                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                        <MapPin className="w-3 h-3" />
+                                        {act.location}
+                                        {act.duration && <span className="ml-2 flex items-center gap-1"><Clock className="w-3 h-3" />{act.duration}m</span>}
+                                      </div>
+                                      {act.notes && (
+                                        <div className="mt-2 text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
+                                          💡 {act.notes}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
             </div>
           )}
+
           {/* MAP */}
           {activeTab === 'map' && <TripMap trip={trip} formData={fd} />}
 
           {/* BUDGET */}
           {activeTab === 'budget' && trip.budget && (() => {
-            // 🚀 1. RE-ESTABLISH SECTOR LOOKUP FOR SYSTEM SYNCHRONIZATION
             const destLower = fd.destination?.toLowerCase() || '';
             let sectorKey = '';
             if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
@@ -271,7 +304,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
             const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)[sectorKey]?.[0] : null;
             const flightPrice = communityFlight ? communityFlight.avgPrice : 0;
 
-            // 🚀 2. TYPE COERCION: Enforce pure numbers to eliminate all string type or NaN leakages
             const bTransport = flightPrice > 0 ? flightPrice : (Number(trip.budget.transport) || 0);
             const bAccommodation = Number(trip.budget.accommodation) || 0;
             const bFood = Number(trip.budget.food) || 0;
@@ -301,7 +333,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
                     ))}
                   </div>
 
-                  {/* Budget bars */}
                   <div className="space-y-4">
                     {[
                       { label: 'Transport', value: bTransport, color: 'bg-ocean-400' },
@@ -311,7 +342,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
                       { label: 'Miscellaneous', value: bMisc, color: 'bg-primary/70' },
                       { label: 'Emergency Fund', value: bEmergency, color: 'bg-muted-foreground/30' },
                     ].map(({ label, value, color }) => {
-                      // 🚀 3. SECURE BAR MATH: Use computed total and prevent division by zero states safely
                       const rawPct = (value / (computedTotal || 1)) * 100;
                       const pct = isNaN(rawPct) ? 0 : Math.round(rawPct);
 
@@ -338,7 +368,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
                   </div>
                 </div>
 
-                {/* Detailed breakdown */}
                 {(trip.budget.breakdown ?? []).length > 0 && (
                   <div className="glass-card p-6">
                     <h3 className="font-semibold text-foreground mb-4">Detailed Breakdown</h3>
@@ -405,8 +434,8 @@ export function TripResultView({ tripId }: { tripId: string }) {
               ))}
             </div>
           )}
-                  
-{/* FOOD */}
+
+          {/* FOOD */}
           {activeTab === 'food' && (
             <div className="space-y-4">
               <div className="grid sm:grid-cols-2 gap-4">
@@ -466,204 +495,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 </div>
               )}
             </div>
-          )}
-
-          {/* PACKING */}
-          {activeTab === 'packing' && (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(trip.packingList ?? []).map((cat, i) => (
-                <div key={i} className="glass-card p-5">
-                  <h3 className="font-semibold text-foreground mb-3">{cat.category}</h3>
-                  <div className="space-y-2">
-                    {(cat.items ?? []).map((item, j) => (
-                      <div key={j} className="flex items-center gap-2 text-sm">
-                        <div className={cn('w-4 h-4 rounded flex items-center justify-center text-xs', item.essential ? 'bg-primary/15 text-primary' : 'bg-muted')} >
-                          {item.essential ? '!' : '·'}
-                        </div>
-                        <span className={item.essential ? 'text-foreground font-medium' : 'text-muted-foreground'}>
-                          {item.name}
-                        </span>
-                        {item.quantity && <span className="text-xs text-muted-foreground ml-auto">{item.quantity}</span>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* SAFETY */}
-          {activeTab === 'safety' && trip.safety && (() => {
-            // 🚀 FIXED: Coerce security scores to numbers safely to eliminate unassigned runtime exceptions
-            const safeScore = Number(trip.safety.overallScore) || 0;
-
-            return (
-              <div className="space-y-6">
-                <div className="grid sm:grid-cols-3 gap-4">
-                  <div className="glass-card p-6 col-span-1">
-                    <div className="text-center">
-                      <div className={`text-5xl font-bold ${safetyScoreColor(safeScore)} mb-2`}>
-                        {safeScore}/10
-                      </div>
-                      <div className="font-medium text-foreground">{safetyScoreLabel(safeScore)}</div>
-                      <div className="text-sm text-muted-foreground mt-1">Safety Score</div>
-                    </div>
-                  </div>
-                  <div className="glass-card p-6 sm:col-span-2">
-                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-yellow-500" />Scam Alerts
-                    </h3>
-                    <div className="space-y-2">
-                      {(trip.safety.scamAlerts ?? []).map((alert, i) => (
-                        <div key={i} className="text-sm text-foreground flex items-start gap-2">
-                          <span className="text-yellow-500 mt-0.5">⚠</span>{alert}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="glass-card p-6">
-                    <h3 className="font-semibold text-foreground mb-3">Emergency Contacts</h3>
-                    <div className="space-y-3">
-                      {(trip.safety.emergencyContacts ?? []).map((c, i) => (
-                        <div key={i} className="flex items-center justify-between">
-                          <span className="text-sm text-foreground">{c.name}</span>
-                          <a href={`tel:${c.number}`} className="text-sm font-mono font-semibold text-primary">{c.number}</a>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="glass-card p-6">
-                    <h3 className="font-semibold text-foreground mb-3">Nearby Hospitals</h3>
-                    <div className="space-y-3">
-                      {(trip.safety.hospitals ?? []).map((h, i) => (
-                        <div key={i}>
-                          <div className="text-sm font-medium text-foreground">{h.name}</div>
-                          <div className="text-xs text-muted-foreground">{h.address} · {h.distance}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="glass-card p-5">
-                    <h3 className="text-sm font-semibold text-forest-600 dark:text-forest-400 mb-2">✓ Safe Areas</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {(trip.safety.safeAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
-                    </div>
-                  </div>
-                  <div className="glass-card p-5">
-                    <h3 className="text-sm font-semibold text-red-500 mb-2">⚠ Avoid</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {(trip.safety.avoidAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
-                    </div>
-                  </div>
-                </div>
-
-                {(trip.safety.vaccinations ?? []).length > 0 && (
-                  <div className="glass-card p-5">
-                    <h3 className="font-semibold text-foreground mb-3">Recommended Vaccinations</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {(trip.safety.vaccinations ?? []).map(v => <span key={v} className="tag-pill">{v}</span>)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* 🚀 CHAT TAB INTEGRATION (FIXED CUTOFF) */}
-          {activeTab === 'chat' && (
-            <div className="h-[600px] rounded-2xl overflow-hidden border border-border">
-              <TripChat tripId={tripId} initialMessages={[]} />
-            </div>
-          )}
-        </motion.div>
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// 🚀 SKELETON LOADER ENCLOSURE CONTAINER
-function TripSkeleton() {
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 space-y-8 animate-pulse">
-      <div className="h-10 bg-muted rounded-xl w-1/3" />
-      <div className="h-6 bg-muted rounded-xl w-2/3" />
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 bg-muted rounded-2xl" />)}
-      </div>
-      <div className="h-[400px] bg-muted rounded-[2rem]" />
-    </div>
-  );
-}
-
-                    {/* FOOD */}
-          {activeTab === 'food' && (
-            <div className="space-y-4">
-              <div className="grid sm:grid-cols-2 gap-4">
-                {(trip.restaurants ?? []).map((r, i) => (
-                  <div key={i} className="glass-card p-5">
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-semibold text-foreground">{r.name}</h3>
-                      <span className="text-xs font-medium text-sunset-500 bg-sunset-500/10 px-2 py-1 rounded-full">{r.priceRange}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-1">{r.cuisine}</p>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
-                      <MapPin className="w-3 h-3" />{r.location}
-                    </div>
-                    <div className="flex items-center gap-1 mb-3">
-                      <Star className="w-3.5 h-3.5 fill-primary text-primary" />
-                      <span className="text-sm">{r.rating}</span>
-                      <span className="text-xs text-muted-foreground ml-2">{r.openingHours}</span>
-                    </div>
-                    {(r.mustTry ?? []).length > 0 && (
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">Must try: </span>
-                        <span className="text-foreground">{(r.mustTry ?? []).join(', ')}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {(trip.hiddenGems ?? []).length > 0 && (
-                <div>
-                  <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-primary" />Hidden Gems
-                  </h3>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    {trip.hiddenGems.map((gem, i) => (
-                      <div key={i} className="glass-card p-5 border-primary/20 border">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-semibold text-foreground">{gem.name}</h4>
-                          <span className={cn(
-                            'text-2xs px-2 py-0.5 rounded-full font-medium',
-                            gem.crowdLevel === 'LOW' ? 'bg-forest-500/10 text-forest-600' :
-                            gem.crowdLevel === 'MEDIUM' ? 'bg-yellow-500/10 text-yellow-600' :
-                            'bg-red-500/10 text-red-600'
-                          )}>{gem.crowdLevel} crowds</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mb-2">{gem.description}</p>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
-                          <MapPin className="w-3 h-3" />{gem.location}
-                          <span className="ml-2">· Best: {gem.bestTime}</span>
-                        </div>
-                        <div className="text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
-                          💡 {gem.insiderTip}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* PACKING */}
+               {/* PACKING */}
           {activeTab === 'packing' && (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {(trip.packingList ?? []).map((cat, i) => (
@@ -733,7 +565,7 @@ function TripSkeleton() {
                     <h3 className="font-semibold text-foreground mb-3">Nearby Hospitals</h3>
                     <div className="space-y-3">
                       {(trip.safety.hospitals ?? []).map((h, i) => (
-                        <div key={i} className>
+                        <div key={i} className="mb-2 last:mb-0">
                           <div className="text-sm font-medium text-foreground">{h.name}</div>
                           <div className="text-xs text-muted-foreground">{h.address} · {h.distance}</div>
                         </div>
@@ -768,7 +600,6 @@ function TripSkeleton() {
               </div>
             );
           })()}
-
           {/* CHAT */}
           {activeTab === 'chat' && (
             <TripChat tripId={tripId} tripContext={fd} />
@@ -816,4 +647,3 @@ function TripSkeleton() {
     </div>
   );
 }
-      
