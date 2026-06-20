@@ -6,14 +6,14 @@ export interface TripFormData {
   travelers: number;
   budget: number;
   currency: string;
-  purposes: string[];        // Changed: multiple purposes
+  purposes: string[];
   foodPreference: string;
   hotelPreference: string;
   transportPreferences: string[];
   specialRequests: string;
   includeHiddenGems: boolean;
   flexibleBudget: boolean;
-  smartBudget: boolean;     // NEW: "Good for trip" auto-select
+  smartBudget: boolean;
 }
 
 export type TripPurpose =
@@ -61,7 +61,7 @@ export type TransportType =
 export interface GeneratedTrip {
   title: string;
   summary: string;
-  days: any[];
+  days: TripDay[];
   hotels: any[];
   restaurants: any[];
   hiddenGems: any[];
@@ -80,5 +80,3 @@ export interface TripDay {
   totalCost?: number;
   activities: any[];
 }
-  | 'FERRY'
-  | 'BICYCLE';
