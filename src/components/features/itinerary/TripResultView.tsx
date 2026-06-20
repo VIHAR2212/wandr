@@ -788,7 +788,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
         <div className="mt-6 glass-card p-5">
           <h3 className="font-semibold text-foreground mb-3">🌤 Seasonal Tips</h3>
           <div className="grid sm:grid-cols-2 gap-2">
-            {trip.seasonalTips.map((tip: string, i: number) => (
+            {(trip.seasonalTips ?? []).map((tip: string, i: number) => (
               <div key={i} className="text-sm text-muted-foreground flex items-start gap-2">
                 <span className="text-primary mt-0.5">·</span><span>{tip}</span>
               </div>
