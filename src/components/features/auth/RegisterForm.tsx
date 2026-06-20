@@ -41,7 +41,7 @@ export function RegisterForm() {
         password: form.password, 
         redirect: false 
       });
-      router.push('/dashboard');
+      window.location.href ='/dashboard';
     } finally {
       setLoading(false);
     }
