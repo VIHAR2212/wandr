@@ -1,204 +1,129 @@
-"use client";
-
-import { useState } from "react";
-import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
+'use client';
+import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { signIn } from 'next-auth/react';
+import { toast } from 'sonner';
+import { Compass, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export function RegisterForm() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    if (form.password.length < 6) { 
+      toast.error('Password must be at least 6 characters'); 
+      return; 
+    }
     setLoading(true);
-
-    if (!name || !email || !password) {
-      setError("Please fill in all fields");
-      setLoading(false);
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters");
-      setLoading(false);
-      return;
-    }
-
     try {
-      // Register
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/api/auth/register', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: name.trim(),
-          email: email.toLowerCase().trim(),
-          password,
+          name: form.name.trim(),
+          email: form.email.toLowerCase().trim(),
+          password: form.password,
         }),
       });
-
       const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Registration failed");
-        setLoading(false);
-        return;
+      if (!res.ok) { 
+        toast.error(data.error || 'Registration failed'); 
+        return; 
       }
-
-      // Auto-login after registration
-      const result = await signIn("credentials", {
-        email: email.toLowerCase().trim(),
-        password,
-        redirect: false,
+      toast.success('Account created! Signing you in…');
+      await signIn('credentials', { 
+        email: form.email.toLowerCase().trim(), 
+        password: form.password, 
+        redirect: false 
       });
-
-      if (result?.error) {
-        setError("Account created but login failed. Please sign in manually.");
-        router.push("/auth/login");
-      } else {
-        router.push("/dashboard");
-        router.refresh();
-      }
-    } catch (err: any) {
-      setError("Something went wrong. Please try again.");
+      router.push('/dashboard');
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
-      {/* Background */}
-      <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{
-          backgroundImage:
-            "url('https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1920&q=80')",
-        }}
-      />
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-
-      {/* Form */}
-      <div className="relative z-10 w-full max-w-md mx-4">
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white tracking-tight">
-              Wandr
-            </h1>
-            <h2 className="text-xl text-white/80 mt-2">Start your journey</h2>
-            <p className="text-white/50 text-sm mt-1">
-              Create a free account. No credit card needed.
-            </p>
+    <div className="w-full max-w-md">
+      <div className="glass-card p-8">
+        <div className="flex items-center gap-2.5 mb-8">
+          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Compass className="w-5 h-5 text-primary" />
           </div>
-
-          {/* Error */}
-          {error && (
-            <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-              {error}
-            </div>
-          )}
-
-          {/* Form — NO Google button */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-white/60 text-sm mb-1.5">
-                Full Name
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="John Doe"
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white
-                           placeholder-white/30 focus:outline-none focus:border-orange-500/50 focus:ring-1
-                           focus:ring-orange-500/25 transition-all"
-              />
-            </div>
-
-            <div>
-              <label className="block text-white/60 text-sm mb-1.5">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white
-                           placeholder-white/30 focus:outline-none focus:border-orange-500/50 focus:ring-1
-                           focus:ring-orange-500/25 transition-all"
-              />
-            </div>
-
-            <div>
-              <label className="block text-white/60 text-sm mb-1.5">
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min 6 characters"
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white
-                           placeholder-white/30 focus:outline-none focus:border-orange-500/50 focus:ring-1
-                           focus:ring-orange-500/25 transition-all"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-semibold
-                         transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
-                         shadow-lg shadow-orange-600/25"
-            >
-              {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg
-                    className="animate-spin h-5 w-5"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                      fill="none"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  Creating account...
-                </span>
-              ) : (
-                "Create Free Account"
-              )}
-            </button>
-          </form>
-
-          {/* Footer */}
-          <p className="text-center text-white/40 text-sm mt-6">
-            Already have an account?{" "}
-            <Link
-              href="/auth/login"
-              className="text-orange-400 hover:text-orange-300 font-medium"
-            >
-              Sign in
-            </Link>
-          </p>
+          <span className="text-display text-2xl font-bold">Wandr</span>
         </div>
+
+        <h1 className="text-2xl font-bold text-foreground mb-1">Start your journey</h1>
+        <p className="text-muted-foreground text-sm mb-8">Create a free account. No credit card needed.</p>
+
+        {/* Google button REMOVED — no billing required */}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1.5 block">Full Name</label>
+            <input 
+              type="text" 
+              value={form.name} 
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} 
+              placeholder="Priya Sharma" 
+              required 
+              className="glass-input" 
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1.5 block">Email</label>
+            <input 
+              type="email" 
+              value={form.email} 
+              onChange={e => setForm(f => ({ ...f, email: e.target.value }))} 
+              placeholder="you@example.com" 
+              required 
+              className="glass-input" 
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1.5 block">Password</label>
+            <div className="relative">
+              <input 
+                type={showPw ? 'text' : 'password'} 
+                value={form.password} 
+                onChange={e => setForm(f => ({ ...f, password: e.target.value }))} 
+                placeholder="Min. 6 characters" 
+                required 
+                className="glass-input pr-10" 
+              />
+              <button 
+                type="button" 
+                onClick={() => setShowPw(!showPw)} 
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              >
+                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <button 
+            type="submit" 
+            disabled={loading} 
+            className={cn('btn-premium w-full py-3 justify-center', loading && 'opacity-70 cursor-not-allowed')}
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Free Account'}
+          </button>
+        </form>
+
+        <p className="text-center text-sm text-muted-foreground mt-6">
+          Already have an account?{' '}
+          <Link href="/auth/login" className="text-primary font-medium hover:underline">Sign in</Link>
+        </p>
+        <p className="text-center text-xs text-muted-foreground mt-4">
+          By creating an account, you agree to our{' '}
+          <Link href="#" className="hover:underline">Terms</Link> and{' '}
+          <Link href="#" className="hover:underline">Privacy Policy</Link>.
+        </p>
       </div>
     </div>
   );
 }
-
-export { RegisterForm as default };
