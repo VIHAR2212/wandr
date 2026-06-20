@@ -253,85 +253,114 @@ export function TripResultView({ tripId }: { tripId: string }) {
               ))}
             </div>
           )}
-
           {/* MAP */}
           {activeTab === 'map' && <TripMap trip={trip} formData={fd} />}
 
           {/* BUDGET */}
-          {activeTab === 'budget' && trip.budget && (
-            <div className="space-y-6">
-              <div className="glass-card p-6">
-                <h2 className="font-bold text-lg text-foreground mb-6">Budget Overview</h2>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-                  {[
-                    { label: 'Total Budget', value: formatCurrency(trip.budget.total, fd.currency), color: 'text-foreground' },
-                    { label: 'Actual Cost', value: formatCurrency(trip.budget.actualCost ?? trip.budget.total, fd.currency), color: 'text-primary' },
-                    { label: 'Per Day', value: formatCurrency(trip.budget.perDay, fd.currency), color: 'text-foreground' },
-                    { label: 'Per Person', value: formatCurrency(trip.budget.perPerson, fd.currency), color: 'text-foreground' },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className="glass-panel rounded-2xl p-4">
-                      <div className="text-xs text-muted-foreground mb-1">{label}</div>
-                      <div className={`text-xl font-bold ${color}`}>{value}</div>
-                    </div>
-                  ))}
-                </div>
+          {activeTab === 'budget' && trip.budget && (() => {
+            // 🚀 1. RE-ESTABLISH SECTOR LOOKUP FOR SYSTEM SYNCHRONIZATION
+            const destLower = fd.destination?.toLowerCase() || '';
+            let sectorKey = '';
+            if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
+            else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
+            else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
+            else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
+            else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
+            else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
 
-                {/* Budget bars */}
-                <div className="space-y-4">
-                  {[
-                    { label: 'Transport', value: trip.budget.transport, color: 'bg-ocean-400' },
-                    { label: 'Accommodation', value: trip.budget.accommodation, color: 'bg-earth-400' },
-                    { label: 'Food', value: trip.budget.food, color: 'bg-sunset-400' },
-                    { label: 'Activities', value: trip.budget.activities, color: 'bg-forest-400' },
-                    { label: 'Miscellaneous', value: trip.budget.miscellaneous, color: 'bg-primary/70' },
-                    { label: 'Emergency Fund', value: trip.budget.emergencyFund, color: 'bg-muted-foreground/30' },
-                  ].map(({ label, value, color }) => {
-                    const pct = Math.round((value / trip.budget.total) * 100);
-                    return (
-                      <div key={label}>
-                        <div className="flex items-center justify-between text-sm mb-1.5">
-                          <span className="text-foreground">{label}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground text-xs">{pct}%</span>
-                            <span className="font-medium text-foreground">{formatCurrency(value, fd.currency)}</span>
-                          </div>
-                        </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden">
-                          <motion.div
-                            className={`h-full rounded-full ${color}`}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${pct}%` }}
-                            transition={{ duration: 0.7, ease: 'easeOut' }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+            const communityFlight = sectorKey ? (COMMUNITY_ROUTE_DB as any)[sectorKey]?.[0] : null;
+            const flightPrice = communityFlight ? communityFlight.avgPrice : 0;
 
-              {/* Detailed breakdown */}
-              {(trip.budget.breakdown ?? []).length > 0 && (
+            // 🚀 2. TYPE COERCION: Enforce pure numbers to eliminate all string type or NaN leakages
+            const bTransport = flightPrice > 0 ? flightPrice : (Number(trip.budget.transport) || 0);
+            const bAccommodation = Number(trip.budget.accommodation) || 0;
+            const bFood = Number(trip.budget.food) || 0;
+            const bActivities = Number(trip.budget.activities) || 0;
+            const bMisc = Number(trip.budget.miscellaneous) || 0;
+            const bEmergency = Number(trip.budget.emergencyFund) || 0;
+
+            const computedTotal = bTransport + bAccommodation + bFood + bActivities + bMisc + bEmergency;
+            const computedPerDay = computedTotal / (fd.startDate && fd.endDate ? (Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1) : 1);
+            const computedPerPerson = computedTotal / (Number(fd.travelers) || 1);
+
+            return (
+              <div className="space-y-6">
                 <div className="glass-card p-6">
-                  <h3 className="font-semibold text-foreground mb-4">Detailed Breakdown</h3>
-                  <div className="space-y-3">
-                    {trip.budget.breakdown.map((item, i) => (
-                      <div key={i} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                        <div>
-                          <div className="text-sm font-medium text-foreground">{item.category}</div>
-                          <div className="text-xs text-muted-foreground">{item.details}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-semibold text-foreground">{formatCurrency(item.amount, fd.currency)}</div>
-                          <div className="text-xs text-muted-foreground">{item.percentage}%</div>
-                        </div>
+                  <h2 className="font-bold text-lg text-foreground mb-6">Budget Overview</h2>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+                    {[
+                      { label: 'Total Budget', value: formatCurrency(computedTotal, fd.currency), color: 'text-foreground' },
+                      { label: 'Actual Cost', value: formatCurrency(computedTotal, fd.currency), color: 'text-primary' },
+                      { label: 'Per Day', value: formatCurrency(computedPerDay, fd.currency), color: 'text-foreground' },
+                      { label: 'Per Person', value: formatCurrency(computedPerPerson, fd.currency), color: 'text-foreground' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className="glass-panel rounded-2xl p-4">
+                        <div className="text-xs text-muted-foreground mb-1">{label}</div>
+                        <div className={`text-xl font-bold ${color}`}>{value}</div>
                       </div>
                     ))}
                   </div>
+
+                  {/* Budget bars */}
+                  <div className="space-y-4">
+                    {[
+                      { label: 'Transport', value: bTransport, color: 'bg-ocean-400' },
+                      { label: 'Accommodation', value: bAccommodation, color: 'bg-earth-400' },
+                      { label: 'Food', value: bFood, color: 'bg-sunset-400' },
+                      { label: 'Activities', value: bActivities, color: 'bg-forest-400' },
+                      { label: 'Miscellaneous', value: bMisc, color: 'bg-primary/70' },
+                      { label: 'Emergency Fund', value: bEmergency, color: 'bg-muted-foreground/30' },
+                    ].map(({ label, value, color }) => {
+                      // 🚀 3. SECURE BAR MATH: Use computed total and prevent division by zero states safely
+                      const rawPct = (value / (computedTotal || 1)) * 100;
+                      const pct = isNaN(rawPct) ? 0 : Math.round(rawPct);
+
+                      return (
+                        <div key={label}>
+                          <div className="flex items-center justify-between text-sm mb-1.5">
+                            <span className="text-foreground">{label}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-muted-foreground text-xs">{pct}%</span>
+                              <span className="font-medium text-foreground">{formatCurrency(value, fd.currency)}</span>
+                            </div>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <motion.div
+                              className={`h-full rounded-full ${color}`}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${pct}%` }}
+                              transition={{ duration: 0.7, ease: 'easeOut' }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
+
+                {/* Detailed breakdown */}
+                {(trip.budget.breakdown ?? []).length > 0 && (
+                  <div className="glass-card p-6">
+                    <h3 className="font-semibold text-foreground mb-4">Detailed Breakdown</h3>
+                    <div className="space-y-3">
+                      {trip.budget.breakdown.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                          <div>
+                            <div className="text-sm font-medium text-foreground">{item.category}</div>
+                            <div className="text-xs text-muted-foreground">{item.details}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold text-foreground">{formatCurrency(Number(item.amount) || 0, fd.currency)}</div>
+                            <div className="text-xs text-muted-foreground">{item.percentage}%</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* HOTELS */}
           {activeTab === 'hotels' && (
@@ -344,7 +373,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                       <p className="text-sm text-muted-foreground">{hotel.type}</p>
                     </div>
                     <div className="text-right">
-                      <div className="font-bold text-primary">{formatCurrency(hotel.pricePerNight, fd.currency)}</div>
+                      <div className="font-bold text-primary">{formatCurrency(Number(hotel.pricePerNight) || 0, fd.currency)}</div>
                       <div className="text-xs text-muted-foreground">per night</div>
                     </div>
                   </div>
@@ -376,8 +405,8 @@ export function TripResultView({ tripId }: { tripId: string }) {
               ))}
             </div>
           )}
-
-          {/* FOOD */}
+                  
+{/* FOOD */}
           {activeTab === 'food' && (
             <div className="space-y-4">
               <div className="grid sm:grid-cols-2 gap-4">
@@ -399,7 +428,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                     {(r.mustTry ?? []).length > 0 && (
                       <div className="text-xs">
                         <span className="text-muted-foreground">Must try: </span>
-                        <span className="text-foreground">{r.mustTry!.join(', ')}</span>
+                        <span className="text-foreground">{(r.mustTry ?? []).join(', ')}</span>
                       </div>
                     )}
                   </div>
@@ -464,82 +493,281 @@ export function TripResultView({ tripId }: { tripId: string }) {
           )}
 
           {/* SAFETY */}
-          {activeTab === 'safety' && trip.safety && (
-            <div className="space-y-6">
-              <div className="grid sm:grid-cols-3 gap-4">
-                <div className="glass-card p-6 col-span-1">
-                  <div className="text-center">
-                    <div className={`text-5xl font-bold ${safetyScoreColor(trip.safety.overallScore)} mb-2`}>
-                      {trip.safety.overallScore}/10
+          {activeTab === 'safety' && trip.safety && (() => {
+            // 🚀 FIXED: Coerce security scores to numbers safely to eliminate unassigned runtime exceptions
+            const safeScore = Number(trip.safety.overallScore) || 0;
+
+            return (
+              <div className="space-y-6">
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div className="glass-card p-6 col-span-1">
+                    <div className="text-center">
+                      <div className={`text-5xl font-bold ${safetyScoreColor(safeScore)} mb-2`}>
+                        {safeScore}/10
+                      </div>
+                      <div className="font-medium text-foreground">{safetyScoreLabel(safeScore)}</div>
+                      <div className="text-sm text-muted-foreground mt-1">Safety Score</div>
                     </div>
-                    <div className="font-medium text-foreground">{safetyScoreLabel(trip.safety.overallScore)}</div>
-                    <div className="text-sm text-muted-foreground mt-1">Safety Score</div>
+                  </div>
+                  <div className="glass-card p-6 sm:col-span-2">
+                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-yellow-500" />Scam Alerts
+                    </h3>
+                    <div className="space-y-2">
+                      {(trip.safety.scamAlerts ?? []).map((alert, i) => (
+                        <div key={i} className="text-sm text-foreground flex items-start gap-2">
+                          <span className="text-yellow-500 mt-0.5">⚠</span>{alert}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div className="glass-card p-6 sm:col-span-2">
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="glass-card p-6">
+                    <h3 className="font-semibold text-foreground mb-3">Emergency Contacts</h3>
+                    <div className="space-y-3">
+                      {(trip.safety.emergencyContacts ?? []).map((c, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <span className="text-sm text-foreground">{c.name}</span>
+                          <a href={`tel:${c.number}`} className="text-sm font-mono font-semibold text-primary">{c.number}</a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="glass-card p-6">
+                    <h3 className="font-semibold text-foreground mb-3">Nearby Hospitals</h3>
+                    <div className="space-y-3">
+                      {(trip.safety.hospitals ?? []).map((h, i) => (
+                        <div key={i}>
+                          <div className="text-sm font-medium text-foreground">{h.name}</div>
+                          <div className="text-xs text-muted-foreground">{h.address} · {h.distance}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="glass-card p-5">
+                    <h3 className="text-sm font-semibold text-forest-600 dark:text-forest-400 mb-2">✓ Safe Areas</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(trip.safety.safeAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
+                    </div>
+                  </div>
+                  <div className="glass-card p-5">
+                    <h3 className="text-sm font-semibold text-red-500 mb-2">⚠ Avoid</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(trip.safety.avoidAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
+                    </div>
+                  </div>
+                </div>
+
+                {(trip.safety.vaccinations ?? []).length > 0 && (
+                  <div className="glass-card p-5">
+                    <h3 className="font-semibold text-foreground mb-3">Recommended Vaccinations</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(trip.safety.vaccinations ?? []).map(v => <span key={v} className="tag-pill">{v}</span>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* 🚀 CHAT TAB INTEGRATION (FIXED CUTOFF) */}
+          {activeTab === 'chat' && (
+            <div className="h-[600px] rounded-2xl overflow-hidden border border-border">
+              <TripChat tripId={tripId} initialMessages={[]} />
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// 🚀 SKELETON LOADER ENCLOSURE CONTAINER
+function TripSkeleton() {
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 space-y-8 animate-pulse">
+      <div className="h-10 bg-muted rounded-xl w-1/3" />
+      <div className="h-6 bg-muted rounded-xl w-2/3" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 bg-muted rounded-2xl" />)}
+      </div>
+      <div className="h-[400px] bg-muted rounded-[2rem]" />
+    </div>
+  );
+}
+
+                    {/* FOOD */}
+          {activeTab === 'food' && (
+            <div className="space-y-4">
+              <div className="grid sm:grid-cols-2 gap-4">
+                {(trip.restaurants ?? []).map((r, i) => (
+                  <div key={i} className="glass-card p-5">
+                    <div className="flex items-start justify-between mb-2">
+                      <h3 className="font-semibold text-foreground">{r.name}</h3>
+                      <span className="text-xs font-medium text-sunset-500 bg-sunset-500/10 px-2 py-1 rounded-full">{r.priceRange}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-1">{r.cuisine}</p>
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                      <MapPin className="w-3 h-3" />{r.location}
+                    </div>
+                    <div className="flex items-center gap-1 mb-3">
+                      <Star className="w-3.5 h-3.5 fill-primary text-primary" />
+                      <span className="text-sm">{r.rating}</span>
+                      <span className="text-xs text-muted-foreground ml-2">{r.openingHours}</span>
+                    </div>
+                    {(r.mustTry ?? []).length > 0 && (
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Must try: </span>
+                        <span className="text-foreground">{(r.mustTry ?? []).join(', ')}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {(trip.hiddenGems ?? []).length > 0 && (
+                <div>
                   <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-yellow-500" />Scam Alerts
+                    <Sparkles className="w-4 h-4 text-primary" />Hidden Gems
                   </h3>
-                  <div className="space-y-2">
-                    {(trip.safety.scamAlerts ?? []).map((alert, i) => (
-                      <div key={i} className="text-sm text-foreground flex items-start gap-2">
-                        <span className="text-yellow-500 mt-0.5">⚠</span>{alert}
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {trip.hiddenGems.map((gem, i) => (
+                      <div key={i} className="glass-card p-5 border-primary/20 border">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-semibold text-foreground">{gem.name}</h4>
+                          <span className={cn(
+                            'text-2xs px-2 py-0.5 rounded-full font-medium',
+                            gem.crowdLevel === 'LOW' ? 'bg-forest-500/10 text-forest-600' :
+                            gem.crowdLevel === 'MEDIUM' ? 'bg-yellow-500/10 text-yellow-600' :
+                            'bg-red-500/10 text-red-600'
+                          )}>{gem.crowdLevel} crowds</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground mb-2">{gem.description}</p>
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                          <MapPin className="w-3 h-3" />{gem.location}
+                          <span className="ml-2">· Best: {gem.bestTime}</span>
+                        </div>
+                        <div className="text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
+                          💡 {gem.insiderTip}
+                        </div>
                       </div>
                     ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="glass-card p-6">
-                  <h3 className="font-semibold text-foreground mb-3">Emergency Contacts</h3>
-                  <div className="space-y-3">
-                    {(trip.safety.emergencyContacts ?? []).map((c, i) => (
-                      <div key={i} className="flex items-center justify-between">
-                        <span className="text-sm text-foreground">{c.name}</span>
-                        <a href={`tel:${c.number}`} className="text-sm font-mono font-semibold text-primary">{c.number}</a>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="glass-card p-6">
-                  <h3 className="font-semibold text-foreground mb-3">Nearby Hospitals</h3>
-                  <div className="space-y-3">
-                    {(trip.safety.hospitals ?? []).map((h, i) => (
-                      <div key={i}>
-                        <div className="text-sm font-medium text-foreground">{h.name}</div>
-                        <div className="text-xs text-muted-foreground">{h.address} · {h.distance}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="glass-card p-5">
-                  <h3 className="text-sm font-semibold text-forest-600 dark:text-forest-400 mb-2">✓ Safe Areas</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {(trip.safety.safeAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
-                  </div>
-                </div>
-                <div className="glass-card p-5">
-                  <h3 className="text-sm font-semibold text-red-500 mb-2">⚠ Avoid</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {(trip.safety.avoidAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
-                  </div>
-                </div>
-              </div>
-
-              {(trip.safety.vaccinations ?? []).length > 0 && (
-                <div className="glass-card p-5">
-                  <h3 className="font-semibold text-foreground mb-3">Recommended Vaccinations</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {trip.safety.vaccinations!.map(v => <span key={v} className="tag-pill">{v}</span>)}
                   </div>
                 </div>
               )}
             </div>
           )}
+
+          {/* PACKING */}
+          {activeTab === 'packing' && (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(trip.packingList ?? []).map((cat, i) => (
+                <div key={i} className="glass-card p-5">
+                  <h3 className="font-semibold text-foreground mb-3">{cat.category}</h3>
+                  <div className="space-y-2">
+                    {(cat.items ?? []).map((item, j) => (
+                      <div key={j} className="flex items-center gap-2 text-sm">
+                        <div className={cn('w-4 h-4 rounded flex items-center justify-center text-xs', item.essential ? 'bg-primary/15 text-primary' : 'bg-muted')} >
+                          {item.essential ? '!' : '·'}
+                        </div>
+                        <span className={item.essential ? 'text-foreground font-medium' : 'text-muted-foreground'}>
+                          {item.name}
+                        </span>
+                        {item.quantity && <span className="text-xs text-muted-foreground ml-auto">{item.quantity}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* SAFETY */}
+          {activeTab === 'safety' && trip.safety && (() => {
+            const safeScore = Number(trip.safety.overallScore) || 0;
+
+            return (
+              <div className="space-y-6">
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div className="glass-card p-6 col-span-1">
+                    <div className="text-center">
+                      <div className={`text-5xl font-bold ${safetyScoreColor(safeScore)} mb-2`}>
+                        {safeScore}/10
+                      </div>
+                      <div className="font-medium text-foreground">{safetyScoreLabel(safeScore)}</div>
+                      <div className="text-sm text-muted-foreground mt-1">Safety Score</div>
+                    </div>
+                  </div>
+                  <div className="glass-card p-6 sm:col-span-2">
+                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-yellow-500" />Scam Alerts
+                    </h3>
+                    <div className="space-y-2">
+                      {(trip.safety.scamAlerts ?? []).map((alert, i) => (
+                        <div key={i} className="text-sm text-foreground flex items-start gap-2">
+                          <span className="text-yellow-500 mt-0.5">⚠</span>{alert}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="glass-card p-6">
+                    <h3 className="font-semibold text-foreground mb-3">Emergency Contacts</h3>
+                    <div className="space-y-3">
+                      {(trip.safety.emergencyContacts ?? []).map((c, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <span className="text-sm text-foreground">{c.name}</span>
+                          <a href={`tel:${c.number}`} className="text-sm font-mono font-semibold text-primary">{c.number}</a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="glass-card p-6">
+                    <h3 className="font-semibold text-foreground mb-3">Nearby Hospitals</h3>
+                    <div className="space-y-3">
+                      {(trip.safety.hospitals ?? []).map((h, i) => (
+                        <div key={i} className>
+                          <div className="text-sm font-medium text-foreground">{h.name}</div>
+                          <div className="text-xs text-muted-foreground">{h.address} · {h.distance}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="glass-card p-5">
+                    <h3 className="text-sm font-semibold text-forest-600 dark:text-forest-400 mb-2">✓ Safe Areas</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(trip.safety.safeAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
+                    </div>
+                  </div>
+                  <div className="glass-card p-5">
+                    <h3 className="text-sm font-semibold text-red-500 mb-2">⚠ Avoid</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(trip.safety.avoidAreas ?? []).map(a => <span key={a} className="tag-pill">{a}</span>)}
+                    </div>
+                  </div>
+                </div>
+
+                {(trip.safety.vaccinations ?? []).length > 0 && (
+                  <div className="glass-card p-5">
+                    <h3 className="font-semibold text-foreground mb-3">Recommended Vaccinations</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(trip.safety.vaccinations ?? []).map(v => <span key={v} className="tag-pill">{v}</span>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* CHAT */}
           {activeTab === 'chat' && (
@@ -588,3 +816,4 @@ function TripSkeleton() {
     </div>
   );
 }
+      
