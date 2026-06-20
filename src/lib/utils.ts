@@ -15,10 +15,14 @@ export function formatCurrency(amount: number, currency = 'INR'): string {
   return `${sym}${Math.round(amount).toLocaleString()}`;
 }
 
-export function formatDate(date: string | Date): string {
-  return new Date(date).toLocaleDateString('en-IN', {
-    day: 'numeric', month: 'short', year: 'numeric',
-  });
+export function formatDate(dateStr: string | Date): string {
+  if (!dateStr) return '—';
+  const d = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
+  if (isNaN(d.getTime())) return '—';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${dd}-${mm}-${yy}`;
 }
 
 export function formatDuration(minutes: number): string {
