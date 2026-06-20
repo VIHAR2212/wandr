@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { Toaster } from 'sonner';
+import { SessionProvider } from 'next-auth/react';
 import '@/styles/globals.css';
 
 const inter = Inter({
@@ -47,15 +48,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <body className="min-h-screen">
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange={false}>
-          {children}
-          <Toaster
-            position="top-right"
-            expand
-            richColors
-            toastOptions={{ style: { borderRadius: '16px', backdropFilter: 'blur(24px)' } }}
-          />
-        </ThemeProvider>
+        <SessionProvider>
+          <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange={false}>
+            {children}
+            <Toaster
+              position="top-right"
+              expand
+              richColors
+              toastOptions={{ style: { borderRadius: '16px', backdropFilter: 'blur(24px)' } }}
+            />
+          </ThemeProvider>
+        </SessionProvider>
       </body>
     </html>
   );
