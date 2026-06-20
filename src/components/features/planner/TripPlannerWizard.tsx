@@ -1,671 +1,652 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 import {
-  MapPin, Calendar, Users, Wallet, Compass, Utensils,
-  Hotel, Train, ChevronRight, ChevronLeft, Sparkles, Loader2, Wand2
+  MapPin, Calendar, Users, Wallet, Clock, Download,
+  MessageCircle, Navigation, Shield, Package, ChevronDown,
+  ChevronUp, Star, AlertTriangle, Utensils, Hotel, Sparkles
 } from 'lucide-react';
-import type { TripFormData, TripPurpose, FoodPreference, HotelType, TransportType } from '@/types';
-import { cn, formatCurrency } from '@/lib/utils';
+import { TripChat } from '@/components/features/chat/TripChat';
+import { formatCurrency } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
-const STEPS = ['Route', 'Dates & Travelers', 'Budget', 'Purpose & Food', 'Accommodation', 'Review'];
-
-const PURPOSES: { value: TripPurpose; label: string; emoji: string }[] = [
-  { value: 'ADVENTURE', label: 'Adventure', emoji: '🧗' },
-  { value: 'DEVOTIONAL', label: 'Devotional', emoji: '🛕' },
-  { value: 'HIKING', label: 'Hiking', emoji: '🥾' },
-  { value: 'HONEYMOON', label: 'Honeymoon', emoji: '💍' },
-  { value: 'FAMILY', label: 'Family', emoji: '👨‍👩‍👧' },
-  { value: 'PHOTOGRAPHY', label: 'Photography', emoji: '📷' },
-  { value: 'BUSINESS', label: 'Business', emoji: '💼' },
-  { value: 'FOOD_EXPLORATION', label: 'Food Trail', emoji: '🍜' },
-  { value: 'WELLNESS', label: 'Wellness', emoji: '🧘' },
-  { value: 'CULTURAL', label: 'Cultural', emoji: '🏛️' },
-  { value: 'SOLO', label: 'Solo', emoji: '🎒' },
-  { value: 'BACKPACKING', label: 'Backpacking', emoji: '⛺' },
-];
-
-const FOOD_PREFS: { value: FoodPreference; label: string; desc: string }[] = [
-  { value: 'VEG', label: 'Vegetarian', desc: 'No meat or fish' },
-  { value: 'JAIN', label: 'Jain', desc: 'No root vegetables' },
-  { value: 'VEGAN', label: 'Vegan', desc: 'No animal products' },
-  { value: 'HALAL', label: 'Halal', desc: 'Halal certified only' },
-  { value: 'NON_VEG', label: 'Non-Veg', desc: 'All cuisines welcome' },
-];
-
-const HOTEL_TYPES: { value: HotelType; label: string; price: string }[] = [
-  { value: 'HOSTEL', label: 'Hostel / Dorm', price: '₹500–₹1,500/night' },
-  { value: 'BUDGET', label: 'Budget Hotel', price: '₹1,500–₹3,000/night' },
-  { value: 'STANDARD', label: 'Standard', price: '₹3,000–₹6,000/night' },
-  { value: 'COMFORT', label: 'Comfort', price: '₹6,000–₹12,000/night' },
-  { value: 'LUXURY', label: 'Luxury', price: '₹12,000–₹25,000/night' },
-  { value: 'ULTRA_LUXURY', label: 'Ultra Luxury', price: '₹25,000+/night' },
-  { value: 'HOMESTAY', label: 'Homestay', price: 'Local experience' },
-  { value: 'CAMPING', label: 'Camping', price: 'Nature immersion' },
-];
-
-const TRANSPORT_TYPES: { value: TransportType; label: string; emoji: string }[] = [
-  { value: 'FLIGHT', label: 'Flight', emoji: '✈️' },
-  { value: 'TRAIN', label: 'Train', emoji: '🚂' },
-  { value: 'BUS', label: 'Bus', emoji: '🚌' },
-  { value: 'CAR_RENTAL', label: 'Car Rental', emoji: '🚗' },
-  { value: 'TAXI', label: 'Taxi/Cab', emoji: '🚕' },
-  { value: 'METRO', label: 'Metro', emoji: '🚇' },
-  { value: 'FERRY', label: 'Ferry', emoji: '⛴️' },
-  { value: 'BICYCLE', label: 'Bicycle', emoji: '🚲' },
-];
-
-// Format date to dd/mm/yy
-function fmtDate(dateStr: string): string {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(-2);
-  return `${dd}/${mm}/${yy}`;
+// Raw trip data from API
+interface RawTrip {
+  id: string;
+  title: string;
+  origin: string;
+  destination: string;
+  startDate: string;
+  endDate: string;
+  duration: number;
+  travelers: number;
+  purpose: string;
+  budget: number;
+  currency: string;
+  foodPref: string;
+  hotelPref: string;
+  transportPref: string[];
+  itinerary: {
+    days?: any[];
+    hotels?: any[];
+    restaurants?: any[];
+    hiddenGems?: any[];
+  };
+  budgetBreakdown?: any;
+  packingList?: any[];
+  weatherInfo?: any;
+  safetyInfo?: any;
+  createdAt: string;
 }
 
-// Auto-select transport based on budget
-function getSmartTransport(budget: number, currency: string): TransportType[] {
-  const b = currency === 'INR' ? budget : budget * 83; // rough INR conversion
-  if (b < 15000) return ['BUS', 'TRAIN'];
-  if (b < 30000) return ['TRAIN', 'BUS', 'TAXI'];
-  if (b < 60000) return ['TRAIN', 'BUS', 'TAXI', 'METRO'];
-  if (b < 100000) return ['TRAIN', 'FLIGHT', 'TAXI', 'CAR_RENTAL'];
-  return ['FLIGHT', 'TRAIN', 'CAR_RENTAL', 'TAXI'];
-}
+type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
-const defaultForm: TripFormData = {
-  origin: '',
-  destination: '',
-  startDate: '',
-  endDate: '',
-  travelers: 2,
-  budget: 50000,
-  currency: 'INR',
-  purpose: 'ADVENTURE',
-  foodPreference: 'NON_VEG',
-  hotelPreference: 'STANDARD',
-  transportPreferences: ['FLIGHT', 'TRAIN'],
-  specialRequests: '',
-  includeHiddenGems: true,
-  flexibleBudget: false,
-};
+export function TripResultView({ tripId }: { tripId: string }) {
+  const [trip, setTrip] = useState<RawTrip | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('itinerary');
+  const [expandedDay, setExpandedDay] = useState<number>(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [mapError, setMapError] = useState(false);
 
-export function TripPlannerWizard() {
-  const router = useRouter();
-  const [step, setStep] = useState(0);
-  const [form, setForm] = useState<TripFormData>(defaultForm);
-  const [loading, setLoading] = useState(false);
+  // Extracted data
+  const days = trip?.itinerary?.days ?? [];
+  const hotels = trip?.itinerary?.hotels ?? [];
+  const restaurants = trip?.itinerary?.restaurants ?? [];
+  const hiddenGems = trip?.itinerary?.hiddenGems ?? [];
+  const budgetData = trip?.budgetBreakdown ?? {};
+  const packingList = trip?.packingList ?? [];
+  const safetyData = trip?.safetyInfo ?? {};
+  const weatherData = trip?.weatherInfo ?? {};
 
-  // Multiple purposes support
-  const [selectedPurposes, setSelectedPurposes] = useState<TripPurpose[]>(['ADVENTURE']);
+  const totalBudget = Number(budgetData.total) || trip?.budget || 0;
+  const duration = trip?.duration || 0;
 
-  const totalSteps = STEPS.length;
-  const progress = ((step + 1) / totalSteps) * 100;
+  useEffect(() => {
+    fetch(`/api/trips/${tripId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.trip) {
+          setTrip(d.trip);
+        } else {
+          setError('Trip not found.');
+        }
+      })
+      .catch(() => setError('Failed to load trip.'))
+      .finally(() => setLoading(false));
+  }, [tripId]);
 
-  function update<K extends keyof TripFormData>(key: K, value: TripFormData[K]) {
-    setForm(prev => ({ ...prev, [key]: value }));
+  // PDF download using browser print
+  function handleDownloadPDF() {
+    window.print();
   }
 
-  function toggleTransport(t: TransportType) {
-    setForm(prev => ({
-      ...prev,
-      transportPreferences: prev.transportPreferences.includes(t)
-        ? prev.transportPreferences.filter(x => x !== t)
-        : [...prev.transportPreferences, t],
-    }));
-  }
+  if (loading) return <TripSkeleton />;
+  if (error || !trip) return (
+    <div className="max-w-2xl mx-auto px-6 py-20 text-center">
+      <p className="text-xl font-semibold text-foreground mb-2">Trip not found</p>
+      <p className="text-muted-foreground mb-6">{error || 'This trip link may have expired.'}</p>
+      <a href="/plan" className="btn-premium inline-flex">Plan a new trip</a>
+    </div>
+  );
 
-  function togglePurpose(p: TripPurpose) {
-    setSelectedPurposes(prev =>
-      prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]
-    );
-  }
-
-  function handleSmartTransport() {
-    const smart = getSmartTransport(form.budget, form.currency);
-    update('transportPreferences', smart);
-    toast.success('Transport selected based on your budget!');
-  }
-
-  function canProceed() {
-    if (step === 0) return form.origin && form.destination;
-    if (step === 1) return form.startDate && form.endDate && form.travelers > 0;
-    if (step === 2) return form.budget > 0;
-    if (step === 3) return selectedPurposes.length > 0;
-    return true;
-  }
-
-  async function handleGenerate() {
-    setLoading(true);
-    try {
-      // Merge multiple purposes into the form data for the API
-      const payload = {
-        ...form,
-        purpose: selectedPurposes, // Send array of purposes
-        primaryPurpose: selectedPurposes[0], // First one as primary for DB
-      };
-
-      const res = await fetch('/api/ai/generate-trip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to generate trip');
-      router.push(`/trip/${data.tripId}`);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Something went wrong';
-      toast.error(message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function getDuration() {
-    if (!form.startDate || !form.endDate) return 0;
-    const diff = new Date(form.endDate).getTime() - new Date(form.startDate).getTime();
-    return Math.max(0, Math.round(diff / 86400000));
-  }
-
-  const duration = getDuration();
-  const perDay = duration > 0 ? Math.round(form.budget / duration) : 0;
-  const perPerson = form.travelers > 0 ? Math.round(form.budget / form.travelers) : 0;
-
-  // Get purpose labels for review
-  const selectedPurposeLabels = selectedPurposes.map(p => PURPOSES.find(x => x.value === p)?.label || p);
+  const tabs: { id: Tab; label: string; icon: typeof MapPin }[] = [
+    { id: 'itinerary', label: 'Itinerary', icon: Calendar },
+    { id: 'map', label: 'Map', icon: MapPin },
+    { id: 'budget', label: 'Budget', icon: Wallet },
+    { id: 'hotels', label: 'Hotels', icon: Hotel },
+    { id: 'food', label: 'Food', icon: Utensils },
+    { id: 'packing', label: 'Packing', icon: Package },
+    { id: 'safety', label: 'Safety', icon: Shield },
+    { id: 'chat', label: 'AI Chat', icon: MessageCircle },
+  ];
 
   return (
-    <div className="glass-card p-2">
-      {/* Progress Bar */}
-      <div className="p-6 pb-0">
-        <div className="flex items-center gap-2 mb-6 flex-wrap">
-          {STEPS.map((s, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <button
-                onClick={() => i < step && setStep(i)}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all',
-                  i === step
-                    ? 'bg-primary text-primary-foreground'
-                    : i < step
-                    ? 'bg-primary/15 text-primary cursor-pointer hover:bg-primary/25'
-                    : 'bg-muted text-muted-foreground'
-                )}
-              >
-                <span className="w-4 h-4 rounded-full border-2 flex items-center justify-center text-[10px]"
-                  style={{ borderColor: i <= step ? 'currentColor' : 'transparent' }}>
-                  {i < step ? '✓' : i + 1}
-                </span>
-                {s}
-              </button>
-              {i < STEPS.length - 1 && (
-                <div className={cn('w-4 h-px', i < step ? 'bg-primary/40' : 'bg-border')} />
-              )}
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
+      {/* Trip Header */}
+      <div className="py-8">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <span className="text-caption text-primary">AI-Generated Trip</span>
+              </div>
+              <h1 className="text-display text-3xl sm:text-4xl font-bold text-foreground mb-2">{trip.title}</h1>
+              <p className="text-muted-foreground max-w-2xl">{trip.origin} → {trip.destination} · {duration} days</p>
             </div>
-          ))}
-        </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-primary/30 bg-primary/5 text-primary text-sm font-medium hover:bg-primary/10 transition-colors"
+              >
+                <MessageCircle className="w-4 h-4" />
+                AI Chat
+              </button>
+              <button
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Download PDF
+              </button>
+            </div>
+          </div>
 
-        <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
-          <motion.div
-            className="h-full bg-primary rounded-full"
-            initial={false}
-            animate={{ width: `${progress}%` }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-          />
-        </div>
+          {/* Quick Stats */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+            {[
+              { icon: MapPin, label: 'Destination', value: trip.destination },
+              { icon: Calendar, label: 'Duration', value: `${duration} days` },
+              { icon: Users, label: 'Travelers', value: `${trip.travelers} people` },
+              { icon: Wallet, label: 'Total Budget', value: formatCurrency(totalBudget, trip.currency) },
+              { icon: Wallet, label: 'Per Day', value: duration > 0 ? formatCurrency(Math.round(totalBudget / duration), trip.currency) : '—' },
+              { icon: Wallet, label: 'Per Person', value: trip.travelers > 0 ? formatCurrency(Math.round(totalBudget / trip.travelers), trip.currency) : '—' },
+            ].map(({ icon: Icon, label, value }) => (
+              <div key={label} className="glass-panel rounded-2xl px-4 py-3">
+                <Icon className="w-3.5 h-3.5 text-muted-foreground mb-1" />
+                <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+                <div className="text-sm font-semibold text-foreground truncate">{value}</div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
       </div>
 
-      {/* Step Content */}
-      <div className="p-6 min-h-[360px]">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={step}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.25, ease: 'easeOut' }}
-          >
-            {/* Step 0: Route */}
-            {step === 0 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">Where are you going?</h2>
-                  <p className="text-muted-foreground text-sm">Enter your starting point and dream destination.</p>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <MapPin className="w-4 h-4 text-muted-foreground" />
-                      Starting From
-                    </label>
-                    <input
-                      type="text"
-                      value={form.origin}
-                      onChange={e => update('origin', e.target.value)}
-                      placeholder="Mumbai, India"
-                      className="glass-input"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <Compass className="w-4 h-4 text-muted-foreground" />
-                      Destination
-                    </label>
-                    <input
-                      type="text"
-                      value={form.destination}
-                      onChange={e => update('destination', e.target.value)}
-                      placeholder="Manali, Himachal Pradesh"
-                      className="glass-input"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-3">
-                    <Train className="w-4 h-4 text-muted-foreground" />
-                    Preferred Transport
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {TRANSPORT_TYPES.map(t => (
-                      <button
-                        key={t.value}
-                        onClick={() => toggleTransport(t.value)}
-                        className={cn(
-                          'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all',
-                          form.transportPreferences.includes(t.value)
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
-                        )}
-                      >
-                        {t.emoji} {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  {/* "Good for Trip" smart button */}
-                  <button
-                    onClick={handleSmartTransport}
-                    className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 transition-all"
-                  >
-                    <Wand2 className="w-4 h-4" />
-                    Good for Trip — Auto select by budget
-                  </button>
-                </div>
-              </div>
-            )}
+      {/* Tab Navigation */}
+      <div className="flex gap-1 overflow-x-auto pb-1 mb-6 scrollbar-hide">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all',
+                activeTab === tab.id
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
+              )}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
-            {/* Step 1: Dates & Travelers */}
-            {step === 1 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">When & Who?</h2>
-                  <p className="text-muted-foreground text-sm">Pick your travel dates and group size.</p>
+      {/* Tab Content */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeTab}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.25 }}
+        >
+          {/* ITINERARY */}
+          {activeTab === 'itinerary' && (
+            <div className="space-y-4">
+              {days.length === 0 ? (
+                <div className="glass-card p-12 text-center">
+                  <p className="text-muted-foreground">No itinerary data available.</p>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-muted-foreground" />
-                      Start Date
-                    </label>
-                    <input
-                      type="date"
-                      value={form.startDate}
-                      min={new Date().toISOString().split('T')[0]}
-                      onChange={e => update('startDate', e.target.value)}
-                      className="glass-input"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-muted-foreground" />
-                      End Date
-                    </label>
-                    <input
-                      type="date"
-                      value={form.endDate}
-                      min={form.startDate || new Date().toISOString().split('T')[0]}
-                      onChange={e => update('endDate', e.target.value)}
-                      className="glass-input"
-                    />
-                  </div>
-                </div>
-                {duration > 0 && (
-                  <div className="glass-panel px-4 py-3 rounded-2xl text-sm text-foreground">
-                    📅 <strong>{duration} {duration === 1 ? 'day' : 'days'}</strong> trip ({fmtDate(form.startDate)} — {fmtDate(form.endDate)})
-                  </div>
-                )}
-                <div>
-                  <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                    <Users className="w-4 h-4 text-muted-foreground" />
-                    Number of Travelers
-                  </label>
-                  <div className="flex items-center gap-3">
+              ) : (
+                days.map((day: any, idx: number) => (
+                  <div key={idx} className="glass-card overflow-hidden">
                     <button
-                      onClick={() => update('travelers', Math.max(1, form.travelers - 1))}
-                      className="w-10 h-10 rounded-xl border border-border hover:bg-muted/60 flex items-center justify-center text-foreground transition-colors"
+                      className="w-full flex items-center justify-between p-6 text-left"
+                      onClick={() => setExpandedDay(expandedDay === day.day ? 0 : day.day)}
                     >
-                      −
-                    </button>
-                    <span className="text-2xl font-bold text-foreground w-12 text-center">{form.travelers}</span>
-                    <button
-                      onClick={() => update('travelers', Math.min(20, form.travelers + 1))}
-                      className="w-10 h-10 rounded-xl border border-border hover:bg-muted/60 flex items-center justify-center text-foreground transition-colors"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Step 2: Budget */}
-            {step === 2 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">What's your budget?</h2>
-                  <p className="text-muted-foreground text-sm">AI will never exceed this amount. This is a hard constraint.</p>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
-                      <Wallet className="w-4 h-4 text-muted-foreground" />
-                      Currency
-                    </label>
-                    <select
-                      value={form.currency}
-                      onChange={e => update('currency', e.target.value)}
-                      className="glass-input"
-                    >
-                      <option value="INR">₹ Indian Rupee (INR)</option>
-                      <option value="USD">$ US Dollar (USD)</option>
-                      <option value="EUR">€ Euro (EUR)</option>
-                      <option value="GBP">£ British Pound (GBP)</option>
-                      <option value="AED">د.إ UAE Dirham (AED)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-foreground mb-2 block">
-                      Total Budget
-                    </label>
-                    <input
-                      type="number"
-                      value={form.budget}
-                      onChange={e => update('budget', Number(e.target.value))}
-                      min={1000}
-                      step={1000}
-                      className="glass-input text-lg font-semibold"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-muted-foreground mb-2">Quick presets</div>
-                  <div className="flex flex-wrap gap-2">
-                    {[10000, 25000, 50000, 100000, 200000, 500000].map(b => (
-                      <button
-                        key={b}
-                        onClick={() => update('budget', b)}
-                        className={cn(
-                          'px-3 py-1.5 rounded-xl text-sm border transition-all',
-                          form.budget === b
-                            ? 'border-primary bg-primary/10 text-primary font-medium'
-                            : 'border-border text-muted-foreground hover:border-primary/50'
-                        )}
-                      >
-                        {formatCurrency(b, form.currency)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {duration > 0 && (
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { label: 'Total Budget', value: formatCurrency(form.budget, form.currency) },
-                      { label: 'Per Day', value: formatCurrency(perDay, form.currency) },
-                      { label: 'Per Person', value: formatCurrency(perPerson, form.currency) },
-                    ].map(({ label, value }) => (
-                      <div key={label} className="glass-panel rounded-2xl p-4 text-center">
-                        <div className="text-lg font-bold text-foreground">{value}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => update('flexibleBudget', !form.flexibleBudget)}
-                    className={cn(
-                      'relative w-10 h-6 rounded-full transition-colors',
-                      form.flexibleBudget ? 'bg-primary' : 'bg-muted'
-                    )}
-                  >
-                    <span className={cn(
-                      'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
-                      form.flexibleBudget ? 'left-5' : 'left-1'
-                    )} />
-                  </button>
-                  <span className="text-sm text-foreground">Allow up to 10% flexibility for significantly better options</span>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Purpose & Food — MULTIPLE PURPOSES */}
-            {step === 3 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">Trip style & food</h2>
-                  <p className="text-muted-foreground text-sm">Select one or more purposes. This shapes every recommendation.</p>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
-                    <Compass className="w-4 h-4 text-muted-foreground" />
-                    Trip Purpose <span className="text-xs text-muted-foreground font-normal">(select multiple)</span>
-                  </label>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                    {PURPOSES.map(p => (
-                      <button
-                        key={p.value}
-                        onClick={() => togglePurpose(p.value)}
-                        className={cn(
-                          'flex flex-col items-center gap-1.5 px-3 py-3 rounded-2xl text-xs font-medium border transition-all',
-                          selectedPurposes.includes(p.value)
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/40'
-                        )}
-                      >
-                        <span className="text-xl">{p.emoji}</span>
-                        {p.label}
-                        {selectedPurposes.includes(p.value) && (
-                          <span className="text-[10px] text-primary">✓</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
-                    <Utensils className="w-4 h-4 text-muted-foreground" />
-                    Food Preference
-                  </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {FOOD_PREFS.map(f => (
-                      <button
-                        key={f.value}
-                        onClick={() => update('foodPreference', f.value)}
-                        className={cn(
-                          'flex flex-col items-start gap-0.5 px-4 py-3 rounded-2xl text-sm border text-left transition-all',
-                          form.foodPreference === f.value
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border text-foreground hover:border-primary/50'
-                        )}
-                      >
-                        <span className="font-medium">{f.label}</span>
-                        <span className="text-xs text-muted-foreground">{f.desc}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-foreground mb-2 block">
-                    Special Requests (Optional)
-                  </label>
-                  <textarea
-                    value={form.specialRequests}
-                    onChange={e => update('specialRequests', e.target.value)}
-                    placeholder="E.g., Add Pavagadh in Gujarat, wheelchair accessible, specific temples to visit..."
-                    rows={2}
-                    className="glass-input resize-none"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Step 4: Accommodation */}
-            {step === 4 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">Where will you stay?</h2>
-                  <p className="text-muted-foreground text-sm">AI selects hotels matching your style and budget.</p>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {HOTEL_TYPES.map(h => (
-                    <button
-                      key={h.value}
-                      onClick={() => update('hotelPreference', h.value)}
-                      className={cn(
-                        'flex items-center gap-4 px-4 py-4 rounded-2xl border text-left transition-all',
-                        form.hotelPreference === h.value
-                          ? 'border-primary bg-primary/10'
-                          : 'border-border hover:border-primary/50 hover:bg-muted/30'
-                      )}
-                    >
-                      <Hotel className={cn('w-5 h-5', form.hotelPreference === h.value ? 'text-primary' : 'text-muted-foreground')} />
-                      <div>
-                        <div className={cn('font-medium text-sm', form.hotelPreference === h.value ? 'text-primary' : 'text-foreground')}>
-                          {h.label}
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-primary/10 flex flex-col items-center justify-center">
+                          <span className="text-xs text-primary font-medium leading-none">Day</span>
+                          <span className="text-lg font-bold text-primary leading-none">{day.day}</span>
                         </div>
-                        <div className="text-xs text-muted-foreground">{h.price}</div>
+                        <div>
+                          <h3 className="font-semibold text-foreground">{day.theme || `Day ${day.day}`}</h3>
+                          <p className="text-sm text-muted-foreground">{day.date || ''} · {day.activities?.length ?? 0} activities</p>
+                        </div>
                       </div>
+                      {expandedDay === day.day ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                     </button>
-                  ))}
-                </div>
 
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => update('includeHiddenGems', !form.includeHiddenGems)}
-                    className={cn(
-                      'relative w-10 h-6 rounded-full transition-colors',
-                      form.includeHiddenGems ? 'bg-primary' : 'bg-muted'
-                    )}
-                  >
-                    <span className={cn(
-                      'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
-                      form.includeHiddenGems ? 'left-5' : 'left-1'
-                    )} />
-                  </button>
-                  <span className="text-sm text-foreground">✨ Include hidden gems most travelers miss</span>
-                </div>
-              </div>
-            )}
+                    <AnimatePresence>
+                      {expandedDay === day.day && (
+                        <motion.div
+                          initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-6 pb-6">
+                            <div className="relative space-y-0">
+                              {(day.activities ?? []).map((act: any, i: number) => (
+                                <div key={i} className="flex gap-4 pb-6 last:pb-0">
+                                  <div className="flex flex-col items-center">
+                                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-base bg-muted/60 flex-shrink-0">
+                                      {act.type === 'restaurant' ? '🍽️' : act.type === 'transport' ? '🚗' : act.type === 'accommodation' ? '🏨' : '📍'}
+                                    </div>
+                                    {i < (day.activities?.length ?? 0) - 1 && (
+                                      <div className="w-px flex-1 bg-border mt-1" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-0 pb-2">
+                                    <div className="flex items-start justify-between gap-2 mb-1">
+                                      <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span className="text-xs font-mono text-muted-foreground">{act.time}</span>
+                                          <span className="text-2xs px-2 py-0.5 rounded-full font-medium bg-primary/10 text-primary">
+                                            {act.type || 'activity'}
+                                          </span>
+                                        </div>
+                                        <h4 className="font-medium text-foreground">{act.title}</h4>
+                                      </div>
+                                      {act.cost > 0 && (
+                                        <span className="text-sm font-semibold text-primary whitespace-nowrap">
+                                          {formatCurrency(act.cost, trip.currency)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mb-1">{act.description}</p>
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      <MapPin className="w-3 h-3" />
+                                      {act.location}
+                                    </div>
+                                    {act.tips && (
+                                      <div className="mt-2 text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
+                                        💡 {act.tips}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
 
-            {/* Step 5: Review — dates in dd/mm/yy */}
-            {step === 5 && (
-              <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground mb-1">Ready to plan!</h2>
-                  <p className="text-muted-foreground text-sm">Review your trip details before AI builds your itinerary.</p>
+          {/* MAP */}
+          {activeTab === 'map' && (
+            <div className="glass-card p-6">
+              {mapError ? (
+                <div className="text-center py-12">
+                  <MapPin className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-semibold text-foreground mb-2">Map unavailable</h3>
+                  <p className="text-muted-foreground text-sm">The AI didn't return location coordinates for this trip. Try regenerating with more specific destinations.</p>
                 </div>
+              ) : (
+                <DynamicMap
+                  days={days}
+                  destination={trip.destination}
+                  onError={() => setMapError(true)}
+                />
+              )}
+            </div>
+          )}
 
-                <div className="grid sm:grid-cols-2 gap-3">
+          {/* BUDGET */}
+          {activeTab === 'budget' && (
+            <div className="space-y-6">
+              <div className="glass-card p-6">
+                <h2 className="font-bold text-lg text-foreground mb-6">Budget Overview</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
                   {[
-                    { label: 'Route', value: `${form.origin} → ${form.destination}` },
-                    { label: 'Dates', value: form.startDate && form.endDate ? `${fmtDate(form.startDate)} to ${fmtDate(form.endDate)} (${duration}d)` : '—' },
-                    { label: 'Travelers', value: `${form.travelers} ${form.travelers === 1 ? 'person' : 'people'}` },
-                    { label: 'Budget', value: formatCurrency(form.budget, form.currency) },
-                    { label: 'Purpose', value: selectedPurposeLabels.join(', ') },
-                    { label: 'Food', value: FOOD_PREFS.find(f => f.value === form.foodPreference)?.label || '' },
-                    { label: 'Accommodation', value: HOTEL_TYPES.find(h => h.value === form.hotelPreference)?.label || '' },
-                    { label: 'Transport', value: form.transportPreferences.map(t => TRANSPORT_TYPES.find(x => x.value === t)?.emoji).join(' ') },
-                  ].map(({ label, value }) => (
-                    <div key={label} className="glass-panel rounded-2xl px-4 py-3">
-                      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
-                      <div className="text-sm font-medium text-foreground">{value}</div>
+                    { label: 'Total Budget', value: formatCurrency(totalBudget, trip.currency), color: 'text-foreground' },
+                    { label: 'Per Day', value: duration > 0 ? formatCurrency(Math.round(totalBudget / duration), trip.currency) : '—', color: 'text-primary' },
+                    { label: 'Per Person', value: trip.travelers > 0 ? formatCurrency(Math.round(totalBudget / trip.travelers), trip.currency) : '—', color: 'text-foreground' },
+                    { label: 'Remaining', value: formatCurrency(Math.max(0, totalBudget - (Number(budgetData.total) || 0)), trip.currency), color: 'text-green-500' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="glass-panel rounded-2xl p-4">
+                      <div className="text-xs text-muted-foreground mb-1">{label}</div>
+                      <div className={`text-xl font-bold ${color}`}>{value}</div>
                     </div>
                   ))}
                 </div>
 
-                {form.specialRequests && (
-                  <div className="glass-panel rounded-2xl px-4 py-3 border-primary/20 border">
-                    <div className="text-xs text-muted-foreground mb-0.5">Special Requests</div>
-                    <div className="text-sm font-medium text-primary">{form.specialRequests}</div>
-                  </div>
-                )}
+                <div className="space-y-4">
+                  {[
+                    { label: 'Accommodation', value: Number(budgetData.accommodation) || 0, color: 'bg-earth-400' },
+                    { label: 'Food', value: Number(budgetData.food) || 0, color: 'bg-sunset-400' },
+                    { label: 'Transport', value: Number(budgetData.transport) || 0, color: 'bg-ocean-400' },
+                    { label: 'Activities', value: Number(budgetData.activities) || 0, color: 'bg-forest-400' },
+                    { label: 'Miscellaneous', value: Number(budgetData.misc) || 0, color: 'bg-primary/70' },
+                  ].map(({ label, value, color }) => {
+                    const pct = totalBudget > 0 ? Math.round((value / totalBudget) * 100) : 0;
+                    return (
+                      <div key={label}>
+                        <div className="flex items-center justify-between text-sm mb-1.5">
+                          <span className="text-foreground">{label}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-muted-foreground text-xs">{pct}%</span>
+                            <span className="font-medium text-foreground">{formatCurrency(value, trip.currency)}</span>
+                          </div>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <motion.div
+                            className={`h-full rounded-full ${color}`}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(pct, 100)}%` }}
+                            transition={{ duration: 0.7, ease: 'easeOut' }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
-                <div className="glass-panel rounded-2xl p-4 border-primary/20 border">
-                  <div className="flex items-center gap-2 text-sm text-primary font-medium mb-1">
-                    <Sparkles className="w-4 h-4" />
-                    AI will generate for you:
+          {/* HOTELS */}
+          {activeTab === 'hotels' && (
+            hotels.length === 0 ? (
+              <div className="glass-card p-12 text-center">
+                <Hotel className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">No hotel data available.</p>
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-4">
+                {hotels.map((hotel: any, i: number) => (
+                  <div key={i} className="glass-card p-6">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h3 className="font-semibold text-foreground">{hotel.name}</h3>
+                        <p className="text-sm text-muted-foreground">{hotel.area || ''}</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-primary">{formatCurrency(hotel.pricePerNight, trip.currency)}</div>
+                        <div className="text-xs text-muted-foreground">per night</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 mb-3">
+                      <Star className="w-3.5 h-3.5 fill-primary text-primary" />
+                      <span className="text-sm font-medium">{hotel.rating || '—'}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-3">{hotel.description || ''}</p>
+                    {hotel.bookingTip && (
+                      <div className="text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
+                        💡 {hotel.bookingTip}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs text-muted-foreground grid grid-cols-2 gap-1">
-                    {['Hour-by-hour itinerary', 'Hotel recommendations', 'Restaurant picks', 'Transport schedule', 'Budget breakdown', 'Hidden gems', 'Safety info', 'Packing list', 'Weather forecast', 'Local tips'].map(item => (
-                      <span key={item}>• {item}</span>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* FOOD */}
+          {activeTab === 'food' && (
+            <div className="space-y-4">
+              {restaurants.length === 0 ? (
+                <div className="glass-card p-12 text-center">
+                  <Utensils className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No restaurant data available.</p>
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {restaurants.map((r: any, i: number) => (
+                    <div key={i} className="glass-card p-5">
+                      <div className="flex items-start justify-between mb-2">
+                        <h3 className="font-semibold text-foreground">{r.name}</h3>
+                        <span className="text-xs font-medium text-sunset-500 bg-sunset-500/10 px-2 py-1 rounded-full">{r.priceRange || ''}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mb-1">{r.cuisine || ''}</p>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                        <MapPin className="w-3 h-3" />{r.location || ''}
+                      </div>
+                      <div className="flex items-center gap-1 mb-3">
+                        <Star className="w-3.5 h-3.5 fill-primary text-primary" />
+                        <span className="text-sm">{r.rating || '—'}</span>
+                        {r.diet && <span className="text-xs text-muted-foreground ml-2">{r.diet}</span>}
+                      </div>
+                      {r.mustTry && (
+                        <div className="text-xs">
+                          <span className="text-muted-foreground">Must try: </span>
+                          <span className="text-foreground">{typeof r.mustTry === 'string' ? r.mustTry : Array.isArray(r.mustTry) ? r.mustTry.join(', ') : ''}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {hiddenGems.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-primary" />Hidden Gems
+                  </h3>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {hiddenGems.map((gem: any, i: number) => (
+                      <div key={i} className="glass-card p-5 border-primary/20 border">
+                        <h4 className="font-semibold text-foreground mb-2">{gem.name}</h4>
+                        <p className="text-sm text-muted-foreground mb-2">{gem.description || ''}</p>
+                        {gem.whySpecial && (
+                          <div className="text-xs text-muted-foreground mb-2">Why special: {gem.whySpecial}</div>
+                        )}
+                        {gem.howToReach && (
+                          <div className="text-xs text-primary bg-primary/5 rounded-lg px-3 py-2">
+                            📍 {gem.howToReach}
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* PACKING */}
+          {activeTab === 'packing' && (
+            packingList.length === 0 ? (
+              <div className="glass-card p-12 text-center">
+                <Package className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">No packing list data available.</p>
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {packingList.map((item: any, i: number) => (
+                  <div key={i} className="glass-card p-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={cn('w-4 h-4 rounded flex items-center justify-center text-xs', item.essential ? 'bg-primary/15 text-primary' : 'bg-muted')}>
+                        {item.essential ? '!' : '·'}
+                      </div>
+                      <span className={item.essential ? 'text-foreground font-medium text-sm' : 'text-muted-foreground text-sm'}>
+                        {item.item || item.name || `Item ${i + 1}`}
+                      </span>
+                    </div>
+                    {item.reason && (
+                      <p className="text-xs text-muted-foreground ml-6">{item.reason}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* SAFETY */}
+          {activeTab === 'safety' && (
+            <div className="space-y-6">
+              {safetyData.overallScore ? (
+                <>
+                  <div className="grid sm:grid-cols-3 gap-4">
+                    <div className="glass-card p-6">
+                      <div className="text-center">
+                        <div className={cn('text-5xl font-bold mb-2',
+                          Number(safetyData.overallScore) >= 7 ? 'text-green-500' :
+                          Number(safetyData.overallScore) >= 4 ? 'text-yellow-500' : 'text-red-500'
+                        )}>
+                          {safetyData.overallScore}/10
+                        </div>
+                        <div className="text-sm text-muted-foreground mt-1">Safety Score</div>
+                      </div>
+                    </div>
+                    <div className="glass-card p-6 sm:col-span-2">
+                      <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-yellow-500" />Scam Alerts
+                      </h3>
+                      <div className="space-y-2">
+                        {(safetyData.scamAlerts ?? []).map((alert: string, i: number) => (
+                          <div key={i} className="text-sm text-foreground flex items-start gap-2">
+                            <span className="text-yellow-500 mt-0.5">⚠</span>{alert}
+                          </div>
+                        ))}
+                        {(!safetyData.scamAlerts || safetyData.scamAlerts.length === 0) && (
+                          <p className="text-sm text-muted-foreground">No specific scam alerts for this destination.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="glass-card p-5">
+                      <h3 className="text-sm font-semibold text-green-500 mb-2">✓ Safe Areas</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {(safetyData.safeAreas ?? []).map((a: string) => <span key={a} className="tag-pill">{a}</span>)}
+                      </div>
+                    </div>
+                    <div className="glass-card p-5">
+                      <h3 className="text-sm font-semibold text-red-500 mb-2">⚠ Avoid</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {(safetyData.avoidAreas ?? []).map((a: string) => <span key={a} className="tag-pill">{a}</span>)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {safetyData.emergencyNumber && (
+                    <div className="glass-card p-5">
+                      <h3 className="font-semibold text-foreground mb-2">Emergency Number</h3>
+                      <a href={`tel:${safetyData.emergencyNumber}`} className="text-lg font-mono font-bold text-primary">
+                        {safetyData.emergencyNumber}
+                      </a>
+                    </div>
+                  )}
+
+                  {(safetyData.tips ?? []).length > 0 && (
+                    <div className="glass-card p-5">
+                      <h3 className="font-semibold text-foreground mb-3">Safety Tips</h3>
+                      <div className="space-y-2">
+                        {safetyData.tips.map((tip: string, i: number) => (
+                          <div key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                            <span className="text-primary mt-0.5">·</span>{tip}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="glass-card p-12 text-center">
+                  <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No safety data available.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CHAT */}
+          {activeTab === 'chat' && (
+            <TripChat tripId={tripId} tripContext={{
+              destination: trip.destination,
+              startDate: trip.startDate,
+              endDate: trip.endDate,
+              budget: trip.budget,
+              currency: trip.currency,
+              travelers: trip.travelers,
+              foodPref: trip.foodPref,
+            }} />
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Weather Info */}
+      {activeTab === 'itinerary' && weatherData.expected && (
+        <div className="mt-6 glass-card p-5">
+          <h3 className="font-semibold text-foreground mb-3">🌤 Weather Forecast</h3>
+          <div className="flex flex-wrap gap-4">
+            <div>
+              <div className="text-sm text-muted-foreground">Expected</div>
+              <div className="text-sm font-medium text-foreground">{weatherData.expected}</div>
+            </div>
+            {weatherData.avgTemp && (
+              <div>
+                <div className="text-sm text-muted-foreground">Avg Temp</div>
+                <div className="text-sm font-medium text-foreground">{weatherData.avgTemp}</div>
               </div>
             )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+          </div>
+          {(weatherData.tips ?? []).length > 0 && (
+            <div className="mt-3 space-y-1">
+              {weatherData.tips.map((tip: string, i: number) => (
+                <div key={i} className="text-xs text-muted-foreground">· {tip}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
-      {/* Navigation */}
-      <div className="p-6 pt-0 flex items-center justify-between gap-4">
-        <button
-          onClick={() => setStep(s => s - 1)}
-          disabled={step === 0}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Back
-        </button>
+// Dynamic map component with error handling
+function DynamicMap({ days, destination, onError }: { days: any[]; destination: string; onError: () => void }) {
+  const [MapComponent, setMapComponent] = useState<React.ComponentType<any> | null>(null);
 
-        {step < totalSteps - 1 ? (
-          <button
-            onClick={() => setStep(s => s + 1)}
-            disabled={!canProceed()}
-            className="btn-premium flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
-          >
-            Continue
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        ) : (
-          <button
-            onClick={handleGenerate}
-            disabled={loading}
-            className="btn-premium flex items-center gap-2 px-8 py-3 text-base"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Building your trip...
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                Generate My Trip
-              </>
-            )}
-          </button>
-        )}
+  useEffect(() => {
+    import('@/components/features/map/TripMap')
+      .then(mod => setMapComponent(() => mod.TripMap))
+      .catch(() => onError());
+  }, [onError]);
+
+  if (!MapComponent) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="text-muted-foreground text-sm">Loading map...</div>
       </div>
+    );
+  }
+
+  // Build a simple trip object for the map
+  const allLocations: any[] = [];
+  days.forEach((day: any) => {
+    (day.activities ?? []).forEach((act: any) => {
+      if (act.location) {
+        allLocations.push({
+          name: act.title,
+          location: act.location,
+          lat: act.lat,
+          lng: act.lng,
+          type: act.type,
+        });
+      }
+    });
+  });
+
+  if (allLocations.length === 0 || !allLocations.some(l => l.lat && l.lng)) {
+    onError();
+    return null;
+  }
+
+  return <MapComponent trip={{ days, hotels: [], restaurants: [] }} formData={{ destination }} />;
+}
+
+function TripSkeleton() {
+  return (
+    <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+      <div className="skeleton h-8 w-2/3 rounded-2xl" />
+      <div className="skeleton h-4 w-1/2 rounded-xl" />
+      <div className="grid grid-cols-4 gap-3">
+        {[1,2,3,4].map(i => <div key={i} className="skeleton h-20 rounded-2xl" />)}
+      </div>
+      <div className="flex gap-2">
+        {[1,2,3,4,5].map(i => <div key={i} className="skeleton h-9 w-24 rounded-xl" />)}
+      </div>
+      {[1,2,3].map(i => <div key={i} className="skeleton h-28 rounded-3xl" />)}
     </div>
   );
 }
