@@ -1,9 +1,9 @@
 // ============================================
-// WANDR AI — Strictly 4x Groq Fallback System
-// 1. llama-3.3-70b  (Smartest)
-// 2. mixtral-8x7b    (Best at formatting)
-// 3. gemma2-9b-it    (Most stable)
-// 4. llama-3.1-8b    (Fastest)
+// WANDR AI — 4 Accounts, 4 Models Fallback
+// Account 1: Llama 3.3 70B (Smartest)
+// Account 2: Mixtral 8x7B (Best formatting)
+// Account 3: Gemma 2 9B (Most stable)
+// Account 4: Llama 3.1 8B (Fastest)
 // ============================================
 
 interface AIResponse {
@@ -12,27 +12,41 @@ interface AIResponse {
   model: string;
 }
 
-// ── The 4 Free Groq Models ──────────────────────────────────
-const GROQ_MODELS = [
-  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
-  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" },
-  { id: "gemma2-9b-it", name: "Gemma 2 9B" },
-  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B" },
+// ── 4 Accounts mapped to 4 Models ───────────────────────────
+const GROQ_PROVIDERS = [
+  { 
+    keyEnv: "GROQ_API_KEY_1", 
+    model: "llama-3.3-70b-versatile", 
+    name: "Llama 3.3 70B" 
+  },
+  { 
+    keyEnv: "GROQ_API_KEY_2", 
+    model: "mixtral-8x7b-32768", 
+    name: "Mixtral 8x7B" 
+  },
+  { 
+    keyEnv: "GROQ_API_KEY_3", 
+    model: "gemma2-9b-it", 
+    name: "Gemma 2 9B" 
+  },
+  { 
+    keyEnv: "GROQ_API_KEY_4", 
+    model: "llama-3.1-8b-instant", 
+    name: "Llama 3.1 8B" 
+  },
 ];
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-// ── Call a single Groq model ────────────────────────────────
-async function callGroqModel(
+// ── Call a specific Account + Model ─────────────────────────
+async function callGroqAccount(
+  apiKey: string,
   modelId: string,
+  modelName: string,
   messages: Array<{ role: string; content: string }>
 ): Promise<string | null> {
-  const apiKey = process.env.GROQ_API_KEY;
-
-  if (!apiKey) return null;
-
   try {
-    console.log(`🔄 Trying Groq: ${modelId}...`);
+    console.log(`🔄 Trying ${modelName}...`);
 
     const response = await fetch(GROQ_BASE_URL, {
       method: "POST",
@@ -49,7 +63,8 @@ async function callGroqModel(
     });
 
     if (!response.ok) {
-      console.error(`❌ ${modelId} failed (${response.status})`);
+      const err = await response.text();
+      console.error(`❌ ${modelName} failed (${response.status}): ${err.slice(0, 100)}`);
       return null;
     }
 
@@ -57,33 +72,47 @@ async function callGroqModel(
     const text = data.choices?.[0]?.message?.content;
 
     if (text) {
-      console.log(`✅ Success with ${modelId}`);
+      console.log(`✅ Success with ${modelName}!`);
       return text;
     }
 
     return null;
   } catch (error) {
-    console.error(`❌ ${modelId} crashed`);
+    console.error(`❌ ${modelName} crashed`);
     return null;
   }
 }
 
-// ── Loop through all 4 models ───────────────────────────────
-async function tryGroqFallback(
+// ── Loop through all 4 Accounts ─────────────────────────────
+async function tryAllAccounts(
   messages: Array<{ role: string; content: string }>
 ): Promise<AIResponse | null> {
-  for (const model of GROQ_MODELS) {
-    const result = await callGroqModel(model.id, messages);
+  
+  for (const provider of GROQ_PROVIDERS) {
+    const apiKey = process.env[provider.keyEnv];
+
+    // Skip if this specific account key is missing
+    if (!apiKey) {
+      console.log(`⏭️ Skipping ${provider.name} (${provider.keyEnv} not set)`);
+      continue;
+    }
+
+    const result = await callGroqAccount(
+      apiKey, 
+      provider.model, 
+      provider.name, 
+      messages
+    );
     
     if (result) {
       return {
         content: result,
         provider: "Groq",
-        model: model.name,
+        model: provider.name,
       };
     }
     
-    // Wait 500ms before hitting the next model to prevent rate limits
+    // Wait 500ms before trying the next account
     await new Promise((r) => setTimeout(r, 500));
   }
   
@@ -99,13 +128,18 @@ export async function generateAIResponse(
   if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
   messages.push({ role: "user", content: prompt });
 
-  const result = await tryGroqFallback(messages);
+  const result = await tryAllAccounts(messages);
 
   if (result) return result;
 
+  // Check which keys are actually missing to give a helpful error
+  const missingKeys = GROQ_PROVIDERS
+    .map(p => p.keyEnv)
+    .filter(k => !process.env[k]);
+
   throw new Error(
-    "All 4 Groq models failed. Your GROQ_API_KEY is likely dead.\n" +
-    "Fix: Go to https://console.groq.com/keys, delete the old key, create a new one, paste in .env.local, and restart server."
+    `All 4 Groq accounts failed. ${missingKeys.length > 0 ? `Missing keys: ${missingKeys.join(", ")}` : "All keys are likely invalid or rate-limited."}\n\n` +
+    "Check your .env.local for GROQ_API_KEY_1, GROQ_API_KEY_2, GROQ_API_KEY_3, GROQ_API_KEY_4"
   );
 }
 
@@ -117,7 +151,6 @@ export async function generateAIJson<T = any>(
   const result = await generateAIResponse(prompt, systemPrompt);
 
   let cleaned = result.content.trim();
-
   if (cleaned.startsWith("```json")) cleaned = cleaned.slice(7);
   else if (cleaned.startsWith("```")) cleaned = cleaned.slice(3);
   if (cleaned.endsWith("```")) cleaned = cleaned.slice(0, -3);
@@ -136,9 +169,9 @@ export async function generateAIJson<T = any>(
 
 // ── Provider Check ──────────────────────────────────────────
 export function getAvailableProviders(): string[] {
-  return process.env.GROQ_API_KEY 
-    ? GROQ_MODELS.map((m) => `Groq: ${m.name}`) 
-    : [];
+  return GROQ_PROVIDERS
+    .filter(p => process.env[p.keyEnv])
+    .map(p => `Groq: ${p.name}`);
 }
 
 // ── Backward-Compatible Aliases ─────────────────────────────
@@ -156,8 +189,8 @@ export async function callAIChatHistory(
 ): Promise<{ text: string; provider: string; model: string }> {
   const allMessages = [{ role: "system" as const, content: systemPrompt }, ...messages];
   
-  const result = await tryGroqFallback(allMessages);
+  const result = await tryAllAccounts(allMessages);
   if (result) return { text: result.content, provider: result.provider, model: result.model };
 
-  throw new Error("All 4 Groq models failed for chat.");
+  throw new Error("All 4 Groq accounts failed for chat.");
 }
