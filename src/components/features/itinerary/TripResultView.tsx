@@ -413,7 +413,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                                         <div>
                                           <div className="flex items-center gap-2 mb-1">
                                             <span className="text-xs font-mono text-muted-foreground">{act.time}</span>
-                                            <span className={cn('text-2xs px-2 py-0.5 rounded-full font-medium', activityTypeColor(act.type)}>{act.type}</span>
+                                            <span className={cn('text-2xs px-2 py-0.5 rounded-full font-medium', activityTypeColor(act.type))}>{act.type}</span>
                                           </div>
                                           <h4 className="font-medium text-foreground">{finalTitle}</h4>
                                         </div>
@@ -464,7 +464,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
             const bMisc = Number(trip.budget.miscellaneous) || 0;
             const bEmergency = Number(trip.budget.emergencyFund) || 0;
             const computedTotal = bTransport + bAccommodation + bFood + bActivities + bMisc + bEmergency;
-            const computedPerDay = computedTotal / (fd.startDate && fd.endDate ? (Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1 : 1);
+            const computedPerDay = computedTotal / (fd.startDate && fd.endDate ? Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1 : 1);
             const computedPerPerson = computedTotal / (Number(fd.travelers) || 1);
 
             return (
@@ -594,7 +594,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                       </a>
                     )}
                   </div>
-                ))
+                )))
               ) : (
                 <div className="glass-card p-12 text-center">
                   <Hotel className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
@@ -640,7 +640,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                         </div>
                       )}
                     </div>
-                  ))
+                  ))}
                 </div>
               ) : (
                 <div className="glass-card p-12 text-center">
