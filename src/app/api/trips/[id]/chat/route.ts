@@ -6,13 +6,12 @@ import prisma from '@/lib/db';
 type Params = { params: Promise<{ id: string }> };
 
 async function tryChat(systemPrompt: string, messageHistory: Array<{ role: string; content: string }>) {
-  // Try all 3 providers via callAIChatHistory (it already has fallback built in)
   return await callAIChatHistory(systemPrompt, messageHistory);
 }
 
 export async function GET(_req: Request, { params }: Params) {
+  const { id } = await params;
   try {
-    const { id } = await params;
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -33,8 +32,8 @@ export async function GET(_req: Request, { params }: Params) {
 }
 
 export async function POST(req: Request, { params }: Params) {
+  const { id } = await params;
   try {
-    const { id } = await params;
     const session = await auth();
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -59,8 +58,8 @@ export async function POST(req: Request, { params }: Params) {
       content: m.content,
     }));
 
-    // Retry up to 2 times if first attempt fails
     let result: { text: string; provider: string } | undefined;
+
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         result = await tryChat(systemPrompt, messageHistory);
@@ -78,7 +77,6 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json({ message: saved, aiProvider: result?.provider || 'fallback' });
   } catch (err) {
     console.error('[Trip Chat POST]', err);
-    // Return a friendly error instead of crashing
     const saved = await prisma.chatMessage.create({
       data: { tripId: id, role: 'ASSISTANT', content: 'I apologize, I encountered an issue processing your request. Please try again in a moment.' },
     });
