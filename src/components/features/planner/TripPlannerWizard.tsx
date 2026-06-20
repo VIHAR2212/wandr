@@ -1,11 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  MapPin, Calendar, Users, Wallet, Clock, Download,
-  MessageCircle, Navigation, Shield, Package, ChevronDown,
-  ChevronUp, Star, AlertTriangle, Utensils, Hotel, Sparkles
-} from 'lucide-react';
+import { MapPin, Calendar, Users, Wallet, Clock, Download, MessageCircle, Navigation, Shield, Package, ChevronDown, ChevronUp, Star, AlertTriangle, Utensils, Hotel, Sparkles } from 'lucide-react';
 import { TripChat } from '@/components/features/chat/TripChat';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
