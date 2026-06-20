@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { useSession } from 'next-auth/react';
 import {
   Plus, MapPin, Calendar, Users, Wallet, ArrowRight,
   Globe, TrendingUp, Compass, Sparkles
@@ -38,7 +39,44 @@ const PURPOSE_EMOJI: Record<string, string> = {
   WELLNESS: '🧘', CULTURAL: '🏛️', SOLO: '🎒', BACKPACKING: '⛺',
 };
 
+function getGreeting(name: string) {
+  const hour = new Date().getHours();
+  const firstName = name?.split(' ')[0] || 'Traveler';
+
+  if (hour >= 5 && hour < 12) {
+    const msgs = [
+      `Good morning, ${firstName} — time to plan a new adventure`,
+      `Rise and shine, ${firstName} — where to next?`,
+      `Morning, ${firstName} — a new destination awaits`,
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+  if (hour >= 12 && hour < 17) {
+    const msgs = [
+      `Good afternoon, ${firstName} — perfect time to daydream about trips`,
+      `Hey ${firstName} — grab lunch and plan your next escape`,
+      `Afternoon, ${firstName} — your next journey is just a click away`,
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+  if (hour >= 17 && hour < 21) {
+    const msgs = [
+      `Evening, ${firstName} — grab a coffee and explore new destinations`,
+      `Good evening, ${firstName} — wind down with some trip planning`,
+      `Hey ${firstName} — the best trips are planned over evening coffee`,
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+  const msgs = [
+    `Late night, ${firstName} — the best trips are planned at midnight`,
+    `Burning the midnight oil, ${firstName}? Perfect time to plan`,
+    `Night owl mode, ${firstName} — let's find your next adventure`,
+  ];
+  return msgs[Math.floor(Math.random() * msgs.length)];
+}
+
 export function DashboardView() {
+  const { data: session } = useSession();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('ALL');
@@ -63,7 +101,14 @@ export function DashboardView() {
 
   return (
     <div className="max-w-7xl mx-auto px-6">
-      {/* Header */}
+      {/* Greeting — only addition, no other UI changed */}
+      <div className="mb-8">
+        <p className="text-lg text-muted-foreground">
+          {getGreeting(session?.user?.name || '')}
+        </p>
+      </div>
+
+      {/* Header — EXACTLY your original code */}
       <div className="flex items-center justify-between mb-10">
         <div>
           <h1 className="text-display text-3xl sm:text-4xl font-bold text-foreground mb-2">My Trips</h1>
@@ -75,7 +120,7 @@ export function DashboardView() {
         </Link>
       </div>
 
-      {/* Stats */}
+      {/* Stats — EXACTLY your original code */}
       <motion.div
         className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8"
         initial={{ opacity: 0, y: 16 }}
@@ -96,7 +141,7 @@ export function DashboardView() {
         ))}
       </motion.div>
 
-      {/* Filter tabs */}
+      {/* Filter tabs — EXACTLY your original code */}
       <div className="flex gap-1 mb-6 overflow-x-auto pb-1">
         {filters.map(f => (
           <button
@@ -119,7 +164,7 @@ export function DashboardView() {
         ))}
       </div>
 
-      {/* Trip Grid */}
+      {/* Trip Grid — EXACTLY your original code */}
       {loading ? (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1,2,3].map(i => <div key={i} className="skeleton h-64 rounded-3xl" />)}
