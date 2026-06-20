@@ -1,0 +1,25 @@
+name: Execute Flight Extraction Script
+on:
+  workflow_dispatch: # Allows you to press a button to run it manually
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Execute Extraction Script
+        run: python extract_flights.py
+
+      - name: Commit Generated Database Back to Repo
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "data: build dynamic flight database from routes.txt"
+          file_pattern: "src/lib/flightDatabase.json"
+          
