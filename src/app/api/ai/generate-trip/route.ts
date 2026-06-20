@@ -25,8 +25,18 @@ function mapFoodPref(diet?: string): FoodPreference {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    // ── FIX 1: Safe Auth Check ──
+    // Prevents crash if NEXTAUTH_SECRET is missing on Vercel
+    let userId: string | undefined;
+    try {
+      const session = await auth();
+      userId = session?.user?.id;
+    } catch (authError) {
+      console.error("Auth crash:", authError);
+      return NextResponse.json({ error: "Authentication service is down. Check NEXTAUTH_SECRET on Vercel." }, { status: 500 });
+    }
+
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -55,7 +65,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Handle multiple purposes
     const purposesList = Array.isArray(purposes) && purposes.length > 0 ? purposes : ["BACKPACKING"];
     const primaryPurpose = purposesList[0];
     const purposesStr = purposesList.join(" + ");
@@ -179,7 +188,7 @@ IMPORTANT RULES:
 8. ${includeHiddenGems ? "Include at least 2 hidden gems" : "No hidden gems needed"}
 9. The trip should blend these purposes: ${purposesStr}. Design activities that combine these themes naturally.`;
     
-    console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
+    console.log("🔄 Generating trip with 4-Groq fallback system...");
 
     let tripData: any = null;
     let provider: string = 'unknown';
@@ -188,6 +197,13 @@ IMPORTANT RULES:
 
     while (retryCount <= maxRetries) {
       const result = await generateAIJson(prompt, systemPrompt);
+      
+      // ── FIX 2: Safe Data Check ──
+      // Prevents crash if AI returns a string or null instead of JSON object
+      if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
+        throw new Error(`AI returned invalid data structure. Expected JSON object, got ${typeof result.data}.`);
+      }
+
       tripData = result.data;
       provider = result.provider;
 
@@ -195,8 +211,7 @@ IMPORTANT RULES:
       const generatedDays = Array.isArray(tripData?.itinerary) ? tripData.itinerary.length : 0;
 
       if (generatedDays >= Math.min(days, 2)) {
-        // Good response - has at least 2 days (or all days for short trips)
-        console.log(`Trip generated successfully via ${provider}! Got ${generatedDays} days.`);
+        console.log(`✅ Trip generated successfully via ${provider}! Got ${generatedDays} days.`);
         break;
       }
 
@@ -210,36 +225,46 @@ IMPORTANT RULES:
       }
     }
     
-    const trip = await prisma.trip.create({
-      data: {
-        userId: session.user.id,
-        title: `Trip to ${destination}`,
-        origin: origin || "Not specified",
-        destination: tripData.destination || destination,
-        startDate: start,
-        endDate: end,
-        duration: days,
-        travelers: Number(travelers) || 1,
-        purpose: mapPurpose(primaryPurpose),
-        budget: Number(budget),
-        currency: currency || "INR",
-        foodPref: mapFoodPref(foodPreference),
-        hotelPref: (hotelPreference || "STANDARD").toUpperCase(),
-        transportPref: Array.isArray(transportPreferences) ? transportPreferences : [],
-        itinerary: {
-          days: tripData.itinerary || [],
-          hotels: tripData.hotels || [],
-          restaurants: tripData.restaurants || [],
-          hiddenGems: tripData.hiddenGems || [],
-          purposes: purposesList,
-          specialRequests: specialRequests || "",
+    // ── FIX 3: Safe Database Save ──
+    let trip;
+    try {
+      trip = await prisma.trip.create({
+        data: {
+          userId: userId,
+          title: `Trip to ${destination}`,
+          origin: origin || "Not specified",
+          destination: tripData.destination || destination,
+          startDate: start,
+          endDate: end,
+          duration: days,
+          travelers: Number(travelers) || 1,
+          purpose: mapPurpose(primaryPurpose),
+          budget: Number(budget),
+          currency: currency || "INR",
+          foodPref: mapFoodPref(foodPreference),
+          hotelPref: (hotelPreference || "STANDARD").toUpperCase(),
+          transportPref: Array.isArray(transportPreferences) ? transportPreferences : [],
+          itinerary: {
+            days: tripData.itinerary || [],
+            hotels: tripData.hotels || [],
+            restaurants: tripData.restaurants || [],
+            hiddenGems: tripData.hiddenGems || [],
+            purposes: purposesList,
+            specialRequests: specialRequests || "",
+          },
+          budgetBreakdown: tripData.budgetBreakdown || {},
+          packingList: tripData.packingList || [],
+          weatherInfo: tripData.weather || {},
+          safetyInfo: tripData.safetyInfo || {},
         },
-        budgetBreakdown: tripData.budgetBreakdown || {},
-        packingList: tripData.packingList || [],
-        weatherInfo: tripData.weather || {},
-        safetyInfo: tripData.safetyInfo || {},
-      },
-    });
+      });
+    } catch (dbError: any) {
+      console.error("💥 Database Save Error:", dbError);
+      return NextResponse.json(
+        { error: `Database failed to save: ${dbError.message}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -256,7 +281,7 @@ IMPORTANT RULES:
       provider,
     });
   } catch (error: any) {
-    console.error("Trip generation error:", error);
+    console.error("💥 Trip generation error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to generate trip. Please try again." },
       { status: 500 }
