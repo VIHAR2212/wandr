@@ -25,10 +25,20 @@ export function LoginForm() {
         redirect: false 
       });
       if (res?.error) {
-      toast.error(res.error || 'Invalid email or password');
+        // Specific error messages
+        const msg = res.error.toLowerCase();
+        if (msg.includes('incorrect password') || msg.includes('invalid')) {
+          toast.error('Wrong password. Please try again.');
+        } else if (msg.includes('no account') || msg.includes('not found')) {
+          toast.error('No account found with this email.');
+        } else if (msg.includes('required')) {
+          toast.error('Please fill in all fields.');
+        } else {
+          toast.error(res.error || 'Invalid email or password');
+        }
       } else {
-      toast.success('Welcome back!');
-      window.location.href = '/dashboard';
+        toast.success('Welcome back!');
+        window.location.href = '/dashboard';
       }
     } finally {
       setLoading(false);
@@ -43,12 +53,12 @@ export function LoginForm() {
         password: 'demo1234',
         redirect: false,
       });
-     if (res?.error) {
-     toast.error(res.error || 'Demo login failed');
-     } else {
-     toast.success('Welcome to Demo!');
-     window.location.href = '/dashboard';
-     }
+      if (res?.error) {
+        toast.error(res.error || 'Demo login failed');
+      } else {
+        toast.success('Welcome to Demo!');
+        window.location.href = '/dashboard';
+      }
     } finally {
       setDemoLoading(false);
     }
