@@ -4,44 +4,21 @@ import { prisma } from "@/lib/db";
 import { generateAIJson } from "@/lib/ai";
 import { TripPurpose, FoodPreference } from "@prisma/client";
 
-// Map frontend string to database enum
-function mapPurpose(purpose?: string): TripPurpose {
+function mapPurpose(purpose: string): TripPurpose {
   const map: Record<string, TripPurpose> = {
-    adventure: "ADVENTURE",
-    devotional: "DEVOTIONAL",
-    hiking: "HIKING",
-    honeymoon: "HONEYMOON",
-    family: "FAMILY",
-    photography: "PHOTOGRAPHY",
-    business: "BUSINESS",
-    food: "FOOD_EXPLORATION",
-    food_exploration: "FOOD_EXPLORATION",
-    wellness: "WELLNESS",
-    cultural: "CULTURAL",
-    solo: "SOLO",
-    backpacking: "BACKPACKING",
-    leisure: "BACKPACKING",
-    relaxing: "WELLNESS",
-    holiday: "FAMILY",
-    vacation: "FAMILY",
-    trip: "BACKPACKING",
+    ADVENTURE: "ADVENTURE", DEVOTIONAL: "DEVOTIONAL", HIKING: "HIKING",
+    HONEYMOON: "HONEYMOON", FAMILY: "FAMILY", PHOTOGRAPHY: "PHOTOGRAPHY",
+    BUSINESS: "BUSINESS", FOOD_EXPLORATION: "FOOD_EXPLORATION", WELLNESS: "WELLNESS",
+    CULTURAL: "CULTURAL", SOLO: "SOLO", BACKPACKING: "BACKPACKING",
   };
-  return map[(purpose || "leisure").toLowerCase().trim()] || "BACKPACKING";
+  return map[purpose] || "BACKPACKING";
 }
 
-// Map diet string to database enum
 function mapFoodPref(diet?: string): FoodPreference {
   const map: Record<string, FoodPreference> = {
-    veg: "VEG",
-    vegetarian: "VEG",
-    jain: "JAIN",
-    vegan: "VEGAN",
-    halal: "HALAL",
-    non_veg: "NON_VEG",
-    "non-veg": "NON_VEG",
-    nonveg: "NON_VEG",
-    non: "NON_VEG",
-    meat: "NON_VEG",
+    veg: "VEG", vegetarian: "VEG", jain: "JAIN", vegan: "VEGAN",
+    halal: "HALAL", non_veg: "NON_VEG", "non-veg": "NON_VEG",
+    nonveg: "NON_VEG", non: "NON_VEG", meat: "NON_VEG",
   };
   return map[(diet || "").toLowerCase().trim()] || "NON_VEG";
 }
@@ -54,22 +31,10 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-
-    // Match the EXACT field names from TripPlannerWizard form
     const {
-      origin,
-      destination,
-      startDate,
-      endDate,
-      budget,
-      travelers,
-      currency,
-      purpose,
-      foodPreference,
-      hotelPreference,
-      transportPreferences,
-      specialRequests,
-      includeHiddenGems,
+      origin, destination, startDate, endDate, budget, travelers, currency,
+      purposes, foodPreference, hotelPreference, transportPreferences,
+      specialRequests, includeHiddenGems, smartBudget,
     } = body;
 
     if (!destination || !startDate || !endDate || !budget) {
@@ -81,8 +46,7 @@ export async function POST(req: NextRequest) {
 
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const days =
-      Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     if (days < 1 || days > 30) {
       return NextResponse.json(
@@ -91,19 +55,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const systemPrompt = `You are an expert travel planner AI. You create detailed, realistic, budget-accurate trip plans.
-You MUST respond with valid JSON only. No markdown, no explanation, no code blocks — just raw JSON.
-All costs should be in ${currency || "INR"} currency.`;
+    // Handle multiple purposes
+    const purposesList = Array.isArray(purposes) && purposes.length > 0 ? purposes : ["BACKPACKING"];
+    const primaryPurpose = purposesList[0];
+    const purposesStr = purposesList.join(" + ");
 
-    // Build transport string
     const transportStr = Array.isArray(transportPreferences) && transportPreferences.length > 0
       ? transportPreferences.join(", ")
       : "any available transport";
 
-    // Build special requests instruction
     const specialInstruction = specialRequests?.trim()
-      ? `\n\n⚠️ IMPORTANT — Special Requests from the user: "${specialRequests.trim()}"\nYou MUST incorporate these into the itinerary. Add specific activities, visits, or stops for these requests. Do NOT ignore them.`
+      ? `\n\n⚠️ CRITICAL — Special Requests from the user: "${specialRequests.trim()}"\nYou MUST incorporate these into the itinerary. Add specific activities, visits, or stops for these requests. Do NOT ignore them.`
       : "";
+
+    const systemPrompt = `You are an expert travel planner AI. You create detailed, realistic, budget-accurate trip plans.
+You MUST respond with valid JSON only. No markdown, no explanation, no code blocks — just raw JSON.
+All costs should be in ${currency || "INR"} currency.`;
 
     const prompt = `Create a detailed ${days}-day trip plan for ${destination}.
 
@@ -112,11 +79,12 @@ Trip Details:
 - Start Date: ${startDate}
 - End Date: ${endDate}
 - Total Budget: ${budget} ${currency || "INR"} (for ${travelers || 1} traveler${Number(travelers) > 1 ? "s" : ""})
+- Trip Purposes: ${purposesStr}
 - Food Preference: ${foodPreference || "No preference"}
-- Trip Purpose: ${Array.isArray(purpose) ? purpose.join(" + ") : (purpose || "Leisure")}
 - Accommodation Type: ${hotelPreference || "Standard"}
 - Preferred Transport: ${transportStr}
 - Include Hidden Gems: ${includeHiddenGems ? "Yes" : "No"}
+- Smart Budget Mode: ${smartBudget ? "Yes — transport and hotel are already optimized for this budget" : "No"}
  ${specialInstruction}
 
 Return ONLY this JSON structure (no other text):
@@ -208,13 +176,13 @@ IMPORTANT RULES:
 5. Activities should have realistic costs in ${currency || "INR"} based on ${destination}
 6. Use ${transportStr} as preferred transport where possible
 7. Include transport costs between locations
-8. ${includeHiddenGems ? "Include at least 2 hidden gems" : "No hidden gems needed"}`;
+8. ${includeHiddenGems ? "Include at least 2 hidden gems" : "No hidden gems needed"}
+9. The trip should blend these purposes: ${purposesStr}. Design activities that combine these themes naturally.`;
 
     console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
     const { data: tripData, provider } = await generateAIJson(prompt, systemPrompt);
     console.log(`Trip generated successfully via ${provider}!`);
 
-    // Save to database — fields match Prisma schema exactly
     const trip = await prisma.trip.create({
       data: {
         userId: session.user.id,
@@ -225,22 +193,20 @@ IMPORTANT RULES:
         endDate: end,
         duration: days,
         travelers: Number(travelers) || 1,
-        purpose: mapPurpose(Array.isArray(body.primaryPurpose) ? body.primaryPurpose[0] : (body.primaryPurpose || purpose)),
+        purpose: mapPurpose(primaryPurpose),
         budget: Number(budget),
         currency: currency || "INR",
         foodPref: mapFoodPref(foodPreference),
         hotelPref: (hotelPreference || "STANDARD").toUpperCase(),
         transportPref: Array.isArray(transportPreferences) ? transportPreferences : [],
-
-        // Hotels, restaurants, hiddenGems bundled inside itinerary JSON
         itinerary: {
           days: tripData.itinerary || [],
           hotels: tripData.hotels || [],
           restaurants: tripData.restaurants || [],
           hiddenGems: tripData.hiddenGems || [],
+          purposes: purposesList,
+          specialRequests: specialRequests || "",
         },
-
-        // These exist as JSON columns in DB
         budgetBreakdown: tripData.budgetBreakdown || {},
         packingList: tripData.packingList || [],
         weatherInfo: tripData.weather || {},
@@ -248,7 +214,6 @@ IMPORTANT RULES:
       },
     });
 
-    // Return full data to frontend
     return NextResponse.json({
       success: true,
       tripId: trip.id,
@@ -259,6 +224,7 @@ IMPORTANT RULES:
         restaurants: tripData.restaurants || [],
         hiddenGems: tripData.hiddenGems || [],
         weather: tripData.weather || {},
+        purposes: purposesList,
       },
       provider,
     });
