@@ -25,10 +25,10 @@ export function LoginForm() {
         redirect: false 
       });
       if (res?.error) {
-        toast.error(res.error || 'Invalid email or password');
+      toast.error(res.error || 'Invalid email or password');
       } else {
-        toast.success('Welcome back!');
-        router.push('/dashboard');
+      toast.success('Welcome back!');
+      window.location.href = '/dashboard';
       }
     } finally {
       setLoading(false);
@@ -43,12 +43,12 @@ export function LoginForm() {
         password: 'demo1234',
         redirect: false,
       });
-      if (res?.error) {
-        toast.error(res.error || 'Demo login failed');
-      } else {
-        toast.success('Welcome to Demo!');
-        router.push('/dashboard');
-      }
+     if (res?.error) {
+     toast.error(res.error || 'Demo login failed');
+     } else {
+     toast.success('Welcome to Demo!');
+     window.location.href = '/dashboard';
+     }
     } finally {
       setDemoLoading(false);
     }
