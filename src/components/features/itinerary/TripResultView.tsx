@@ -13,6 +13,9 @@ import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safety
 import { cn } from '@/lib/utils';
 import type { GeneratedTrip, TripDay, TripFormData } from '@/types';
 
+// 🚀 IMPORTED: Connecting our local flight database registry here
+import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
+
 interface TripData {
   tripId: string;
   formData: TripFormData;
@@ -83,7 +86,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
     { id: 'safety', label: 'Safety', icon: Shield },
     { id: 'chat', label: 'AI Chat', icon: MessageCircle },
   ];
-
+  
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
       {/* Trip Header */}
