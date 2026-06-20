@@ -17,7 +17,7 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
     if (typeof window === 'undefined' || !mapRef.current) return;
     if (mapInstanceRef.current) return;
 
-    import('leaflet').then((L) => {
+    import('leaflet').then((L: any) => {
       if (!mapRef.current || mapInstanceRef.current) return;
 
       let centerLat = 20.5937;
@@ -30,8 +30,8 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
         centerLng = firstActivity.lng;
         zoom = 12;
       } else if (trip.hotels?.[0]?.lat && trip.hotels?.[0]?.lng) {
-        centerLat = trip.hotels[0].lat!;
-        centerLng = trip.hotels[0].lng!;
+        centerLat = trip.hotels[0].lat;
+        centerLng = trip.hotels[0].lng;
         zoom = 12;
       }
 
@@ -56,7 +56,7 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
           popupAnchor: [0, -34],
         });
 
-      (trip.hotels ?? []).forEach((hotel) => {
+      (trip.hotels ?? []).forEach((hotel: any) => {
         if (!hotel.lat || !hotel.lng) return;
         bounds.push([hotel.lat, hotel.lng]);
         L.marker([hotel.lat, hotel.lng], { icon: createIcon('🏨', '#a67040') })
@@ -64,7 +64,7 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
           .bindPopup(`<b>${hotel.name}</b><br/>${hotel.type}<br/>⭐ ${hotel.rating}`);
       });
 
-      (trip.restaurants ?? []).forEach((r) => {
+      (trip.restaurants ?? []).forEach((r: any) => {
         if (!r.lat || !r.lng) return;
         bounds.push([r.lat, r.lng]);
         L.marker([r.lat, r.lng], { icon: createIcon('🍽️', '#f5681a') })
@@ -72,7 +72,7 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
           .bindPopup(`<b>${r.name}</b><br/>${r.cuisine}<br/>💰 ${r.priceRange}`);
       });
 
-      (trip.hiddenGems ?? []).forEach((gem) => {
+      (trip.hiddenGems ?? []).forEach((gem: any) => {
         if (!gem.lat || !gem.lng) return;
         bounds.push([gem.lat, gem.lng]);
         L.marker([gem.lat, gem.lng], { icon: createIcon('✨', '#1a9951') })
@@ -80,8 +80,8 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
           .bindPopup(`<b>${gem.name}</b><br/>${gem.description}<br/>💡 ${gem.insiderTip}`);
       });
 
-      (trip.days ?? []).forEach((day) => {
-        (day.activities ?? []).forEach((act) => {
+      (trip.days ?? []).forEach((day: any) => {
+        (day.activities ?? []).forEach((act: any) => {
           if (!act.lat || !act.lng) return;
           bounds.push([act.lat, act.lng]);
           const emoji =
@@ -105,11 +105,11 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
       }
 
       if (bounds.length > 1) {
-        map.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40] });
+        map.fitBounds(bounds as any, { padding: [40, 40] });
       }
 
       if (showRoute && bounds.length > 1) {
-        L.polyline(bounds as L.LatLngExpression[], {
+        L.polyline(bounds as any, {
           color: '#a67040',
           weight: 3,
           opacity: 0.6,
@@ -120,7 +120,7 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
 
     return () => {
       if (mapInstanceRef.current) {
-        (mapInstanceRef.current as { remove: () => void }).remove();
+        (mapInstanceRef.current as any).remove();
         mapInstanceRef.current = null;
       }
     };
@@ -139,9 +139,9 @@ export function TripMap({ trip, userLocation, showRoute = false }: Props) {
           {
             emoji: '📍',
             label: 'Activities',
-            count: trip.days?.reduce((a, d) => a + (d.activities?.length ?? 0), 0) ?? 0,
+            count: trip.days?.reduce((a: number, d: any) => a + (d.activities?.length ?? 0), 0) ?? 0,
           },
-        ].map(({ emoji, label, count }) => (
+        ].map(({ emoji, label, count }: { emoji: string; label: string; count: number }) => (
           <div key={label} className="glass-panel rounded-2xl px-4 py-3 text-center">
             <div className="text-2xl mb-1">{emoji}</div>
             <div className="text-lg font-bold text-foreground">{count}</div>
