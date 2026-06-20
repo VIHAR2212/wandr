@@ -11,8 +11,10 @@ import { cn } from '@/lib/utils';
 const navLinks = [
   { href: '/plan', label: 'Plan a Trip' },
   { href: '/dashboard', label: 'My Trips' },
+  { href: '/explore', label: 'Explore' },
   { href: '/#features', label: 'Features' },
 ];
+
 
 const HIDE_NAV_LINKS = ['/plan', '/trip', '/auth', '/dashboard', '/admin'];
 const SHOW_BACK = ['/plan', '/trip', '/auth/login', '/auth/register', '/dashboard', '/admin'];
