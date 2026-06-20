@@ -113,7 +113,7 @@ Trip Details:
 - End Date: ${endDate}
 - Total Budget: ${budget} ${currency || "INR"} (for ${travelers || 1} traveler${Number(travelers) > 1 ? "s" : ""})
 - Food Preference: ${foodPreference || "No preference"}
-- Trip Purpose: ${purpose || "Leisure"}
+- Trip Purpose: ${Array.isArray(purpose) ? purpose.join(" + ") : (purpose || "Leisure")}
 - Accommodation Type: ${hotelPreference || "Standard"}
 - Preferred Transport: ${transportStr}
 - Include Hidden Gems: ${includeHiddenGems ? "Yes" : "No"}
@@ -225,7 +225,7 @@ IMPORTANT RULES:
         endDate: end,
         duration: days,
         travelers: Number(travelers) || 1,
-        purpose: mapPurpose(purpose),
+        purpose: mapPurpose(Array.isArray(body.primaryPurpose) ? body.primaryPurpose[0] : (body.primaryPurpose || purpose)),
         budget: Number(budget),
         currency: currency || "INR",
         foodPref: mapFoodPref(foodPreference),
