@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 You MUST respond with valid JSON only. No markdown, no explanation, no code blocks — just raw JSON.
 All costs should be in ${currency || "INR"} currency.`;
 
-    const prompt = `Create a detailed ${days}-day trip plan for ${destination}.
+    const prompt = `Create a detailed ${days}-day trip plan for ${destination}.IMPORTANT: You MUST generate ALL ${days} days. Do NOT stop early. Do NOT skip any day. Each day must have 4-6 activities.
 
 Trip Details:
 - Origin: ${origin || "Not specified"}
@@ -178,11 +178,38 @@ IMPORTANT RULES:
 7. Include transport costs between locations
 8. ${includeHiddenGems ? "Include at least 2 hidden gems" : "No hidden gems needed"}
 9. The trip should blend these purposes: ${purposesStr}. Design activities that combine these themes naturally.`;
-
+    
     console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
-    const { data: tripData, provider } = await generateAIJson(prompt, systemPrompt);
-    console.log(`Trip generated successfully via ${provider}!`);
 
+    let tripData: any;
+    let provider: string;
+    let retryCount = 0;
+    const maxRetries = 2;
+
+    while (retryCount <= maxRetries) {
+      const result = await generateAIJson(prompt, systemPrompt);
+      tripData = result.data;
+      provider = result.provider;
+
+      // Validate: check if we got all days
+      const generatedDays = Array.isArray(tripData?.itinerary) ? tripData.itinerary.length : 0;
+
+      if (generatedDays >= Math.min(days, 2)) {
+        // Good response - has at least 2 days (or all days for short trips)
+        console.log(`Trip generated successfully via ${provider}! Got ${generatedDays} days.`);
+        break;
+      }
+
+      // Incomplete response - retry
+      retryCount++;
+      console.warn(`Attempt ${retryCount}: AI returned only ${generatedDays}/${days} days. Retrying...`);
+
+      if (retryCount > maxRetries) {
+        console.warn(`Max retries reached. Using ${generatedDays}-day response.`);
+        break;
+      }
+    }
+    
     const trip = await prisma.trip.create({
       data: {
         userId: session.user.id,
