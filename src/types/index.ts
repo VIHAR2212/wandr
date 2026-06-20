@@ -54,6 +54,9 @@ export type TransportType =
   | 'CAR_RENTAL'
   | 'TAXI'
   | 'METRO'
+  | 'FERRY'
+  | 'BICYCLE'
+  | 'WALKING';
 
 export interface GeneratedTrip {
   title: string;
