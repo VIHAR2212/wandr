@@ -181,8 +181,8 @@ IMPORTANT RULES:
     
     console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
 
-    let tripData: any;
-    let provider: string;
+    let tripData: any = null;
+    let provider: string = 'unknown';
     let retryCount = 0;
     const maxRetries = 2;
 
