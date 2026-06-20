@@ -54,15 +54,22 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+
+    // Match the EXACT field names from TripPlannerWizard form
     const {
+      origin,
       destination,
       startDate,
       endDate,
       budget,
       travelers,
-      diet,
+      currency,
       purpose,
-      interests,
+      foodPreference,
+      hotelPreference,
+      transportPreferences,
+      specialRequests,
+      includeHiddenGems,
     } = body;
 
     if (!destination || !startDate || !endDate || !budget) {
@@ -86,21 +93,31 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = `You are an expert travel planner AI. You create detailed, realistic, budget-accurate trip plans.
 You MUST respond with valid JSON only. No markdown, no explanation, no code blocks — just raw JSON.
-All costs should be in the currency implied by the destination or USD if unclear.`;
+All costs should be in ${currency || "INR"} currency.`;
 
-    const interestStr = interests?.length
-      ? interests.join(", ")
-      : "general sightseeing, local culture, food";
+    // Build transport string
+    const transportStr = Array.isArray(transportPreferences) && transportPreferences.length > 0
+      ? transportPreferences.join(", ")
+      : "any available transport";
+
+    // Build special requests instruction
+    const specialInstruction = specialRequests?.trim()
+      ? `\n\n⚠️ IMPORTANT — Special Requests from the user: "${specialRequests.trim()}"\nYou MUST incorporate these into the itinerary. Add specific activities, visits, or stops for these requests. Do NOT ignore them.`
+      : "";
 
     const prompt = `Create a detailed ${days}-day trip plan for ${destination}.
 
 Trip Details:
+- Origin: ${origin || "Not specified"}
 - Start Date: ${startDate}
 - End Date: ${endDate}
-- Total Budget: ${budget} (for ${travelers || 1} traveler${Number(travelers) > 1 ? "s" : ""})
-- Diet Preference: ${diet || "No preference"}
+- Total Budget: ${budget} ${currency || "INR"} (for ${travelers || 1} traveler${Number(travelers) > 1 ? "s" : ""})
+- Food Preference: ${foodPreference || "No preference"}
 - Trip Purpose: ${purpose || "Leisure"}
-- Interests: ${interestStr}
+- Accommodation Type: ${hotelPreference || "Standard"}
+- Preferred Transport: ${transportStr}
+- Include Hidden Gems: ${includeHiddenGems ? "Yes" : "No"}
+ ${specialInstruction}
 
 Return ONLY this JSON structure (no other text):
 {
@@ -138,7 +155,7 @@ Return ONLY this JSON structure (no other text):
     {
       "name": "Restaurant Name",
       "cuisine": "Type of food",
-      "diet": "${diet || "all"}",
+      "diet": "${foodPreference || "all"}",
       "priceRange": "$$",
       "rating": 4.5,
       "mustTry": "Best dish to order",
@@ -185,23 +202,24 @@ Return ONLY this JSON structure (no other text):
 
 IMPORTANT RULES:
 1. Every day must have 4-6 activities covering morning, afternoon, and evening
-2. Total budget in budgetBreakdown must NOT exceed ${budget}
-3. Include at least 2 hotels, 3 restaurants, 2 hidden gems
-4. Activities should have realistic costs based on ${destination}
-5. All restaurant suggestions must respect the diet preference: ${diet || "no restriction"}
-6. Include transport costs between locations`;
+2. Total budget in budgetBreakdown must NOT exceed ${budget} ${currency || "INR"}
+3. Include at least 2 hotels matching "${hotelPreference || "Standard"}" preference
+4. Include at least 3 restaurants that serve ${foodPreference || "any"} food
+5. Activities should have realistic costs in ${currency || "INR"} based on ${destination}
+6. Use ${transportStr} as preferred transport where possible
+7. Include transport costs between locations
+8. ${includeHiddenGems ? "Include at least 2 hidden gems" : "No hidden gems needed"}`;
 
-    // ===== Call AI with fallback: z.ai → Groq → Gemini =====
     console.log("Generating trip with AI fallback (z.ai → Groq → Gemini)...");
     const { data: tripData, provider } = await generateAIJson(prompt, systemPrompt);
     console.log(`Trip generated successfully via ${provider}!`);
 
-    // ===== Save to database — fields match Prisma schema exactly =====
+    // Save to database — fields match Prisma schema exactly
     const trip = await prisma.trip.create({
       data: {
         userId: session.user.id,
         title: `Trip to ${destination}`,
-        origin: "Not specified",
+        origin: origin || "Not specified",
         destination: tripData.destination || destination,
         startDate: start,
         endDate: end,
@@ -209,10 +227,12 @@ IMPORTANT RULES:
         travelers: Number(travelers) || 1,
         purpose: mapPurpose(purpose),
         budget: Number(budget),
-        foodPref: mapFoodPref(diet),
+        currency: currency || "INR",
+        foodPref: mapFoodPref(foodPreference),
+        hotelPref: (hotelPreference || "STANDARD").toUpperCase(),
+        transportPref: Array.isArray(transportPreferences) ? transportPreferences : [],
 
         // Hotels, restaurants, hiddenGems bundled inside itinerary JSON
-        // (these columns don't exist in DB)
         itinerary: {
           days: tripData.itinerary || [],
           hotels: tripData.hotels || [],
@@ -223,22 +243,18 @@ IMPORTANT RULES:
         // These exist as JSON columns in DB
         budgetBreakdown: tripData.budgetBreakdown || {},
         packingList: tripData.packingList || [],
-        weatherInfo: tripData.weather || {},  // Note: "weatherInfo" not "weather"
+        weatherInfo: tripData.weather || {},
         safetyInfo: tripData.safetyInfo || {},
       },
     });
 
-    // ===== Return full data to frontend =====
-    // Frontend expects top-level hotels, restaurants, etc.
-    // so we extract them from the bundled itinerary
+    // Return full data to frontend
     return NextResponse.json({
       success: true,
       tripId: trip.id,
       trip: {
         ...trip,
-        // Override itinerary to just be the days array
         itinerary: tripData.itinerary || [],
-        // Add these as top-level for frontend
         hotels: tripData.hotels || [],
         restaurants: tripData.restaurants || [],
         hiddenGems: tripData.hiddenGems || [],
