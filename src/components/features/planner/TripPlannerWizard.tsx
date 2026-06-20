@@ -174,7 +174,8 @@ export function TripPlannerWizard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate trip');
-      router.push(`/trip/${data.tripId}`);
+      localStorage.setItem('generating_trip_id', data.tripId);
+      window.location.href = `/trip/${data.tripId}`;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Something went wrong';
       toast.error(message);
