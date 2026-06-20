@@ -5,6 +5,11 @@ import prisma from '@/lib/db';
 
 type Params = { params: Promise<{ id: string }> };
 
+async function tryChat(systemPrompt: string, messageHistory: Array<{ role: string; content: string }>) {
+  // Try all 3 providers via callAIChatHistory (it already has fallback built in)
+  return await callAIChatHistory(systemPrompt, messageHistory);
+}
+
 export async function GET(_req: Request, { params }: Params) {
   try {
     const { id } = await params;
@@ -47,14 +52,24 @@ export async function POST(req: Request, { params }: Params) {
       take: 20,
     });
 
-    const systemPrompt = `You are Wandr AI travel assistant for a trip from ${trip.origin} to ${trip.destination} (${trip.startDate.toDateString()} to ${trip.endDate.toDateString()}, ${trip.travelers} travelers, budget ${trip.currency} ${trip.budget}). Be concise, helpful, and specific.`;
+    const systemPrompt = `You are Wandr AI travel assistant for a trip from ${trip.origin} to ${trip.destination} (${trip.startDate.toDateString()} to ${trip.endDate.toDateString()}, ${trip.travelers} travelers, budget ${trip.currency} ${trip.budget}). Be concise, helpful, and specific. If you don't know something, say so honestly. Keep responses under 150 words.`;
 
     const messageHistory = history.map((m: { role: string; content: string }) => ({
       role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
       content: m.content,
     }));
 
-    const result = await callAIChatHistory(systemPrompt, messageHistory);
+    // Retry up to 2 times if first attempt fails
+    let result;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        result = await tryChat(systemPrompt, messageHistory);
+        break;
+      } catch (retryErr) {
+        console.error(`Chat attempt ${attempt + 1} failed:`, retryErr);
+        if (attempt === 1) throw retryErr;
+      }
+    }
 
     const saved = await prisma.chatMessage.create({
       data: { tripId: id, role: 'ASSISTANT', content: result.text },
@@ -63,7 +78,10 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json({ message: saved, aiProvider: result.provider });
   } catch (err) {
     console.error('[Trip Chat POST]', err);
-    const message = err instanceof Error ? err.message : 'Chat failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Return a friendly error instead of crashing
+    const saved = await prisma.chatMessage.create({
+      data: { tripId: id, role: 'ASSISTANT', content: 'I apologize, I encountered an issue processing your request. Please try again in a moment.' },
+    });
+    return NextResponse.json({ message: saved, aiProvider: 'fallback' });
   }
 }
