@@ -32,16 +32,21 @@ export function RegisterForm() {
       });
       const data = await res.json();
       if (!res.ok) { 
-        toast.error(data.error || 'Registration failed'); 
+        const msg = (data.error || 'Registration failed').toLowerCase();
+        if (msg.includes('already exists')) {
+          toast.error('An account with this email already exists.');
+        } else {
+          toast.error(data.error || 'Registration failed');
+        }
         return; 
       }
-      toast.success('Account created! Signing you in…');
+      toast.success(`Welcome, ${form.name.trim()}! Signing you in…`);
       await signIn('credentials', { 
         email: form.email.toLowerCase().trim(), 
         password: form.password, 
         redirect: false 
       });
-      window.location.href ='/dashboard';
+      window.location.href = '/dashboard';
     } finally {
       setLoading(false);
     }
@@ -59,8 +64,6 @@ export function RegisterForm() {
 
         <h1 className="text-2xl font-bold text-foreground mb-1">Start your journey</h1>
         <p className="text-muted-foreground text-sm mb-8">Create a free account. No credit card needed.</p>
-
-        {/* Google button REMOVED — no billing required */}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
