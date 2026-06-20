@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import { Moon, Sun, Compass, Menu, X, Sparkles, ArrowLeft } from 'lucide-react';
+import { useSession, signOut } from 'next-auth/react';
+import { Moon, Sun, Compass, Menu, X, Sparkles, ArrowLeft, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -21,11 +22,19 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const { data: session } = useSession();
   const router = useRouter();
   const pathname = usePathname();
 
+  const isLoggedIn = !!session?.user;
   const showBack = SHOW_BACK.some((p) => pathname.startsWith(p));
   const hideLinks = HIDE_NAV_LINKS.some((p) => pathname.startsWith(p));
+
+  async function handleSignOut() {
+    setMenuOpen(false);
+    await signOut({ redirect: false });
+    router.push('/auth/login');
+  }
 
   useEffect(() => {
     setMounted(true);
@@ -87,19 +96,31 @@ export function Navbar() {
               </button>
             )}
 
-            {!hideLinks && (
-              <>
-                <Link
-                  href="/auth/login"
-                  className="hidden md:block px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Sign in
-                </Link>
-                <Link href="/plan" className="hidden md:flex btn-premium items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Plan a Trip
-                </Link>
-              </>
+            {/* Logged in: Show Sign Out */}
+            {isLoggedIn ? (
+              <button
+                onClick={handleSignOut}
+                className="hidden md:flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all duration-200"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign Out
+              </button>
+            ) : (
+              /* Logged out: Show Sign In + Plan a Trip */
+              !hideLinks && (
+                <>
+                  <Link
+                    href="/auth/login"
+                    className="hidden md:block px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Sign in
+                  </Link>
+                  <Link href="/plan" className="hidden md:flex btn-premium items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Plan a Trip
+                  </Link>
+                </>
+              )
             )}
 
             {/* Mobile menu button */}
@@ -134,13 +155,25 @@ export function Navbar() {
                   </Link>
                 ))}
                 <div className="mt-2 pt-2 border-t border-border flex flex-col gap-2">
-                  <Link href="/auth/login" className="px-4 py-2.5 rounded-xl text-sm font-medium text-center text-muted-foreground hover:bg-muted/60 transition-colors">
-                    Sign in
-                  </Link>
-                  <Link href="/plan" className="btn-premium justify-center">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Plan a Trip
-                  </Link>
+                  {isLoggedIn ? (
+                    <button
+                      onClick={handleSignOut}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Sign Out
+                    </button>
+                  ) : (
+                    <>
+                      <Link href="/auth/login" onClick={() => setMenuOpen(false)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-center text-muted-foreground hover:bg-muted/60 transition-colors">
+                        Sign in
+                      </Link>
+                      <Link href="/plan" onClick={() => setMenuOpen(false)} className="btn-premium justify-center">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Plan a Trip
+                      </Link>
+                    </>
+                  )}
                 </div>
               </nav>
             </motion.div>
