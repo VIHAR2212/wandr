@@ -1,0 +1,68 @@
+{
+  "BOM-COK": [
+    {
+      "airline": "IndiGo",
+      "flightNo": "6E-300",
+      "aircraft": "Airbus A320neo",
+      "duration": "1h 55m",
+      "avgPrice": 5400
+    },
+    {
+      "airline": "Airline (9W)",
+      "flightNo": "9W-315",
+      "aircraft": "Airbus A320neo",
+      "duration": "1h 55m",
+      "avgPrice": 5400
+    }
+  ],
+  "DEL-JAI": [
+    {
+      "airline": "Airline (9W)",
+      "flightNo": "9W-300",
+      "aircraft": "ATR 72-600",
+      "duration": "0h 55m",
+      "avgPrice": 4200
+    },
+    {
+      "airline": "Air India",
+      "flightNo": "AI-315",
+      "aircraft": "ATR 72-600",
+      "duration": "0h 55m",
+      "avgPrice": 4200
+    }
+  ],
+  "DEL-IXL": [
+    {
+      "airline": "Airline (9W)",
+      "flightNo": "9W-300",
+      "aircraft": "Airbus A320neo",
+      "duration": "1h 25m",
+      "avgPrice": 8900
+    },
+    {
+      "airline": "Air India",
+      "flightNo": "AI-315",
+      "aircraft": "Airbus A320neo",
+      "duration": "1h 25m",
+      "avgPrice": 8900
+    }
+  ],
+  "CCU-IXZ": [
+    {
+      "airline": "Airline (9W)",
+      "flightNo": "9W-300",
+      "aircraft": "Airbus A321",
+      "duration": "2h 15m",
+      "avgPrice": 7200
+    },
+    {
+      "airline": "Air India",
+      "flightNo": "AI-315",
+      "aircraft": "Airbus A321",
+      "duration": "2h 15m",
+      "avgPrice": 7200
+    }
+  ],
+  "BOM-LIS": [],
+  "DEL-KIX": []
+}
