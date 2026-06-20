@@ -1,55 +1,47 @@
 // ============================================
-// WANDR AI — Multi-Provider Fallback System
-// Primary: Groq
-// Fallback #1: Gemini
-// Fallback #2: z.ai
+// WANDR AI — Strictly 4x Groq Fallback System
+// 1. llama-3.3-70b  (Smartest)
+// 2. mixtral-8x7b    (Best at formatting)
+// 3. gemma2-9b-it    (Most stable)
+// 4. llama-3.1-8b    (Fastest)
 // ============================================
 
 interface AIResponse {
   content: string;
   provider: string;
+  model: string;
 }
 
-// ── Groq Configuration ──────────────────────────────────────
-const GROQ_CONFIG = {
-  baseUrl: "https://api.groq.com/openai/v1/chat/completions",
-  model: "llama-3.3-70b-versatile",
-};
+// ── The 4 Free Groq Models ──────────────────────────────────
+const GROQ_MODELS = [
+  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
+  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" },
+  { id: "gemma2-9b-it", name: "Gemma 2 9B" },
+  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B" },
+];
 
-// ── Gemini Configuration ────────────────────────────────────
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-// ── z.ai Configuration ──────────────────────────────────────
-const ZAI_CONFIG = {
-  baseUrl: process.env.ZAI_BASE_URL || "https://api.z-ai.ai/v1/chat/completions",
-  model: process.env.ZAI_MODEL || "default",
-};
+// ── Call a single Groq model ────────────────────────────────
+async function callGroqModel(
+  modelId: string,
+  messages: Array<{ role: string; content: string }>
+): Promise<string | null> {
+  const apiKey = process.env.GROQ_API_KEY;
 
-// ── Helper: Get API key at CALL TIME ──
-function getKey(name: string): string {
-  const key = process.env[name];
-  if (!key) {
-    console.log(`${name}: Not set in .env.local, skipping`);
-    return "";
-  }
-  return key;
-}
-
-// ── Groq Caller (PRIMARY) ───────────────────────────────────
-async function callGroq(messages: Array<{ role: string; content: string }>): Promise<string | null> {
-  const apiKey = getKey("GROQ_API_KEY");
   if (!apiKey) return null;
 
   try {
-    console.log("🔄 Groq: Calling...");
-    const response = await fetch(GROQ_CONFIG.baseUrl, {
+    console.log(`🔄 Trying Groq: ${modelId}...`);
+
+    const response = await fetch(GROQ_BASE_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: GROQ_CONFIG.model,
+        model: modelId,
         messages,
         max_tokens: 16384,
         temperature: 0.7,
@@ -57,8 +49,7 @@ async function callGroq(messages: Array<{ role: string; content: string }>): Pro
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      console.error(`❌ Groq error (${response.status}):`, err.slice(0, 300));
+      console.error(`❌ ${modelId} failed (${response.status})`);
       return null;
     }
 
@@ -66,148 +57,55 @@ async function callGroq(messages: Array<{ role: string; content: string }>): Pro
     const text = data.choices?.[0]?.message?.content;
 
     if (text) {
-      console.log("✅ Groq: Success!");
+      console.log(`✅ Success with ${modelId}`);
       return text;
     }
 
-    console.error("❌ Groq: Empty response");
     return null;
   } catch (error) {
-    console.error("❌ Groq: Failed:", error);
+    console.error(`❌ ${modelId} crashed`);
     return null;
   }
 }
 
-// ── Gemini Caller (FALLBACK #1) ─────────────────────────────
-async function callGemini(messages: Array<{ role: string; content: string }>): Promise<string | null> {
-  const apiKey = getKey("GEMINI_API_KEY");
-  if (!apiKey) return null;
-
-  try {
-    console.log("🔄 Gemini: Calling...");
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
-    const contents = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
-
-    const systemInstruction = messages.find((m) => m.role === "system");
-
-    const body: any = { contents };
-    if (systemInstruction) {
-      body.systemInstruction = { parts: [{ text: systemInstruction.content }] };
+// ── Loop through all 4 models ───────────────────────────────
+async function tryGroqFallback(
+  messages: Array<{ role: string; content: string }>
+): Promise<AIResponse | null> {
+  for (const model of GROQ_MODELS) {
+    const result = await callGroqModel(model.id, messages);
+    
+    if (result) {
+      return {
+        content: result,
+        provider: "Groq",
+        model: model.name,
+      };
     }
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      console.error(`❌ Gemini error (${response.status}):`, err.slice(0, 300));
-      return null;
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (text) {
-      console.log("✅ Gemini: Success!");
-      return text;
-    }
-
-    console.error("❌ Gemini: Empty response");
-    return null;
-  } catch (error) {
-    console.error("❌ Gemini: Failed:", error);
-    return null;
+    
+    // Wait 500ms before hitting the next model to prevent rate limits
+    await new Promise((r) => setTimeout(r, 500));
   }
+  
+  return null;
 }
 
-// ── z.ai Caller (FALLBACK #2) ───────────────────────────────
-async function callZAI(messages: Array<{ role: string; content: string }>): Promise<string | null> {
-  const apiKey = getKey("ZAI_API_KEY");
-  if (!apiKey) return null;
-
-  try {
-    console.log("🔄 z.ai: Calling...");
-    const response = await fetch(ZAI_CONFIG.baseUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: ZAI_CONFIG.model,
-        messages,
-        max_tokens: 16384,
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      console.error(`❌ z.ai error (${response.status}):`, err.slice(0, 300));
-      return null;
-    }
-
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || data.content;
-
-    if (text) {
-      console.log("✅ z.ai: Success!");
-      return typeof text === "string" ? text : JSON.stringify(text);
-    }
-
-    console.error("❌ z.ai: Empty response");
-    return null;
-  } catch (error) {
-    console.error("❌ z.ai: Failed:", error);
-    return null;
-  }
-}
-
-// ── Main AI Function with Fallback ──────────────────────────
+// ── Main AI Function ────────────────────────────────────────
 export async function generateAIResponse(
   prompt: string,
   systemPrompt?: string
 ): Promise<AIResponse> {
   const messages: Array<{ role: string; content: string }> = [];
-  if (systemPrompt) {
-    messages.push({ role: "system", content: systemPrompt });
-  }
+  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
   messages.push({ role: "user", content: prompt });
 
-  // 1️⃣ Groq first
-  const groqResult = await callGroq(messages);
-  if (groqResult) {
-    return { content: groqResult, provider: "Groq" };
-  }
+  const result = await tryGroqFallback(messages);
 
-  // 2️⃣ Gemini fallback
-  const geminiResult = await callGemini(messages);
-  if (geminiResult) {
-    return { content: geminiResult, provider: "Gemini" };
-  }
-
-  // 3️⃣ z.ai last resort
-  const zaiResult = await callZAI(messages);
-  if (zaiResult) {
-    return { content: zaiResult, provider: "z.ai" };
-  }
+  if (result) return result;
 
   throw new Error(
-    "All AI providers failed.\n" +
-    "Fix: Add at least one API key to your .env.local:\n" +
-    "  GROQ_API_KEY=gsk_...      (get from https://console.groq.com/keys)\n" +
-    "  GEMINI_API_KEY=AIzaSy...  (get from https://aistudio.google.com/apikey)\n" +
-    "  ZAI_API_KEY=...           (if you have a z.ai account)"
+    "All 4 Groq models failed. Your GROQ_API_KEY is likely dead.\n" +
+    "Fix: Go to https://console.groq.com/keys, delete the old key, create a new one, paste in .env.local, and restart server."
   );
 }
 
@@ -215,7 +113,7 @@ export async function generateAIResponse(
 export async function generateAIJson<T = any>(
   prompt: string,
   systemPrompt?: string
-): Promise<{ data: T; provider: string }> {
+): Promise<{ data: T; provider: string; model: string }> {
   const result = await generateAIResponse(prompt, systemPrompt);
 
   let cleaned = result.content.trim();
@@ -226,58 +124,40 @@ export async function generateAIJson<T = any>(
   cleaned = cleaned.trim();
 
   try {
-    return { data: JSON.parse(cleaned) as T, provider: result.provider };
+    return {
+      data: JSON.parse(cleaned) as T,
+      provider: result.provider,
+      model: result.model,
+    };
   } catch {
-    console.error("Failed to parse AI JSON:", cleaned.slice(0, 500));
-    throw new Error(
-      `AI returned invalid JSON (via ${result.provider}). Please try again.`
-    );
+    throw new Error(`AI returned invalid JSON (via ${result.model}). Try again.`);
   }
 }
 
 // ── Provider Check ──────────────────────────────────────────
 export function getAvailableProviders(): string[] {
-  const providers: string[] = [];
-  if (process.env.GROQ_API_KEY) providers.push("Groq");
-  if (process.env.GEMINI_API_KEY) providers.push("Gemini");
-  if (process.env.ZAI_API_KEY) providers.push("z.ai");
-  return providers;
+  return process.env.GROQ_API_KEY 
+    ? GROQ_MODELS.map((m) => `Groq: ${m.name}`) 
+    : [];
 }
 
 // ── Backward-Compatible Aliases ─────────────────────────────
-export async function callAIChat(
-  message: string,
-  systemPrompt?: string
-): Promise<string> {
-  const result = await generateAIResponse(message, systemPrompt);
-  return result.content;
+export async function callAIChat(message: string, systemPrompt?: string): Promise<string> {
+  return (await generateAIResponse(message, systemPrompt)).content;
 }
 
-export async function callAIGenerate(
-  prompt: string,
-  systemPrompt?: string
-): Promise<string> {
-  const result = await generateAIResponse(prompt, systemPrompt);
-  return result.content;
+export async function callAIGenerate(prompt: string, systemPrompt?: string): Promise<string> {
+  return (await generateAIResponse(prompt, systemPrompt)).content;
 }
 
-// ── Chat with Message History ───────────────────────────────
 export async function callAIChatHistory(
   systemPrompt: string,
   messages: Array<{ role: string; content: string }>
-): Promise<{ text: string; provider: string }> {
-  const allMessages: Array<{ role: string; content: string }> = [];
-  allMessages.push({ role: "system", content: systemPrompt });
-  allMessages.push(...messages);
+): Promise<{ text: string; provider: string; model: string }> {
+  const allMessages = [{ role: "system" as const, content: systemPrompt }, ...messages];
+  
+  const result = await tryGroqFallback(allMessages);
+  if (result) return { text: result.content, provider: result.provider, model: result.model };
 
-  const groqResult = await callGroq(allMessages);
-  if (groqResult) return { text: groqResult, provider: "Groq" };
-
-  const geminiResult = await callGemini(allMessages);
-  if (geminiResult) return { text: geminiResult, provider: "Gemini" };
-
-  const zaiResult = await callZAI(allMessages);
-  if (zaiResult) return { text: zaiResult, provider: "z.ai" };
-
-  throw new Error("All AI providers failed for chat");
+  throw new Error("All 4 Groq models failed for chat.");
 }
