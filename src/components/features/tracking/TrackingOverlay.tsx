@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Navigation, MapPin, AlertTriangle, Clock, Plane, Train, Bus, Car, Flag } from 'lucide-react';
-import TripMap from '@/components/features/map/TripMap';
+import { TripMap } from '@/components/features/map/TripMap';
 import type { GeneratedTrip, TripFormData } from '@/types';
 
 interface TripData {
@@ -10,6 +10,10 @@ interface TripData {
   formData: TripFormData;
   generatedTrip: GeneratedTrip;
   createdAt: string;
+  originLat?: number | null;
+  originLng?: number | null;
+  destLat?: number | null;
+  destLng?: number | null;
 }
 
 interface Props {
@@ -49,20 +53,14 @@ async function geocodeCity(city: string): Promise<Coord | null> {
 // ─── Interpolate a curved path between two coords ──────────
 function interpolatePath(from: Coord, to: Coord, steps: number): Coord[] {
   const points: Coord[] = [];
-  // Arc offset for visual realism (simulate great-circle curve)
-  const midLat = (from.lat + to.lat) / 2;
-  const midLng = (from.lng + to.lng) / 2;
   const dist = Math.sqrt((to.lat - from.lat) ** 2 + (to.lng - from.lng) ** 2);
-  const arcHeight = dist * 0.15; // 15% of distance as arc
+  const arcHeight = dist * 0.15;
 
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    // Linear interpolation
     let lat = from.lat + (to.lat - from.lat) * t;
     let lng = from.lng + (to.lng - from.lng) * t;
-    // Add sine-wave arc perpendicular to the line
     const arc = Math.sin(t * Math.PI) * arcHeight;
-    // Perpendicular direction (roughly north)
     lat += arc * 0.7;
     lng -= arc * 0.3;
     points.push({ lat, lng });
@@ -76,11 +74,11 @@ function buildJourneyLegs(fd: TripFormData, trip: GeneratedTrip): JourneyLeg[] {
   const origin = fd.origin || 'Origin';
   const destination = fd.destination || 'Destination';
 
-  // Find all transport-type activities across days
   const transportActivities: { location: string; mode: string; day: number }[] = [];
   (trip.days || []).forEach((day) => {
     (day.activities || []).forEach((act) => {
-      if (act.type === 'transport') {
+      // BUG 2 FIX: uppercase 'TRANSPORT' matches the ActivityType enum
+      if (act.type === 'TRANSPORT') {
         transportActivities.push({
           location: act.location || '',
           mode: (act.title || '').toLowerCase().includes('flight') ? 'FLIGHT'
@@ -93,9 +91,7 @@ function buildJourneyLegs(fd: TripFormData, trip: GeneratedTrip): JourneyLeg[] {
     });
   });
 
-  // Build legs: origin → first transport → ... → destination
   if (transportActivities.length === 0) {
-    // Single leg: origin → destination
     const mode = (fd.transportPreferences || [])[0] || 'FLIGHT';
     legs.push({
       from: origin,
@@ -105,7 +101,6 @@ function buildJourneyLegs(fd: TripFormData, trip: GeneratedTrip): JourneyLeg[] {
       mode,
     });
   } else {
-    // Multi-leg: origin → transport locations → destination
     let prevCity = origin;
     let prevCoord: Coord = { lat: 0, lng: 0 };
     for (const ta of transportActivities) {
@@ -119,7 +114,6 @@ function buildJourneyLegs(fd: TripFormData, trip: GeneratedTrip): JourneyLeg[] {
       prevCity = ta.location || destination;
       prevCoord = { lat: 0, lng: 0 };
     }
-    // Final leg to destination
     if (prevCity !== destination) {
       legs.push({
         from: prevCity,
@@ -152,10 +146,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
   const [alert, setAlert] = useState('');
   const [checkpoints, setCheckpoints] = useState<{ lat: number; lng: number; ts: Date }[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const [journeyDone, setJourneyDone] = useState(false);
 
-  const rafRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number>(0);
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fd = tripData.formData;
@@ -182,16 +173,15 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
         cities.add(leg.to);
       }
 
-      // Check if trip already has coords for origin/destination
-      // (from a previous geocode or from AI generation)
-      if (fd.origin && (tripData as any).originLat) {
-        cityCoords.set(fd.origin, { lat: (tripData as any).originLat, lng: (tripData as any).originLng });
+      // BUG 3 FIX: Check tripData.originLat directly (typed, no `as any`)
+      if (fd.origin && tripData.originLat) {
+        cityCoords.set(fd.origin, { lat: tripData.originLat, lng: tripData.originLng! });
       }
-      if (fd.destination && (tripData as any).destLat) {
-        cityCoords.set(fd.destination, { lat: (tripData as any).destLat, lng: (tripData as any).destLng });
+      if (fd.destination && tripData.destLat) {
+        cityCoords.set(fd.destination, { lat: tripData.destLat, lng: tripData.destLng! });
       }
 
-      // Geocode missing cities in parallel (max 3 at a time)
+      // Geocode missing cities in parallel (max 3 at a time — Nominatim rate limit)
       const uncodedCities = [...cities].filter(c => !cityCoords.has(c));
       for (let i = 0; i < uncodedCities.length; i += 3) {
         const batch = uncodedCities.slice(i, i + 3);
@@ -210,7 +200,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
       setLegs(journeyLegs);
       setCurrentPosition(journeyLegs[0]?.fromCoord || null);
 
-      // Save geocoded coords back to trip if origin/dest were resolved
+      // Save geocoded coords back to trip if we resolved them
       const originCoord = cityCoords.get(fd.origin);
       const destCoord = cityCoords.get(fd.destination);
       if (originCoord && destCoord) {
@@ -237,27 +227,14 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
   // ─── Auto-start journey 2s after ready ────────────────────
   useEffect(() => {
     if (phase !== 'ready') return;
-    const t = setTimeout(() => startJourney(), 2000);
+    const t = setTimeout(() => setPhase('animating'), 2000);
     return () => clearTimeout(t);
   }, [phase]);
 
-  // ─── Journey animation via requestAnimationFrame ───────────
-  const startJourney = useCallback(() => {
-    setPhase('animating');
-    startTimeRef.current = performance.now();
-    setElapsed(0);
-    animate();
-  }, []);
+  // BUG 4 FIX: Removed dead animate/tick useCallback entirely.
+  // The real animation is driven by the useEffect below that watches `phase === 'animating'`.
 
-  const animate = useCallback(() => {
-    const tick = () => {
-      setLegs(prev => prev);
-      // Use refs for latest state inside rAF
-    };
-    rafRef.current = requestAnimationFrame(tick);
-  }, []);
-
-  // Separate effect for actual animation loop to avoid stale closures
+  // ─── Real animation loop via requestAnimationFrame ──────────
   useEffect(() => {
     if (phase !== 'animating' || legs.length === 0) return;
 
@@ -293,19 +270,13 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
         // Leg complete
         const leg = legs[currentLegIndex];
         if (currentLegIndex < legs.length - 1) {
-          // More legs remaining
           showAlert(`📍 Arrived at ${leg.to}! Next leg starting...`);
           setCurrentLegIndex(prev => prev + 1);
           setPhase('paused');
-          // Resume next leg after 3s pause
-          setTimeout(() => {
-            setPhase('animating');
-          }, 3000);
+          setTimeout(() => setPhase('animating'), 3000);
         } else {
-          // Journey complete
           showAlert(`🎉 Reached ${leg.to} safely! Trip complete.`);
           setPhase('completed');
-          setJourneyDone(true);
         }
       }
     }
@@ -324,7 +295,6 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
   // ─── Cleanup ───────────────────────────────────────────────
   useEffect(() => {
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
     };
   }, []);
@@ -423,9 +393,10 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
         </div>
       )}
 
+      {/* BUG 1 FIX: Named import, correct props */}
       {/* Map */}
       <div className="flex-1 p-4 overflow-hidden">
-        <TripMap tripData={trip} />
+        <TripMap trip={trip} userLocation={currentPosition} showRoute />
       </div>
 
       {/* Bottom Panel */}
