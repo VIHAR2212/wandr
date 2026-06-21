@@ -40,8 +40,24 @@ model User {
   analytics         TripAnalytics[]
   subscriptions     Subscription[]
   memories          TravelMemory[]
+  feedbacks         Feedback[]
 
   @@map("users")
+}
+
+model Feedback {
+  id          String   @id @default(cuid())
+  name        String
+  role        String?
+  destination String?
+  rating      Int      @default(5)
+  message     String
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("feedbacks")
 }
 
 model Account {
