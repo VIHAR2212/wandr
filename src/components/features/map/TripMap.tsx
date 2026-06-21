@@ -14,7 +14,7 @@ L.Icon.Default.mergeOptions({
 
 interface MapProps {
   trip?: any;
-  userLocation?: { lat: number; lng: number };
+  userLocation?: { lat: number; lng: number } | null;
   showRoute?: boolean;
   tripData?: any;
   isTracking?: boolean;
