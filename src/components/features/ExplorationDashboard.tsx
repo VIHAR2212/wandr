@@ -360,9 +360,9 @@ export default function ExplorationDashboard() {
 
   // ─── Fan Carousel Explore View ─────────────────────────
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center">
       {/* Hero Header */}
-      <div className="text-center pt-12 pb-2 px-6">
+      <div className="text-center pt-0 pb-2 px-6">
         <span className="text-[10px] tracking-[0.25em] font-mono font-bold text-amber-500 uppercase">
           Curated Journeys · 11 Destinations
         </span>
@@ -403,8 +403,7 @@ export default function ExplorationDashboard() {
       />
     </div>
   );
-}
-
+  
 // ─── Integrated Trip Detail View ──────────────────────────
 function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
   const availableFlights = (COMMUNITY_ROUTE_DB as any)[activeTrip.routeKey] || [];
