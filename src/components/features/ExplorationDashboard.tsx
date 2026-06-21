@@ -303,7 +303,6 @@ const EDITORIAL_TRIPS: EditorialTrip[] = [
 export default function ExplorationDashboard() {
   const [activeTrip, setActiveTrip] = useState<EditorialTrip | null>(null);
 
-  // Build fan-card items from trips
   const allCardItems = useMemo(() =>
     EDITORIAL_TRIPS.map(trip => ({
       imgUrl: trip.imgUrl,
@@ -329,21 +328,20 @@ export default function ExplorationDashboard() {
         </div>
       ),
     })),
-  [EDITORIAL_TRIPS]
+    [EDITORIAL_TRIPS]
   );
 
-  // ─── Trip Detail View ────────────────────────────────────
   if (activeTrip) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 px-4 py-8">
         <div className="max-w-md mx-auto space-y-6">
-
-          <button onClick={() => setActiveTrip(null)} className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-neutral-400 hover:text-white transition-colors py-2">
+          <button
+            onClick={() => setActiveTrip(null)}
+            className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-neutral-400 hover:text-white transition-colors py-2"
+          >
             <ArrowLeft size={14} /> Back to Explore
           </button>
-
           <IntegratedTripView activeTrip={activeTrip} />
-
           <div className="px-4 space-y-3">
             <button className="w-full bg-[#E87A5D] text-neutral-950 font-mono tracking-wider text-xs font-bold py-3.5 rounded-full uppercase flex items-center justify-center gap-1.5 group">
               Edit Sequence <ArrowRight size={14} />
@@ -352,17 +350,14 @@ export default function ExplorationDashboard() {
               <Share2 size={13} /> Share Itinerary
             </button>
           </div>
-
         </div>
       </div>
     );
   }
 
-  // ─── Fan Carousel Explore View ─────────────────────────
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center">
-      {/* Hero Header */}
-      <div className="text-center pt-0 pb-2 px-6">
+      <div className="text-center pb-2 px-6">
         <span className="text-[10px] tracking-[0.25em] font-mono font-bold text-amber-500 uppercase">
           Curated Journeys · 11 Destinations
         </span>
@@ -374,21 +369,29 @@ export default function ExplorationDashboard() {
         </p>
       </div>
 
-      {/* Fan Carousel — All 11 trips */}
       <SocialCards
         cards={EDITORIAL_TRIPS.map(trip => ({
           imgUrl: trip.imgUrl,
           alt: trip.title,
           overlay: (
-            <div className="pointer-events-auto cursor-pointer" onClick={() => setActiveTrip(trip)}>
+            <div
+              className="pointer-events-auto cursor-pointer"
+              onClick={() => setActiveTrip(trip)}
+            >
               <div className="flex items-center gap-1.5 mb-1">
                 <span className="text-[8px] font-mono font-bold uppercase tracking-widest text-white/40">
                   {trip.number} · {trip.category}
                 </span>
-                <span className="text-[8px] font-mono text-amber-400/70">{trip.region}</span>
+                <span className="text-[8px] font-mono text-amber-400/70">
+                  {trip.region}
+                </span>
               </div>
-              <h3 className="text-sm sm:text-base font-serif text-white leading-tight">{trip.title}</h3>
-              <p className="text-[10px] text-white/40 mt-0.5 leading-snug">{trip.description}</p>
+              <h3 className="text-sm sm:text-base font-serif text-white leading-tight">
+                {trip.title}
+              </h3>
+              <p className="text-[10px] text-white/40 mt-0.5 leading-snug">
+                {trip.description}
+              </p>
               <div className="flex items-center gap-3 mt-1.5">
                 <span className="text-[10px] font-mono font-semibold text-white/70">
                   ₹{trip.price.toLocaleString('en-IN')}
@@ -403,7 +406,8 @@ export default function ExplorationDashboard() {
       />
     </div>
   );
-  
+}
+
 // ─── Integrated Trip Detail View ──────────────────────────
 function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
   const availableFlights = (COMMUNITY_ROUTE_DB as any)[activeTrip.routeKey] || [];
@@ -416,25 +420,30 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
 
   return (
     <div className="space-y-4">
-      {/* Hero Image Card */}
       <div className="relative rounded-[2rem] overflow-hidden h-48 bg-neutral-900">
-        <img src={activeTrip.imgUrl} alt={activeTrip.title} className="absolute inset-0 w-full h-full object-cover" />
+        <img
+          src={activeTrip.imgUrl}
+          alt={activeTrip.title}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 p-6">
           <span className="text-[10px] tracking-[0.2em] font-mono text-amber-400/80 uppercase block mb-1">
             {activeTrip.region} · {activeTrip.days} Days · {activeTrip.bestSeason}
           </span>
-          <h2 className="text-2xl font-serif text-white tracking-tight">{activeTrip.title}</h2>
+          <h2 className="text-2xl font-serif text-white tracking-tight">
+            {activeTrip.title}
+          </h2>
           <p className="text-xs text-white/60 mt-0.5">{activeTrip.description}</p>
         </div>
       </div>
 
-      {/* Detail Card */}
       <div className="bg-[#1C1210] border border-amber-950/20 rounded-[2rem] p-6 space-y-5 text-neutral-100 relative overflow-hidden shadow-2xl">
-        <div className={`absolute top-0 inset-x-0 h-32 bg-gradient-to-b ${activeTrip.gradientClass} blur-2xl opacity-40 pointer-events-none`} />
+        <div
+          className={`absolute top-0 inset-x-0 h-32 bg-gradient-to-b ${activeTrip.gradientClass} blur-2xl opacity-40 pointer-events-none`}
+        />
 
         <div className="relative z-10 space-y-5">
-          {/* Flight */}
           {primaryFlight ? (
             <div className="flex justify-between items-start border-b border-neutral-800/40 pb-4">
               <div className="flex items-start gap-3">
@@ -442,10 +451,15 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
                   <Plane className="w-3.5 h-3.5 text-amber-500" />
                 </div>
                 <div className="space-y-0.5">
-                  <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase">Flight</span>
-                  <h4 className="text-sm font-serif text-neutral-200">{primaryFlight.airline}</h4>
+                  <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase">
+                    Flight
+                  </span>
+                  <h4 className="text-sm font-serif text-neutral-200">
+                    {primaryFlight.airline}
+                  </h4>
                   <p className="text-xs text-neutral-500">
-                    {primaryFlight.flightNo} · {primaryFlight.aircraft} ({primaryFlight.duration})
+                    {primaryFlight.flightNo} · {primaryFlight.aircraft} (
+                    {primaryFlight.duration})
                   </p>
                 </div>
               </div>
@@ -456,11 +470,12 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
           ) : activeTrip.routeKey ? (
             <div className="border-b border-neutral-800/40 pb-4">
               <h4 className="text-sm font-serif text-neutral-400">Flight Transit</h4>
-              <p className="text-xs text-neutral-500">No flights found for sector {activeTrip.routeKey}.</p>
+              <p className="text-xs text-neutral-500">
+                No flights found for sector {activeTrip.routeKey}.
+              </p>
             </div>
           ) : null}
 
-          {/* Hotels */}
           {activeTrip.hotels.length > 0 && (
             <div className="space-y-4 border-b border-neutral-800/40 pb-4">
               <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase flex items-center gap-2">
@@ -480,7 +495,6 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
             </div>
           )}
 
-          {/* Activities */}
           {activeTrip.activities && activeTrip.activities.length > 0 && (
             <div className="space-y-4 border-b border-neutral-800/40 pb-4">
               <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase flex items-center gap-2">
@@ -493,25 +507,28 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
                     <p className="text-xs text-neutral-500">{act.subtitle}</p>
                   </div>
                   <span className="text-xs font-mono text-amber-500/90 font-semibold pt-0.5">
-                    {act.price > 0 ? `₹${act.price.toLocaleString('en-IN')}` : 'Free'}
+                    {act.price > 0
+                      ? `₹${act.price.toLocaleString('en-IN')}`
+                      : 'Free'}
                   </span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Highlights */}
           {activeTrip.highlights && activeTrip.highlights.length > 0 && (
             <div className="flex flex-wrap gap-2 pb-4 border-b border-neutral-800/40">
               {activeTrip.highlights.map((h, i) => (
-                <span key={i} className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full">
+                <span
+                  key={i}
+                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full"
+                >
                   {h}
                 </span>
               ))}
             </div>
           )}
 
-          {/* Total */}
           <div className="border-t border-neutral-800/80 pt-4 flex justify-between items-center text-xs font-mono">
             <span className="text-neutral-500 uppercase">Total Estimated Cost</span>
             <span className="text-base font-bold text-white">
