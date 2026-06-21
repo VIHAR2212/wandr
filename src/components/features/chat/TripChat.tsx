@@ -47,6 +47,17 @@ export function TripChat({ tripId: _tripId, tripContext }: { tripId: string; tri
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history, tripContext }),
       });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('[TripChat] API error:', res.status, errText);
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(), role: 'assistant',
+          content: `Server error (${res.status}). Please try again.`, ts: new Date(),
+        }]);
+        return;
+      }
+
       const data = await res.json();
       const reply: Message = {
         id: (Date.now() + 1).toString(),
@@ -55,7 +66,8 @@ export function TripChat({ tripId: _tripId, tripContext }: { tripId: string; tri
         ts: new Date(),
       };
       setMessages(prev => [...prev, reply]);
-    } catch {
+    } catch (err) {
+      console.error('[TripChat] Network error:', err);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(), role: 'assistant',
         content: 'Network error. Please try again.', ts: new Date(),
@@ -63,7 +75,6 @@ export function TripChat({ tripId: _tripId, tripContext }: { tripId: string; tri
     } finally {
       setLoading(false);
     }
-  }
 
   function renderContent(text: string) {
     return text
