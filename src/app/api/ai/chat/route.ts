@@ -28,13 +28,6 @@ Be concise but helpful. If they ask about costs, refer to their budget breakdown
       : `You are a helpful travel assistant for Wandr. Help users with travel planning, destination recommendations,
 packing tips, visa info, and general travel advice. Be concise and practical.`;
 
-    // Extract conversation history for context
-    const conversationHistory = messages.map((m: any) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    // Get the latest user message for the AI call
     const lastUserMessage = [...messages].reverse().find((m: any) => m.role === 'user');
     if (!lastUserMessage) {
       return NextResponse.json(
@@ -45,8 +38,7 @@ packing tips, visa info, and general travel advice. Be concise and practical.`;
 
     const reply = await generateAIResponse(lastUserMessage.content, systemPrompt);
 
-    // Return with "message" key to match what TripChat.tsx expects: data.message
-    return NextResponse.json({ success: true, message: reply });
+    return NextResponse.json({ success: true, message: reply.content });
   } catch (error: any) {
     console.error("Chat error:", error);
     return NextResponse.json(
