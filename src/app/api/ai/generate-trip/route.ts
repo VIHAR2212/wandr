@@ -25,15 +25,12 @@ function mapFoodPref(diet?: string): FoodPreference {
 
 export async function POST(req: NextRequest) {
   try {
-    // ── FIX 1: Safe Auth Check ──
-    // Prevents crash if NEXTAUTH_SECRET is missing on Vercel
     let userId: string | undefined;
     try {
       const session = await auth();
       userId = session?.user?.id;
     } catch (authError) {
-      console.error("Auth crash:", authError);
-      return NextResponse.json({ error: "Authentication service is down. Check NEXTAUTH_SECRET on Vercel." }, { status: 500 });
+      return NextResponse.json({ error: "Auth service error." }, { status: 500 });
     }
 
     if (!userId) {
@@ -44,14 +41,11 @@ export async function POST(req: NextRequest) {
     const {
       origin, destination, startDate, endDate, budget, travelers, currency,
       purposes, foodPreference, hotelPreference, transportPreferences,
-      specialRequests, includeHiddenGems, smartBudget,
+      specialRequests,
     } = body;
 
     if (!destination || !startDate || !endDate || !budget) {
-      return NextResponse.json(
-        { error: "Destination, dates, and budget are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
     const start = new Date(startDate);
@@ -59,173 +53,65 @@ export async function POST(req: NextRequest) {
     const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     if (days < 1 || days > 30) {
-      return NextResponse.json(
-        { error: "Trip must be between 1 and 30 days" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Trip must be 1-30 days" }, { status: 400 });
     }
 
     const purposesList = Array.isArray(purposes) && purposes.length > 0 ? purposes : ["BACKPACKING"];
     const primaryPurpose = purposesList[0];
     const purposesStr = purposesList.join(" + ");
+    const specialInstruction = specialRequests?.trim() ? `\nCRITICAL Special Request: "${specialRequests.trim()}" - You MUST include this.` : "";
 
-    const transportStr = Array.isArray(transportPreferences) && transportPreferences.length > 0
-      ? transportPreferences.join(", ")
-      : "any available transport";
+    const systemPrompt = `You are an expert travel planner. Respond ONLY with valid JSON. No markdown, no text, just raw JSON. All costs in ${currency || "INR"}.`;
 
-    const specialInstruction = specialRequests?.trim()
-      ? `\n\n⚠️ CRITICAL — Special Requests from the user: "${specialRequests.trim()}"\nYou MUST incorporate these into the itinerary. Add specific activities, visits, or stops for these requests. Do NOT ignore them.`
-      : "";
+    const prompt = `Create a ${days}-day trip for ${destination}. Budget: ${budget} ${currency || "INR"} for ${travelers || 1} person(s). Food: ${foodPreference || "Any"}. Hotel: ${hotelPreference || "Standard"}. Purpose: ${purposesStr}. ${specialInstruction}
 
-    const systemPrompt = `You are an expert travel planner AI. You create detailed, realistic, budget-accurate trip plans.
-You MUST respond with valid JSON only. No markdown, no explanation, no code blocks — just raw JSON.
-All costs should be in ${currency || "INR"} currency.`;
-
-    const prompt = `Create a detailed ${days}-day trip plan for ${destination}.IMPORTANT: You MUST generate ALL ${days} days. Do NOT stop early. Do NOT skip any day. Each day must have 4-6 activities.
-
-Trip Details:
-- Origin: ${origin || "Not specified"}
-- Start Date: ${startDate}
-- End Date: ${endDate}
-- Total Budget: ${budget} ${currency || "INR"} (for ${travelers || 1} traveler${Number(travelers) > 1 ? "s" : ""})
-- Trip Purposes: ${purposesStr}
-- Food Preference: ${foodPreference || "No preference"}
-- Accommodation Type: ${hotelPreference || "Standard"}
-- Preferred Transport: ${transportStr}
-- Include Hidden Gems: ${includeHiddenGems ? "Yes" : "No"}
-- Smart Budget Mode: ${smartBudget ? "Yes — transport and hotel are already optimized for this budget" : "No"}
- ${specialInstruction}
-
-Return ONLY this JSON structure (no other text):
+Return STRICTLY this JSON (no other text):
 {
   "destination": "${destination}",
   "totalDays": ${days},
   "itinerary": [
     {
-      "day": 1,
-      "date": "${startDate}",
-      "theme": "Theme of the day",
+      "day": 1, "date": "${startDate}", "theme": "Theme",
       "activities": [
-        {
-          "time": "09:00",
-          "title": "Activity name",
-          "description": "Detailed description of what to do",
-          "location": "Exact place name",
-          "cost": 0,
-          "type": "attraction",
-          "tips": "Optional tip"
-        }
+        {"time": "09:00", "title": "Visit Place", "description": "Details", "location": "Exact Place Name", "lat": 19.076, "lng": 72.877, "cost": 500, "type": "attraction", "tips": "Tip"}
       ]
     }
   ],
-  "hotels": [
-    {
-      "name": "Hotel Name",
-      "area": "Neighborhood",
-      "pricePerNight": 0,
-      "rating": 4.5,
-      "description": "Why this hotel is good",
-      "bookingTip": "Tip for getting best rate"
-    }
-  ],
-  "restaurants": [
-    {
-      "name": "Restaurant Name",
-      "cuisine": "Type of food",
-      "diet": "${foodPreference || "all"}",
-      "priceRange": "$$",
-      "rating": 4.5,
-      "mustTry": "Best dish to order",
-      "location": "Area/address"
-    }
-  ],
-  "budgetBreakdown": {
-    "accommodation": 0,
-    "food": 0,
-    "transport": 0,
-    "activities": 0,
-    "misc": 0,
-    "total": 0
-  },
-  "hiddenGems": [
-    {
-      "name": "Place name",
-      "description": "What makes it special",
-      "whySpecial": "Why tourists miss it",
-      "howToReach": "Directions"
-    }
-  ],
-  "safetyInfo": {
-    "overallScore": 8,
-    "tips": ["Tip 1", "Tip 2"],
-    "emergencyNumber": "911",
-    "scamAlerts": ["Common scam to watch for"],
-    "safeAreas": ["Area 1"],
-    "avoidAreas": ["Area to avoid"]
-  },
-  "weather": {
-    "expected": "Expected weather description",
-    "avgTemp": "25°C",
-    "tips": ["Weather tip 1"]
-  },
-  "packingList": [
-    {
-      "item": "Item name",
-      "reason": "Why you need it",
-      "essential": true
-    }
-  ]
+  "hotels": [{"name": "Hotel Name", "area": "Area", "lat": 19.08, "lng": 72.88, "pricePerNight": 2000, "rating": 4.5, "description": "Good hotel", "bookingTip": "Book early"}],
+  "restaurants": [{"name": "Restaurant Name", "cuisine": "Food type", "diet": "${foodPreference || "all"}", "priceRange": "$$", "rating": 4.5, "mustTry": "Best dish", "location": "Area", "lat": 19.09, "lng": 72.89}],
+  "budgetBreakdown": {"accommodation": 0, "food": 0, "transport": 0, "activities": 0, "misc": 0, "total": ${budget}}
 }
 
-IMPORTANT RULES:
-1. Every day must have 4-6 activities covering morning, afternoon, and evening
-2. Total budget in budgetBreakdown must NOT exceed ${budget} ${currency || "INR"}
-3. Include at least 2 hotels matching "${hotelPreference || "Standard"}" preference
-4. Include at least 3 restaurants that serve ${foodPreference || "any"} food
-5. Activities should have realistic costs in ${currency || "INR"} based on ${destination}
-6. Use ${transportStr} as preferred transport where possible
-7. Include transport costs between locations
-8. ${includeHiddenGems ? "Include at least 2 hidden gems" : "No hidden gems needed"}
-9. The trip should blend these purposes: ${purposesStr}. Design activities that combine these themes naturally.`;
-    
+RULES:
+1. Generate EXACTLY ${days} days.
+2. Each day MUST have 4-6 activities.
+3. Total budget MUST equal ${budget}.
+4. Provide 2 hotels and 3 restaurants.
+5. CRITICAL: You MUST provide accurate decimal "lat" and "lng" for EVERY activity, hotel, and restaurant.`;
+
     console.log("🔄 Generating trip with 4-Groq fallback system...");
 
     let tripData: any = null;
     let provider: string = 'unknown';
     let retryCount = 0;
-    const maxRetries = 2;
 
-    while (retryCount <= maxRetries) {
+    while (retryCount <= 2) {
       const result = await generateAIJson(prompt, systemPrompt);
-      
-      // ── FIX 2: Safe Data Check ──
-      // Prevents crash if AI returns a string or null instead of JSON object
       if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
-        throw new Error(`AI returned invalid data structure. Expected JSON object, got ${typeof result.data}.`);
+        throw new Error("Invalid data structure");
       }
 
       tripData = result.data;
       provider = result.provider;
-
-      // Validate: check if we got all days
       const generatedDays = Array.isArray(tripData?.itinerary) ? tripData.itinerary.length : 0;
 
       if (generatedDays >= Math.min(days, 2)) {
-        console.log(`✅ Trip generated successfully via ${provider}! Got ${generatedDays} days.`);
+        console.log(`✅ Trip generated via ${provider}! Got ${generatedDays} days.`);
         break;
       }
-
-      // Incomplete response - retry
       retryCount++;
-      console.warn(`Attempt ${retryCount}: AI returned only ${generatedDays}/${days} days. Retrying...`);
-
-      if (retryCount > maxRetries) {
-        console.warn(`Max retries reached. Using ${generatedDays}-day response.`);
-        break;
-      }
     }
     
-    // ── FIX 3: Safe Database Save ──
     let trip;
     try {
       trip = await prisma.trip.create({
@@ -253,17 +139,14 @@ IMPORTANT RULES:
             specialRequests: specialRequests || "",
           },
           budgetBreakdown: tripData.budgetBreakdown || {},
-          packingList: tripData.packingList || [],
-          weatherInfo: tripData.weather || {},
-          safetyInfo: tripData.safetyInfo || {},
+          packingList: tripData.packingList || [{ item: "Comfortable shoes", reason: "For walking", essential: true }],
+          weatherInfo: tripData.weather || { expected: "Pleasant", avgTemp: "28°C", tips: ["Carry water"] },
+          safetyInfo: tripData.safetyInfo || { overallScore: 8, tips: ["Stay aware"], emergencyNumber: "112", scamAlerts: [], safeAreas: [], avoidAreas: [] },
         },
       });
     } catch (dbError: any) {
-      console.error("💥 Database Save Error:", dbError);
-      return NextResponse.json(
-        { error: `Database failed to save: ${dbError.message}` },
-        { status: 500 }
-      );
+      console.error("💥 Database Error:", dbError);
+      return NextResponse.json({ error: `Database failed: ${dbError.message}` }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -282,9 +165,6 @@ IMPORTANT RULES:
     });
   } catch (error: any) {
     console.error("💥 Trip generation error:", error);
-    return NextResponse.json(
-      { error: error.message || "Failed to generate trip. Please try again." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message || "Failed to generate trip." }, { status: 500 });
   }
 }
