@@ -303,34 +303,6 @@ const EDITORIAL_TRIPS: EditorialTrip[] = [
 export default function ExplorationDashboard() {
   const [activeTrip, setActiveTrip] = useState<EditorialTrip | null>(null);
 
-  const allCardItems = useMemo(() =>
-    EDITORIAL_TRIPS.map(trip => ({
-      imgUrl: trip.imgUrl,
-      alt: trip.title,
-      overlay: (
-        <div className="pointer-events-auto">
-          <div className="flex items-center gap-1.5 mb-1">
-            <span className="text-[8px] font-mono font-bold uppercase tracking-widest text-white/40">
-              {trip.number} · {trip.category}
-            </span>
-            <span className="text-[8px] font-mono text-amber-400/70">{trip.region}</span>
-          </div>
-          <h3 className="text-sm sm:text-base font-serif text-white leading-tight">{trip.title}</h3>
-          <p className="text-[10px] text-white/40 mt-0.5 leading-snug">{trip.description}</p>
-          <div className="flex items-center gap-3 mt-1.5">
-            <span className="text-[10px] font-mono font-semibold text-white/70">
-              ₹{trip.price.toLocaleString('en-IN')}
-            </span>
-            <span className="text-[10px] font-mono text-white/40">
-              {trip.days} days
-            </span>
-          </div>
-        </div>
-      ),
-    })),
-    [EDITORIAL_TRIPS]
-  );
-
   if (activeTrip) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 px-4 py-8">
@@ -356,19 +328,7 @@ export default function ExplorationDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center">
-      <div className="text-center pb-2 px-6">
-        <span className="text-[10px] tracking-[0.25em] font-mono font-bold text-amber-500 uppercase">
-          Curated Journeys · 11 Destinations
-        </span>
-        <h1 className="text-4xl sm:text-5xl font-serif font-medium tracking-tight text-white mt-3">
-          Where next?
-        </h1>
-        <p className="text-sm text-neutral-400 mt-2 max-w-md mx-auto">
-          Handpicked itineraries across India and beyond. Swipe, explore, pick your next adventure.
-        </p>
-      </div>
-
+    <div className="h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center overflow-hidden">
       <SocialCards
         cards={EDITORIAL_TRIPS.map(trip => ({
           imgUrl: trip.imgUrl,
@@ -442,7 +402,6 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
         <div
           className={`absolute top-0 inset-x-0 h-32 bg-gradient-to-b ${activeTrip.gradientClass} blur-2xl opacity-40 pointer-events-none`}
         />
-
         <div className="relative z-10 space-y-5">
           {primaryFlight ? (
             <div className="flex justify-between items-start border-b border-neutral-800/40 pb-4">
