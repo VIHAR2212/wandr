@@ -19,7 +19,7 @@ async function callModel(apiKey: string, modelId: string, modelName: string, mes
     const res = await fetch(GROQ_BASE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: modelId, messages, max_tokens: 4000, temperature: 0.7 }),
+      body: JSON.stringify({ model: id, messages, max_tokens: 4000, temperature: 0.7 }),
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -63,12 +63,60 @@ export async function generateAIResponse(prompt: string, systemPrompt?: string):
   throw new Error("All Groq models failed or timed out.");
 }
 
+/**
+ * Robust JSON extraction from LLM output.
+ * Handles: markdown fences, leading/trailing text, trailing commas, comments.
+ */
+function extractJSON(raw: string): string {
+  let content = raw.trim();
+
+  // 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
+  content = content.replace(/^```(?:json|JSON)?\s*\n?/, "");
+  content = content.replace(/\n?\s*```\s*$/, "");
+
+  // 2. Find the first '{' or '[' — trim any preamble text
+  const firstBrace = content.indexOf("{");
+  const firstBracket = content.indexOf("[");
+  let start = -1;
+  if (firstBrace !== -1 && firstBracket !== -1) {
+    start = Math.min(firstBrace, firstBracket);
+  } else if (firstBrace !== -1) {
+    start = firstBrace;
+  } else if (firstBracket !== -1) {
+    start = firstBracket;
+  }
+  if (start > 0) content = content.slice(start);
+
+  // 3. Find the matching closing brace/bracket, trim trailing text
+  if (content.startsWith("{")) {
+    const lastBrace = content.lastIndexOf("}");
+    if (lastBrace !== -1) content = content.slice(0, lastBrace + 1);
+  } else if (content.startsWith("[")) {
+    const lastBracket = content.lastIndexOf("]");
+    if (lastBracket !== -1) content = content.slice(0, lastBracket + 1);
+  }
+
+  // 4. Remove trailing commas before } or ]
+  content = content.replace(/,\s*([\]}])/g, "$1");
+
+  // 5. Remove single-line // comments
+  content = content.replace(/\/\/.*$/gm, "");
+
+  // 6. Remove multi-line /* */ comments
+  content = content.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  return content;
+}
+
 export async function generateAIJson<T = any>(prompt: string, systemPrompt?: string) {
   const result = await generateAIResponse(prompt, systemPrompt);
-  let cleaned = result.content.trim().replace(/```json|```/g, "");
+  const cleaned = extractJSON(result.content);
+
   try {
     return { data: JSON.parse(cleaned) as T, provider: result.provider, model: result.model };
-  } catch {
+  } catch (parseError) {
+    console.error("[AI] JSON parse failed. Content preview:", cleaned.slice(0, 300));
+    console.error("[AI] Parse error:", parseError);
     throw new Error(`AI returned invalid JSON (via ${result.model}).`);
   }
 }
