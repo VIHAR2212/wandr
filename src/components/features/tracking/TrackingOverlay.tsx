@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Navigation, MapPin, AlertTriangle, Clock, Plane, Train, Bus, Car, Flag } from 'lucide-react';
-import { TripMap } from '@/components/features/map/TripMap';
+import TripMap from '@/components/features/map/TripMap';
 import type { GeneratedTrip, TripFormData } from '@/types';
 
 interface TripData {
