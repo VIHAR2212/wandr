@@ -226,4 +226,4 @@ npx prisma studio
 
 ## 📝 License
 
-MIT License. Free to use for personal and commercial projects but not for commercial use.
+MIT License. Free to use for personal and commercial projects but not for commercial use.ok???
