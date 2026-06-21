@@ -59,6 +59,8 @@ function normalizeTripData(raw: any, tripId: string): TripData {
       type: a.type || 'sightseeing',
       duration: a.duration || null,
       notes: a.tips || a.notes || '',
+      lat: a.lat || null,
+      lng: a.lng || null,
     })),
   }));
 
@@ -73,6 +75,8 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     pros: h.description ? [h.description] : (Array.isArray(h.pros) ? h.pros : []),
     cons: Array.isArray(h.cons) ? h.cons : [],
     bookingUrl: h.bookingUrl || '',
+    lat: h.lat || null,
+    lng: h.lng || null,
   }));
 
   const rawRestaurants = Array.isArray(raw.restaurants) ? raw.restaurants : [];
@@ -84,6 +88,8 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     rating: Number(r.rating) || 0,
     openingHours: r.openingHours || '',
     mustTry: Array.isArray(r.mustTry) ? r.mustTry : (typeof r.mustTry === 'string' ? [r.mustTry] : []),
+    lat: r.lat || null,
+    lng: r.lng || null,
   }));
 
   const rawGems = Array.isArray(raw.hiddenGems) ? raw.hiddenGems : [];
