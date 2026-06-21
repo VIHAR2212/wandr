@@ -13,15 +13,16 @@ L.Icon.Default.mergeOptions({
 });
 
 interface MapProps {
-  tripData: any;
+  trip?: any;
+  userLocation?: { lat: number; lng: number };
+  showRoute?: boolean;
+  tripData?: any;
   isTracking?: boolean;
   onTrackingToggle?: () => void;
   userPosition?: { lat: number; lng: number } | null;
 }
 
 // ─── Custom icon factory ──────────────────────────────────
-// All icons: 36x36px, colored circle, white halo, emoji glyph, high z-index
-
 function createIcon(emoji: string, bgColor: string, size: number = 36): L.DivIcon {
   return L.divIcon({
     html: `
@@ -84,15 +85,15 @@ function createUserIcon(): L.DivIcon {
 
 // ─── Icon instances ───────────────────────────────────────
 const icons = {
-  flight:     createIcon("✈️", "#3B82F6"),  // Blue — flights
-  train:      createIcon("🚆", "#3B82F6"),  // Blue — trains
-  bus:        createIcon("🚌", "#3B82F6"),  // Blue — buses
-  transport:  createIcon("🚗", "#3B82F6"),  // Blue — generic transport
-  hotel:      createIcon("🏨", "#F97316"),  // Orange — hotels
-  restaurant: createIcon("🍽️", "#22C55E"),  // Green — restaurants
-  hiddenGem:  createIcon("✨", "#A855F7"),  // Purple — hidden gems
-  attraction: createIcon("📍", "#14B8A6"),  // Teal — attractions/activities
-  user:       createUserIcon(),              // Gold — user location
+  flight:     createIcon("✈️", "#3B82F6"),
+  train:      createIcon("🚆", "#3B82F6"),
+  bus:        createIcon("🚌", "#3B82F6"),
+  transport:  createIcon("🚗", "#3B82F6"),
+  hotel:      createIcon("🏨", "#F97316"),
+  restaurant: createIcon("🍽️", "#22C55E"),
+  hiddenGem:  createIcon("✨", "#A855F7"),
+  attraction: createIcon("📍", "#14B8A6"),
+  user:       createUserIcon(),
 };
 
 function getTransportIcon(title?: string): L.DivIcon {
@@ -105,7 +106,7 @@ function getTransportIcon(title?: string): L.DivIcon {
 }
 
 // ─── Component ────────────────────────────────────────────
-export default function TripMap({ tripData, isTracking = false, onTrackingToggle, userPosition }: MapProps) {
+export default function TripMap({ trip, tripData, userLocation, showRoute, isTracking = false, onTrackingToggle, userPosition }: MapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const trackingMarkerRef = useRef<L.Marker | null>(null);
@@ -115,6 +116,9 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
 
   const [routePoints, setRoutePoints] = useState<Array<{ lat: number; lng: number; name: string; type: string }>>([]);
 
+  // Accept both `trip` (from TripResultView Map tab) and `tripData` (from TrackingOverlay)
+  const data = trip || tripData;
+
   // ─── Initialize map ────────────────────────────────────
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -123,7 +127,6 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
       scrollWheelZoom: true,
     }).setView([19.076, 72.877], 5);
 
-    // Dark-themed tile layer for better icon contrast
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
       maxZoom: 19,
@@ -141,7 +144,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
 
   // ─── Plot markers and routes ────────────────────────────
   useEffect(() => {
-    if (!mapRef.current || !tripData || !layersGroupRef.current) return;
+    if (!mapRef.current || !data || !layersGroupRef.current) return;
     const map = mapRef.current;
     const group = layersGroupRef.current;
 
@@ -149,7 +152,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
     const points: Array<{ lat: number; lng: number; name: string; type: string }> = [];
 
     // Days / Activities
-    const days = tripData.days || [];
+    const days = data.days || [];
     days.forEach((day: any) => {
       (day.activities || []).forEach((act: any) => {
         if (act.lat && act.lng) {
@@ -168,7 +171,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
     });
 
     // Hotels
-    (tripData.hotels || []).forEach((h: any) => {
+    (data.hotels || []).forEach((h: any) => {
       if (h.lat && h.lng) {
         points.push({ lat: h.lat, lng: h.lng, name: h.name, type: "hotel" });
         L.marker([h.lat, h.lng], { icon: icons.hotel, zIndexOffset: 600 })
@@ -182,7 +185,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
     });
 
     // Restaurants
-    (tripData.restaurants || []).forEach((r: any) => {
+    (data.restaurants || []).forEach((r: any) => {
       if (r.lat && r.lng) {
         points.push({ lat: r.lat, lng: r.lng, name: r.name, type: "restaurant" });
         L.marker([r.lat, r.lng], { icon: icons.restaurant, zIndexOffset: 600 })
@@ -197,7 +200,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
     });
 
     // Hidden Gems
-    (tripData.hiddenGems || []).forEach((g: any) => {
+    (data.hiddenGems || []).forEach((g: any) => {
       if (g.lat && g.lng) {
         points.push({ lat: g.lat, lng: g.lng, name: g.name, type: "hiddenGem" });
         L.marker([g.lat, g.lng], { icon: icons.hiddenGem, zIndexOffset: 700 })
@@ -219,7 +222,6 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
         dashArray: "8, 12",
       }).addTo(group);
 
-      // Also draw a subtle filled polyline for the route path
       L.polyline(points.map((p) => [p.lat, p.lng]), {
         color: "#60A5FA",
         weight: 6,
@@ -237,38 +239,39 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
     }
 
     setRoutePoints(points);
-  }, [tripData]);
+  }, [data]);
 
   // ─── User position marker (golden dot) ──────────────────
   useEffect(() => {
     if (!mapRef.current || !layersGroupRef.current) return;
 
-    // Remove old user marker
     if (userMarkerRef.current) {
       layersGroupRef.current.removeLayer(userMarkerRef.current);
       userMarkerRef.current = null;
     }
 
-    if (userPosition) {
-      userMarkerRef.current = L.marker([userPosition.lat, userPosition.lng], {
+    const pos = userPosition || userLocation;
+    if (pos) {
+      userMarkerRef.current = L.marker([pos.lat, pos.lng], {
         icon: icons.user,
         zIndexOffset: 1000,
       })
         .addTo(layersGroupRef.current)
         .bindPopup(
           `<div style="min-width:120px"><b>👤 Your Location</b><br>` +
-          `<small>${userPosition.lat.toFixed(4)}, ${userPosition.lng.toFixed(4)}</small></div>`
+          `<small>${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}</small></div>`
         );
     }
-  }, [userPosition]);
+  }, [userPosition, userLocation]);
 
-  // ─── Tracking animation ─────────────────────────────────
+  // ─── Notification permission ───────────────────────────
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }, []);
 
+  // ─── Tracking animation ───────────────────────────────
   useEffect(() => {
     if (!isTracking || routePoints.length < 2 || !mapRef.current || !layersGroupRef.current) return;
     const map = mapRef.current;
@@ -353,7 +356,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
           <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#14B8A6] text-[12px]">📍</span>
           <span className="text-white/80">Attractions</span>
         </div>
-        {(userPosition || isTracking) && (
+        {(userPosition || userLocation || isTracking) && (
           <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/20">
             <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[14px]"
               style={{ background: "linear-gradient(135deg, #FFD700, #FFA500)", boxShadow: "0 0 8px rgba(255,215,0,0.5)" }}>
