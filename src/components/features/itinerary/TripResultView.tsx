@@ -453,7 +453,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           )}
 
           {/* MAP */}
-          {activeTab === 'map' && <TripMap trip={trip} formData={fd} />}
+          {activeTab === 'map' && <TripMap tripData={trip} />}
 
           {/* BUDGET */}
           {activeTab === 'budget' && trip.budget && (() => {
