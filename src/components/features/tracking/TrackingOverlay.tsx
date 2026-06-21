@@ -125,12 +125,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
 
       {/* Map */}
       <div className="flex-1 p-4 overflow-hidden">
-        <TripMap
-          trip={tripData.generatedTrip}
-          formData={tripData.formData}
-          userLocation={userLocation}
-          showRoute
-        />
+        <TripMap tripData={tripData.generatedTrip} />
       </div>
 
       {/* Bottom Panel */}
