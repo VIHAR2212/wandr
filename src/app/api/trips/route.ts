@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
+import { checkRateLimit, LIMITS } from '@/lib/rateLimit';
 
 export async function GET(req: NextRequest) {
   try {
@@ -46,6 +47,23 @@ export async function POST(req: NextRequest) {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // ⚡ Rate limit check
+    const rate = checkRateLimit(session.user.id, "TRIP_GEN", LIMITS.TRIP_GEN);
+
+    if (!rate.allowed) {
+      console.log(`🚫 Rate limited user ${session.user.id} (trips POST). Retry in ${rate.retryAfter}s`);
+      return NextResponse.json(
+        {
+          error: `Trip creation limit reached. Try again in ${Math.ceil(rate.retryAfter! / 60)} minutes.`,
+          remaining: rate.remaining,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rate.retryAfter) },
+        }
+      );
     }
 
     const body = await req.json();
@@ -98,7 +116,7 @@ export async function POST(req: NextRequest) {
       data: { totalTrips: { increment: 1 } },
     });
 
-    return NextResponse.json({ trip }, { status: 201 });
+    return NextResponse.json({ trip, rateLimit: rate.remaining }, { status: 201 });
   } catch (err) {
     console.error('[Trips POST]', err);
     return NextResponse.json({ error: 'Failed to create trip' }, { status: 500 });
