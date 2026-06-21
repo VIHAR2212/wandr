@@ -131,6 +131,8 @@ export default function SocialCards({ cards }: SocialCardsProps) {
       if (slot !== undefined) {
         const { x, y, rot, scale, zIndex } = config(slot);
         const target = {
+          xPercent: -50,
+          yPercent: -50,
           x: `${x * multiplier}rem`,
           y: `${y * hMult}rem`,
           rotation: rot,
@@ -140,11 +142,11 @@ export default function SocialCards({ cards }: SocialCardsProps) {
         };
 
         if (isFirstMount) {
-          gsap.set(card, { x: 0, y: `${12 * hMult}rem`, rotation: 0, scale: 0.5, opacity: 0 });
+          gsap.set(card, { xPercent: -50, yPercent: -50, x: 0, y: `${12 * hMult}rem`, rotation: 0, scale: 0.5, opacity: 0 });
           gsap.to(card, { ...target, duration: 1.2, ease: "elastic.out(1.05,.78)", delay: 0.2 + slot * 0.06, onComplete: onCardDone });
         } else if (!wasVisible) {
           const enterX = direction === "right" ? 40 : -40;
-          gsap.set(card, { x: `${enterX}rem`, y: `${y * hMult}rem`, rotation: direction === "right" ? 30 : -30, scale: 0.5, opacity: 0 });
+          gsap.set(card, { xPercent: -50, yPercent: -50, x: `${enterX}rem`, y: `${y * hMult}rem`, rotation: direction === "right" ? 30 : -30, scale: 0.5, opacity: 0 });
           gsap.to(card, { ...target, duration: 0.6, ease: "power2.out", onComplete: onCardDone });
         } else {
           gsap.to(card, { ...target, duration: 0.5, ease: "power2.out", onComplete: onCardDone });
@@ -153,7 +155,7 @@ export default function SocialCards({ cards }: SocialCardsProps) {
         const exitX = direction === "right" ? -40 : 40;
         gsap.to(card, { x: `${exitX}rem`, opacity: 0, scale: 0.5, rotation: direction === "right" ? -30 : 30, duration: 0.4, ease: "power2.in", zIndex: 0 });
       } else if (isFirstMount) {
-        gsap.set(card, { opacity: 0, scale: 0.3, x: 0, y: 0, zIndex: 0 });
+        gsap.set(card, { opacity: 0, scale: 0.3, xPercent: -50, yPercent: -50, x: 0, y: 0, zIndex: 0 });
       }
     });
 
@@ -209,8 +211,16 @@ export default function SocialCards({ cards }: SocialCardsProps) {
         }
 
         gsap.to(el, {
-          x: `${targetX}rem`, y: `${targetY}rem`, rotation: targetRot, scale: targetScale,
-          duration: 0.5, delay, ease: "elastic.out(1,.75)", overwrite: "auto",
+          xPercent: -50,
+          yPercent: -50,
+          x: `${targetX}rem`,
+          y: `${targetY}rem`,
+          rotation: targetRot,
+          scale: targetScale,
+          duration: 0.5,
+          delay,
+          ease: "elastic.out(1,.75)",
+          overwrite: "auto",
         });
         gsap.set(el, { zIndex: base.zIndex });
       });
