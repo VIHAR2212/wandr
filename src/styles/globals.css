@@ -213,3 +213,48 @@ body {
 .animate-pulse-soft { animation: pulse-soft 2s ease-in-out infinite; }
 .animate-fade-in { animation: fade-in 0.6s ease-out; }
 .page-enter { animation: fade-in 0.4s ease-out; }
+
+/* ─── Fan Card Carousel Styles ──────────────────────────── */
+.fan-card {
+  width: clamp(140px, 18vw, 240px);
+  height: clamp(240px, 32vw, 400px);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  will-change: transform, opacity;
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.3s ease;
+  cursor: pointer;
+}
+
+.fan-card:hover {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.fan-layout {
+  height: clamp(280px, 38vw, 440px);
+  position: relative;
+  min-height: 300px;
+}
+
+.fan-card img {
+  transition: transform 0.4s ease;
+}
+
+.fan-card:hover img {
+  transform: scale(1.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  .fan-card {
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  .fan-card:hover {
+    box-shadow: 0 12px 56px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  }
+}
+
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
