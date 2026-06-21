@@ -1,153 +1,203 @@
-'use client';
-import { useEffect, useRef } from 'react';
-import type { GeneratedTrip, TripFormData } from '@/types';
+"use client";
 
-interface Props {
-  trip: GeneratedTrip;
-  formData: TripFormData;
-  userLocation?: { lat: number; lng: number } | null;
-  showRoute?: boolean;
+import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+// Fix Next.js Leaflet Icon Bug
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+});
+
+interface MapProps {
+  tripData: any;
+  isTracking?: boolean;
+  onTrackingToggle?: () => void;
 }
 
-export function TripMap({ trip, userLocation, showRoute = false }: Props) {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<unknown>(null);
+export default function TripMap({ tripData, isTracking = false, onTrackingToggle }: MapProps) {
+  const mapRef = useRef<L.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const trackingMarkerRef = useRef<L.CircleMarker | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  
+  const [routePoints, setRoutePoints] = useState<Array<{lat: number, lng: number, name: string, type: string}>>([]);
 
+  // 1. Initialize Map
   useEffect(() => {
-    if (typeof window === 'undefined' || !mapRef.current) return;
-    if (mapInstanceRef.current) return;
+    if (!mapContainerRef.current || mapRef.current) return;
+    
+    const map = L.map(mapContainerRef.current, {
+      zoomControl: true,
+      scrollWheelZoom: true,
+    }).setView([19.076, 72.877], 12);
 
-    import('leaflet').then((L: any) => {
-      if (!mapRef.current || mapInstanceRef.current) return;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
 
-      let centerLat = 20.5937;
-      let centerLng = 78.9629;
-      let zoom = 5;
+    mapRef.current = map;
 
-      const firstActivity = trip.days?.[0]?.activities?.find((a: any) => a.lat && a.lng);
-      if (firstActivity?.lat && firstActivity?.lng) {
-        centerLat = firstActivity.lat;
-        centerLng = firstActivity.lng;
-        zoom = 12;
-      } else if (trip.hotels?.[0]?.lat && trip.hotels?.[0]?.lng) {
-        centerLat = trip.hotels[0].lat;
-        centerLng = trip.hotels[0].lng;
-        zoom = 12;
-      }
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
 
-      const map = L.map(mapRef.current, { zoomControl: true, scrollWheelZoom: true });
-      mapInstanceRef.current = map;
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-        maxZoom: 19,
-      }).addTo(map);
-
-      map.setView([centerLat, centerLng], zoom);
-
-      const bounds: [number, number][] = [];
-
-      const createIcon = (emoji: string, color: string) =>
-        L.divIcon({
-          html: `<div style="background:${color};width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:2px solid white;"><span style="transform:rotate(45deg);font-size:14px;">${emoji}</span></div>`,
-          className: '',
-          iconSize: [32, 32],
-          iconAnchor: [16, 32],
-          popupAnchor: [0, -34],
-        });
-
-      (trip.hotels ?? []).forEach((hotel: any) => {
-        if (!hotel.lat || !hotel.lng) return;
-        bounds.push([hotel.lat, hotel.lng]);
-        L.marker([hotel.lat, hotel.lng], { icon: createIcon('🏨', '#a67040') })
-          .addTo(map)
-          .bindPopup(`<b>${hotel.name}</b><br/>${hotel.type}<br/>⭐ ${hotel.rating}`);
-      });
-
-      (trip.restaurants ?? []).forEach((r: any) => {
-        if (!r.lat || !r.lng) return;
-        bounds.push([r.lat, r.lng]);
-        L.marker([r.lat, r.lng], { icon: createIcon('🍽️', '#f5681a') })
-          .addTo(map)
-          .bindPopup(`<b>${r.name}</b><br/>${r.cuisine}<br/>💰 ${r.priceRange}`);
-      });
-
-      (trip.hiddenGems ?? []).forEach((gem: any) => {
-        if (!gem.lat || !gem.lng) return;
-        bounds.push([gem.lat, gem.lng]);
-        L.marker([gem.lat, gem.lng], { icon: createIcon('✨', '#1a9951') })
-          .addTo(map)
-          .bindPopup(`<b>${gem.name}</b><br/>${gem.description}<br/>💡 ${gem.insiderTip}`);
-      });
-
-      (trip.days ?? []).forEach((day: any) => {
-        (day.activities ?? []).forEach((act: any) => {
-          if (!act.lat || !act.lng) return;
-          bounds.push([act.lat, act.lng]);
-          const emoji =
-            act.type === 'SIGHTSEEING' ? '📸' : act.type === 'TRANSPORT' ? '🚌' : '📍';
-          L.marker([act.lat, act.lng], { icon: createIcon(emoji, '#1e7fc4') })
-            .addTo(map)
-            .bindPopup(
-              `<b>${act.title}</b><br/>⏰ ${act.time} · ${act.duration}m<br/>${act.description.slice(0, 100)}...`
-            );
-        });
-      });
-
-      if (userLocation) {
-        bounds.push([userLocation.lat, userLocation.lng]);
-        L.marker([userLocation.lat, userLocation.lng], {
-          icon: createIcon('📍', '#e63946'),
-        })
-          .addTo(map)
-          .bindPopup('Your current location')
-          .openPopup();
-      }
-
-      if (bounds.length > 1) {
-        map.fitBounds(bounds as any, { padding: [40, 40] });
-      }
-
-      if (showRoute && bounds.length > 1) {
-        L.polyline(bounds as any, {
-          color: '#a67040',
-          weight: 3,
-          opacity: 0.6,
-          dashArray: '8 6',
-        }).addTo(map);
+  // 2. Plot Data & Build Route
+  useEffect(() => {
+    if (!mapRef.current || !tripData) return;
+    const map = mapRef.current;
+    
+    map.eachLayer((layer) => {
+      if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.CircleMarker) {
+        map.removeLayer(layer);
       }
     });
 
-    return () => {
-      if (mapInstanceRef.current) {
-        (mapInstanceRef.current as any).remove();
-        mapInstanceRef.current = null;
+    const points: Array<{lat: number, lng: number, name: string, type: string}> = [];
+
+    const hotelIcon = new L.DivIcon({ html: `<div style="background:#8b5cf6;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.5)">🏨</div>`, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+    const restoIcon = new L.DivIcon({ html: `<div style="background:#ef4444;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.5)">🍽️</div>`, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+    const attrIcon = new L.DivIcon({ html: `<div style="background:#3b82f6;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.5)">📍</div>`, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+
+    const itinerary = tripData.itinerary || [];
+    itinerary.forEach((day: any) => {
+      (day.activities || []).forEach((act: any) => {
+        if (act.lat && act.lng) {
+          points.push({ lat: act.lat, lng: act.lng, name: act.title, type: 'activity' });
+          L.marker([act.lat, act.lng], { icon: attrIcon })
+            .addTo(map)
+            .bindPopup(`<b>${act.title}</b><br>${act.time}<br><small>${act.description?.substring(0, 80)}...</small>`);
+        }
+      });
+    });
+
+    (tripData.hotels || []).forEach((h: any) => {
+      if (h.lat && h.lng) {
+        points.push({ lat: h.lat, lng: h.lng, name: h.name, type: 'hotel' });
+        L.marker([h.lat, h.lng], { icon: hotelIcon })
+          .addTo(map)
+          .bindPopup(`<b>🏨 ${h.name}</b><br>₹${h.pricePerNight}/night<br><small>${h.description}</small>`);
       }
+    });
+
+    (tripData.restaurants || []).forEach((r: any) => {
+      if (r.lat && r.lng) {
+        points.push({ lat: r.lat, lng: r.lng, name: r.name, type: 'restaurant' });
+        L.marker([r.lat, r.lng], { icon: restoIcon })
+          .addTo(map)
+          .bindPopup(`<b>🍽️ ${r.name}</b><br>Cuisine: ${r.cuisine}<br>Must Try: ${r.mustTry}`);
+      }
+    });
+
+    if (points.length > 1) {
+      L.polyline(points.map(p => [p.lat, p.lng]), { color: '#3b82f6', weight: 4, dashArray: '10, 10' }).addTo(map);
+      map.fitBounds(L.latLngBounds(points.map(p => [p.lat, p.lng])), { padding: [50, 50] });
+    } else if (points.length === 1) {
+      map.setView([points[0].lat, points[0].lng], 14);
+    }
+
+    setRoutePoints(points);
+
+  }, [tripData]);
+
+  // 3. Request Notification Permission
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // 4. Live Tracking Simulation Logic
+  useEffect(() => {
+    if (!isTracking || routePoints.length < 2 || !mapRef.current) return;
+
+    const map = mapRef.current;
+    
+    const trackingDot = L.circleMarker([routePoints[0].lat, routePoints[0].lng], {
+      radius: 10,
+      color: '#ffffff',
+      fillColor: '#10b981',
+      fillOpacity: 1,
+      weight: 4
+    }).addTo(map);
+    
+    trackingMarkerRef.current = trackingDot;
+
+    let currentIndex = 0;
+    let step = 0;
+    const totalStepsBetweenPoints = 60; // Frames to move from A to B
+    let lastNotifiedIndex = -1;
+
+    const animate = () => {
+      if (currentIndex >= routePoints.length - 1) {
+        if (trackingMarkerRef.current) map.removeLayer(trackingMarkerRef.current);
+        onTrackingToggle?.(); 
+        return;
+      }
+
+      const start = routePoints[currentIndex];
+      const end = routePoints[currentIndex + 1];
+      
+      const progress = step / totalStepsBetweenPoints;
+      
+      const currentLat = start.lat + (end.lat - start.lat) * progress;
+      const currentLng = start.lng + (end.lng - start.lng) * progress;
+
+      trackingDot.setLatLng([currentLat, currentLng]);
+      map.panTo([currentLat, currentLng], { animate: true, duration: 0.5 });
+
+      step++;
+
+      if (step >= totalStepsBetweenPoints) {
+        currentIndex++;
+        step = 0;
+
+        if (currentIndex !== lastNotifiedIndex && currentIndex < routePoints.length) {
+          lastNotifiedIndex = currentIndex;
+          const arrivedAt = routePoints[currentIndex];
+          let emoji = "📍";
+          if (arrivedAt.type === 'hotel') emoji = "🏨";
+          if (arrivedAt.type === 'restaurant') emoji = "🍽️";
+          
+          const notifText = `Arrived at ${emoji} ${arrivedAt.name}`;
+          
+          if (Notification.permission === "granted") {
+            new Notification("Wandr Journey Update", { body: notifText });
+          }
+          alert(`✅ Journey Update:\n${notifText}`);
+        }
+      }
+
+      animationFrameRef.current = window.requestAnimationFrame(animate);
     };
-  }, [trip, userLocation, showRoute]);
+
+    animationFrameRef.current = window.requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (trackingMarkerRef.current) map.removeLayer(trackingMarkerRef.current);
+    };
+  }, [isTracking, routePoints]);
 
   return (
-    <div className="space-y-4">
-      <div className="glass-card overflow-hidden rounded-3xl">
-        <div ref={mapRef} className="w-full" style={{ height: '520px' }} />
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { emoji: '🏨', label: 'Hotels', count: trip.hotels?.length ?? 0 },
-          { emoji: '🍽️', label: 'Restaurants', count: trip.restaurants?.length ?? 0 },
-          { emoji: '✨', label: 'Hidden Gems', count: trip.hiddenGems?.length ?? 0 },
-          {
-            emoji: '📍',
-            label: 'Activities',
-            count: trip.days?.reduce((a: number, d: any) => a + (d.activities?.length ?? 0), 0) ?? 0,
-          },
-        ].map(({ emoji, label, count }: { emoji: string; label: string; count: number }) => (
-          <div key={label} className="glass-panel rounded-2xl px-4 py-3 text-center">
-            <div className="text-2xl mb-1">{emoji}</div>
-            <div className="text-lg font-bold text-foreground">{count}</div>
-            <div className="text-xs text-muted-foreground">{label}</div>
+    <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-white/10">
+      <div ref={mapContainerRef} className="w-full h-full absolute inset-0 z-0" />
+      
+      <div className="absolute top-4 left-4 z-10 bg-black/80 backdrop-blur-md p-3 rounded-lg border border-white/10 text-xs space-y-1.5 font-medium">
+        <div className="flex items-center gap-2"><span className="text-base">📍</span> Attractions</div>
+        <div className="flex items-center gap-2"><span className="text-base">🏨</span> Hotels</div>
+        <div className="flex items-center gap-2"><span className="text-base">🍽️</span> Restaurants</div>
+        {isTracking && (
+          <div className="flex items-center gap-2 text-green-400 font-bold mt-2 pt-2 border-t border-white/20 animate-pulse">
+            <div className="w-3 h-3 bg-green-500 rounded-full shadow-lg shadow-green-500/50"></div>
+            Live Tracking Active
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
