@@ -1,5 +1,5 @@
 'use client';
-// src/components/features/landing/TestimonialsSection.tsx
+// src/components/features/landing/TestimonialsSection.tsx.
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession } from 'next-auth/react';
