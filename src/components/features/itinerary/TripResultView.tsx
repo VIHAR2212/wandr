@@ -31,11 +31,6 @@ interface TripData {
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
 function normalizeTripData(raw: any, tripId: string): TripData {
-  // Task 1 fix: `itinerary` is stored in the Prisma Json column as a NESTED OBJECT
-  //   { title, summary, days: [...], hotels: [...], restaurants: [...],
-  //     hiddenGems: [...], transportGuide: {...}, purposes: [...], specialRequests }
-  // The schema has NO separate top-level hotels/restaurants/hiddenGems columns.
-  // Legacy/cookie shape was a bare array of days — accept both for safety.
   const itineraryObj: any =
     raw.itinerary && typeof raw.itinerary === 'object' && !Array.isArray(raw.itinerary)
       ? raw.itinerary
@@ -262,7 +257,167 @@ export function TripResultView({ tripId }: { tripId: string }) {
   ];
 
   function handleDownloadPDF() {
-    window.print();
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 18;
+    const usableW = pageW - margin * 2;
+    let y = margin;
+
+    const fmtCur = (amt: number) => formatCurrency(amt, fd.currency);
+
+    // ---------- Helper: check page break ----------
+    const checkPage = (needed: number) => {
+      if (y + needed > pageH - 25) {
+        doc.addPage();
+        y = margin;
+        return true;
+      }
+      return false;
+    };
+
+    // ---------- Title page ----------
+    doc.setFontSize(26);
+    doc.setTextColor(15, 23, 42);
+    doc.text(trip.title, pageW / 2, 40, { align: 'center' });
+
+    doc.setFontSize(12);
+    doc.setTextColor(100, 116, 139);
+    doc.text(trip.summary, pageW / 2, 52, { align: 'center', maxWidth: usableW });
+
+    // Divider
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.5);
+    doc.line(margin, 62, pageW - margin, 62);
+    y = 70;
+
+    // ---------- Stats row ----------
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    const duration = fd.startDate && fd.endDate
+      ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days`
+      : '-- days';
+
+    const stats = [
+      `Destination: ${fd.destination}`,
+      `Duration: ${duration}`,
+      `Travelers: ${fd.travelers}`,
+      `Total Budget: ${fmtCur(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0)}`,
+    ];
+    stats.forEach((stat, i) => {
+      doc.text(stat, margin + (i % 2) * (usableW / 2), y + Math.floor(i / 2) * 7);
+    });
+    y += Math.ceil(stats.length / 2) * 7 + 10;
+
+    // ---------- Day-by-Day Itinerary ----------
+    const days = trip.days ?? [];
+    days.forEach((day) => {
+      // Day header
+      checkPage(30);
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`Day ${day.dayNumber}: ${day.theme}`, margin, y);
+      y += 7;
+
+      if (day.summary) {
+        doc.setFontSize(9);
+        doc.setTextColor(100, 116, 139);
+        doc.text(day.summary, margin, y, { maxWidth: usableW });
+        y += 6;
+      }
+
+      // Activities table
+      const acts = day.activities ?? [];
+      if (acts.length > 0) {
+        const tableBody = acts.map((act) => [
+          act.time || '--',
+          act.title || '',
+          act.location || '',
+          act.duration ? `${act.duration}m` : '',
+          fmtCur(Number(act.cost) || 0),
+          act.type || '',
+        ]);
+
+        checkPage(acts.length * 10 + 10);
+        autoTable(doc, {
+          startY: y,
+          head: [['Time', 'Activity', 'Location', 'Duration', 'Cost', 'Type']],
+          body: tableBody,
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 8, cellPadding: 2, textColor: [40, 40, 40] },
+          headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontSize: 8 },
+          alternateRowStyles: { fillColor: [245, 247, 250] },
+          columnStyles: {
+            0: { cellWidth: 18 },
+            1: { cellWidth: 45 },
+            2: { cellWidth: 35 },
+            3: { cellWidth: 20 },
+            4: { cellWidth: 25, halign: 'right' },
+            5: { cellWidth: 22 },
+          },
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        y = (doc as any).lastAutoTable?.finalY + 8;
+      } else {
+        y += 4;
+      }
+    });
+
+    // ---------- Budget Summary ----------
+    const bTransport = Number(trip.budget?.transport) || 0;
+    const bAccommodation = Number(trip.budget?.accommodation) || 0;
+    const bFood = Number(trip.budget?.food) || 0;
+    const bActivities = Number(trip.budget?.activities) || 0;
+    const bMisc = Number(trip.budget?.miscellaneous) || 0;
+    const bEmergency = Number(trip.budget?.emergencyFund) || 0;
+    const budgetTotal = bTransport + bAccommodation + bFood + bActivities + bMisc + bEmergency;
+
+    checkPage(60);
+    doc.setFontSize(14);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Budget Summary', margin, y);
+    y += 8;
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Category', 'Amount']],
+      body: [
+        ['Transport', fmtCur(bTransport)],
+        ['Accommodation', fmtCur(bAccommodation)],
+        ['Food', fmtCur(bFood)],
+        ['Activities', fmtCur(bActivities)],
+        ['Miscellaneous', fmtCur(bMisc)],
+        ['Emergency Fund', fmtCur(bEmergency)],
+        [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, { content: fmtCur(budgetTotal), styles: { fontStyle: 'bold', halign: 'right' } }],
+      ],
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 9, cellPadding: 3, textColor: [40, 40, 40] },
+      headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontSize: 9 },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: {
+        0: { cellWidth: usableW * 0.6 },
+        1: { cellWidth: usableW * 0.4, halign: 'right' },
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    y = (doc as any).lastAutoTable?.finalY + 12;
+
+    // ---------- Page numbers & footer ----------
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Page ${p} of ${totalPages}`, pageW / 2, pageH - 10, { align: 'center' });
+      doc.text('Generated by Wandr AI', margin, pageH - 10);
+      doc.text(new Date().toLocaleDateString(), pageW - margin, pageH - 10, { align: 'right' });
+    }
+
+    // ---------- Save / Download ----------
+    const safeName = trip.title.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_').substring(0, 40);
+    doc.save(`${safeName || 'Wandr_Trip'}.pdf`);
   }
 
   return (
@@ -306,7 +461,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 label: 'Duration',
                 value: fd.startDate && fd.endDate
                   ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days`
-                  : '— days',
+                  : '-- days',
               },
               { icon: Users, label: 'Travelers', value: `${fd.travelers} people` },
               { icon: Wallet, label: 'Total Cost', value: formatCurrency(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0, fd.currency) },
