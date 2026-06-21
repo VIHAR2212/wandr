@@ -28,20 +28,21 @@ const FAN_POSITIONS = [
 ];
 
 function getResponsiveMultiplier(width: number) {
-  if (width < 480) return 0.28;
-  if (width < 640) return 0.38;
-  if (width < 768) return 0.5;
-  if (width < 1024) return 0.75;
-  return 1.0;
+  if (width < 480) return 0.35;
+  if (width < 640) return 0.48;
+  if (width < 768) return 0.62;
+  if (width < 1024) return 0.85;
+  return 1.15;
 }
 
 function getHeightMultiplier(width: number) {
   let idealPx: number;
-  if (width < 480) idealPx = 22 * 16;
-  else if (width < 640) idealPx = 26 * 16;
-  else if (width < 768) idealPx = 28 * 16;
-  else if (width < 1024) idealPx = 34 * 16;
-  else idealPx = 38 * 16;
+  if (width < 480) idealPx = 28 * 16;
+  else if (width < 640) idealPx = 32 * 16;
+  else if (width < 768) idealPx = 36 * 16;
+  else if (width < 1024) idealPx = 42 * 16;
+  else idealPx = 48 * 16;
+
   const available = window.innerHeight * 0.7;
   if (available >= idealPx) return 1;
   return available / idealPx;
@@ -191,6 +192,7 @@ export default function SocialCards({ cards }: SocialCardsProps) {
           } else {
             const normalized = centerSlot > 0 ? (slot - centerSlot) / centerSlot : 0;
             const pushStrength = 8 * (1 - Math.abs(normalized)) * (1 + 0.2 * Math.max(0, 3 - distance));
+
             if (slot < hoveredSlot) {
               targetX -= pushStrength * mult;
               targetRot -= 3 / (distance + 1);
@@ -198,6 +200,7 @@ export default function SocialCards({ cards }: SocialCardsProps) {
               targetX += pushStrength * mult;
               targetRot += 3 / (distance + 1);
             }
+
             if (slot === visibleEntries.length - 1 && hoveredSlot < centerSlot) targetY -= 1 * hM;
             if (slot === 0 && hoveredSlot > centerSlot) targetY -= 1 * hM;
           }
@@ -250,16 +253,21 @@ export default function SocialCards({ cards }: SocialCardsProps) {
   );
 
   return (
-    <section className="flex flex-col items-center w-full py-4 lg:py-8 px-4 md:px-8 relative z-20">
-      <div className="flex items-center justify-center w-full max-w-[90rem]">
-        <div ref={containerRef} className="fan-layout flex relative justify-center items-center w-full max-w-[80rem]">
+    <section className="flex flex-col items-center w-full py-4 lg:py-6 px-4 md:px-8 relative z-20">
+      <div className="flex items-center justify-center w-full">
+        <div ref={containerRef} className="fan-layout flex relative justify-center items-center w-full max-w-[90rem]">
           {cards.map((card, index) => {
             const cardContent = (
               <div className="relative w-full h-full overflow-hidden rounded-2xl shadow-2xl">
-                <img src={card.imgUrl} loading="lazy" alt={card.alt || `Card ${index}`} className="absolute inset-0 w-full h-full object-cover z-10" />
-                <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/30 to-transparent z-20 pointer-events-none" />
+                <img
+                  src={card.imgUrl}
+                  loading="lazy"
+                  alt={card.alt || `Card ${index}`}
+                  className="absolute inset-0 w-full h-full object-cover z-10"
+                />
+                <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 via-black/30 to-transparent z-20 pointer-events-none" />
                 {card.overlay && (
-                  <div className="absolute inset-0 z-30 flex flex-col justify-end p-5 pointer-events-none">
+                  <div className="absolute inset-0 z-30 flex flex-col justify-end p-3 sm:p-4 pointer-events-none">
                     {card.overlay}
                   </div>
                 )}
