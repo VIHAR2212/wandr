@@ -75,6 +75,7 @@ export function TripChat({ tripId: _tripId, tripContext }: { tripId: string; tri
     } finally {
       setLoading(false);
     }
+  }
 
   function renderContent(text: string) {
     return text
