@@ -65,9 +65,11 @@ export async function POST(req: NextRequest) {
 
     const prompt = `Create a ${days}-day trip for ${destination}. Budget: ${budget} ${currency || "INR"} for ${travelers || 1} person(s). Food: ${foodPreference || "Any"}. Hotel: ${hotelPreference || "Standard"}. Purpose: ${purposesStr}. ${specialInstruction}
 
-Return STRICTLY this JSON (no other text):
+Return STRICTLY this JSON (no other text, no markdown fences):
 {
   "destination": "${destination}",
+  "title": "Short trip title",
+  "summary": "2-3 sentence trip overview",
   "totalDays": ${days},
   "itinerary": [
     {
@@ -79,7 +81,15 @@ Return STRICTLY this JSON (no other text):
   ],
   "hotels": [{"name": "Hotel Name", "area": "Area", "lat": 19.08, "lng": 72.88, "pricePerNight": 2000, "rating": 4.5, "description": "Good hotel", "bookingTip": "Book early"}],
   "restaurants": [{"name": "Restaurant Name", "cuisine": "Food type", "diet": "${foodPreference || "all"}", "priceRange": "$$", "rating": 4.5, "mustTry": "Best dish", "location": "Area", "lat": 19.09, "lng": 72.89}],
-  "budgetBreakdown": {"accommodation": 0, "food": 0, "transport": 0, "activities": 0, "misc": 0, "total": ${budget}}
+  "hiddenGems": [{"name": "Offbeat Spot", "description": "Why it's special", "lat": 19.10, "lng": 72.90, "why": "Reason to visit", "bestTime": "Morning"}],
+  "transportGuide": {
+    "overview": "Brief transport overview",
+    "legs": [{"from": "Origin", "to": "Destination", "mode": "FLIGHT", "duration": "2h", "cost": 5000, "tips": "Book in advance"}]
+  },
+  "budgetBreakdown": {"accommodation": 0, "food": 0, "transport": 0, "activities": 0, "misc": 0, "total": ${budget}},
+  "packingList": [{"item": "Comfortable shoes", "reason": "For walking", "essential": true, "category": "clothing"}],
+  "weatherForecast": {"expected": "Pleasant", "avgTemp": "28°C", "tips": ["Carry water"], "forecast": [{"date": "${startDate}", "condition": "Sunny", "high": 30, "low": 22}]},
+  "safety": {"overallScore": 8, "tips": ["Stay aware"], "emergencyNumber": "112", "scamAlerts": ["Common scam"], "safeAreas": ["Tourist area"], "avoidAreas": ["Isolated spot at night"]}
 }
 
 RULES:
@@ -87,7 +97,12 @@ RULES:
 2. Each day MUST have 4-6 activities.
 3. Total budget MUST equal ${budget}.
 4. Provide 2 hotels and 3 restaurants.
-5. CRITICAL: You MUST provide accurate decimal "lat" and "lng" for EVERY activity, hotel, and restaurant.`;
+5. Provide 3-5 hiddenGems (offbeat, non-touristy).
+6. Provide a transportGuide with at least 1 leg.
+7. Provide 8-15 packingList items with category in {clothing, toiletries, electronics, documents, misc}.
+8. Provide weatherForecast for the trip dates.
+9. Provide safety with overallScore 1-10 and at least 3 tips.
+10. CRITICAL: You MUST provide accurate decimal "lat" and "lng" for EVERY activity, hotel, restaurant, and hidden gem.`;
 
     console.log("🔄 Generating trip with 4-Groq fallback system...");
 
@@ -111,7 +126,7 @@ RULES:
       }
       retryCount++;
     }
-    
+
     let trip;
     try {
       trip = await prisma.trip.create({
@@ -130,18 +145,29 @@ RULES:
           foodPref: mapFoodPref(foodPreference),
           hotelPref: (hotelPreference || "STANDARD").toUpperCase(),
           transportPref: Array.isArray(transportPreferences) ? transportPreferences : [],
+          // Nest EVERYTHING the AI returned (except budget/safety/packing/weather,
+          // which live in their own columns) into the itinerary Json field.
+          // Per schema constraint: no separate hotels/restaurants/hiddenGems columns.
           itinerary: {
+            title: tripData.title || `Trip to ${destination}`,
+            summary: tripData.summary || "",
             days: tripData.itinerary || [],
             hotels: tripData.hotels || [],
             restaurants: tripData.restaurants || [],
             hiddenGems: tripData.hiddenGems || [],
+            transportGuide: tripData.transportGuide || { overview: "", legs: [] },
             purposes: purposesList,
             specialRequests: specialRequests || "",
           },
           budgetBreakdown: tripData.budgetBreakdown || {},
-          packingList: tripData.packingList || [{ item: "Comfortable shoes", reason: "For walking", essential: true }],
-          weatherInfo: tripData.weather || { expected: "Pleasant", avgTemp: "28°C", tips: ["Carry water"] },
-          safetyInfo: tripData.safetyInfo || { overallScore: 8, tips: ["Stay aware"], emergencyNumber: "112", scamAlerts: [], safeAreas: [], avoidAreas: [] },
+          packingList: tripData.packingList || [{ item: "Comfortable shoes", reason: "For walking", essential: true, category: "clothing" }],
+          // AI may return either "weatherForecast" (per spec) or "weather" (legacy) — accept both.
+          weatherInfo: tripData.weatherForecast || tripData.weather || { expected: "Pleasant", avgTemp: "28°C", tips: ["Carry water"], forecast: [] },
+          // AI may return either "safety" (per spec) or "safetyInfo" (legacy) — accept both.
+          safetyInfo: tripData.safety || tripData.safetyInfo || { overallScore: 8, tips: ["Stay aware"], emergencyNumber: "112", scamAlerts: [], safeAreas: [], avoidAreas: [] },
+          // NOTE: originLat/originLng/destLat/destLng intentionally NOT set here.
+          // Task 3 (TrackingOverlay) will geocode origin/destination on first journey
+          // start and PATCH them back via /api/trips/[id].
         },
       });
     } catch (dbError: any) {
@@ -149,18 +175,12 @@ RULES:
       return NextResponse.json({ error: `Database failed: ${dbError.message}` }, { status: 500 });
     }
 
+    // Return the SAVED Prisma row verbatim so the client sees the SAME shape
+    // from POST /api/ai/generate-trip as it does from GET /api/trips/[id].
     return NextResponse.json({
       success: true,
       tripId: trip.id,
-      trip: {
-        ...trip,
-        itinerary: tripData.itinerary || [],
-        hotels: tripData.hotels || [],
-        restaurants: tripData.restaurants || [],
-        hiddenGems: tripData.hiddenGems || [],
-        weather: tripData.weather || {},
-        purposes: purposesList,
-      },
+      trip,
       provider,
     });
   } catch (error: any) {
