@@ -20,16 +20,15 @@ interface TripData {
   formData: TripFormData;
   generatedTrip: GeneratedTrip;
   createdAt: string;
+  originLat?: number | null;
+  originLng?: number | null;
+  destLat?: number | null;
+  destLng?: number | null;
 }
 
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
 function normalizeTripData(raw: any, tripId: string): TripData {
-  // Task 1 fix: `itinerary` is stored in the Prisma Json column as a NESTED OBJECT
-  //   { title, summary, days: [...], hotels: [...], restaurants: [...],
-  //     hiddenGems: [...], transportGuide: {...}, purposes: [...], specialRequests }
-  // The schema has NO separate top-level hotels/restaurants/hiddenGems columns.
-  // Legacy/cookie shape was a bare array of days — accept both for safety.
   const itineraryObj: any =
     raw.itinerary && typeof raw.itinerary === 'object' && !Array.isArray(raw.itinerary)
       ? raw.itinerary
@@ -175,6 +174,10 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     formData: fd,
     generatedTrip,
     createdAt: raw.createdAt || new Date().toISOString(),
+    originLat: raw.originLat ?? null,
+    originLng: raw.originLng ?? null,
+    destLat: raw.destLat ?? null,
+    destLng: raw.destLng ?? null,
   };
 }
 
@@ -457,7 +460,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           )}
 
           {/* MAP */}
-          {activeTab === 'map' && <TripMap tripData={trip} />}
+          {activeTab === 'map' && <TripMap trip={trip} />}
 
           {/* BUDGET */}
           {activeTab === 'budget' && trip.budget && (() => {
@@ -903,7 +906,16 @@ export function TripResultView({ tripId }: { tripId: string }) {
       {/* Tracking overlay */}
       {showTracking && (
         <TrackingOverlay
-          tripData={{ tripId, formData: fd, generatedTrip: trip, createdAt: tripData.createdAt }}
+          tripData={{
+            tripId,
+            formData: fd,
+            generatedTrip: trip,
+            createdAt: tripData.createdAt,
+            originLat: tripData.originLat,
+            originLng: tripData.originLng,
+            destLat: tripData.destLat,
+            destLng: tripData.destLng,
+          }}
           onClose={() => setShowTracking(false)}
         />
       )}
