@@ -548,7 +548,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           {activeTab === 'hotels' && (
             <div className="grid sm:grid-cols-2 gap-4">
               {(trip.hotels ?? []).length > 0 ? (
-                (trip.hotels.map((hotel: any, i: number) => (
+                trip.hotels.map((hotel: any, i: number) => (
                   <div key={i} className="glass-card p-6">
                     <div className="flex items-start justify-between mb-3">
                       <div>
