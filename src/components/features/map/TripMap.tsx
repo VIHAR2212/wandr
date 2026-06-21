@@ -356,7 +356,7 @@ export default function TripMap({ tripData, isTracking = false, onTrackingToggle
         {(userPosition || isTracking) && (
           <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/20">
             <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[14px]"
-              style="background: linear-gradient(135deg, #FFD700, #FFA500); box-shadow: 0 0 8px rgba(255,215,0,0.5);">
+              style={{ background: "linear-gradient(135deg, #FFD700, #FFA500)", boxShadow: "0 0 8px rgba(255,215,0,0.5)" }}>
               👤
             </span>
             <span className="text-yellow-300 font-bold">Your Location</span>
