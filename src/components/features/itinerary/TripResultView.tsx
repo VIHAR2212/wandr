@@ -25,6 +25,16 @@ interface TripData {
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
 function normalizeTripData(raw: any, tripId: string): TripData {
+  // Task 1 fix: `itinerary` is stored in the Prisma Json column as a NESTED OBJECT
+  //   { title, summary, days: [...], hotels: [...], restaurants: [...],
+  //     hiddenGems: [...], transportGuide: {...}, purposes: [...], specialRequests }
+  // The schema has NO separate top-level hotels/restaurants/hiddenGems columns.
+  // Legacy/cookie shape was a bare array of days — accept both for safety.
+  const itineraryObj: any =
+    raw.itinerary && typeof raw.itinerary === 'object' && !Array.isArray(raw.itinerary)
+      ? raw.itinerary
+      : { days: Array.isArray(raw.itinerary) ? raw.itinerary : [] };
+
   const fd: TripFormData = {
     origin: raw.origin || '',
     destination: raw.destination || '',
@@ -33,17 +43,17 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     travelers: raw.travelers || 1,
     budget: raw.budget || 0,
     currency: raw.currency || 'INR',
-    purposes: raw.purposes || (raw.purpose ? [raw.purpose] : ['ADVENTURE']),
+    purposes: itineraryObj.purposes || raw.purposes || (raw.purpose ? [raw.purpose] : ['ADVENTURE']),
     foodPreference: raw.foodPref || raw.foodPreference || 'NON_VEG',
     hotelPreference: raw.hotelPref || raw.hotelPreference || 'STANDARD',
     transportPreferences: raw.transportPref || raw.transportPreferences || [],
-    specialRequests: '',
+    specialRequests: itineraryObj.specialRequests || '',
     includeHiddenGems: true,
     flexibleBudget: false,
     smartBudget: false,
   };
 
-  const rawDays = Array.isArray(raw.itinerary) ? raw.itinerary : [];
+  const rawDays = Array.isArray(itineraryObj.days) ? itineraryObj.days : [];
   const days: TripDay[] = rawDays.map((d: any, i: number) => ({
     dayNumber: d.day || i + 1,
     date: d.date || '',
@@ -64,7 +74,7 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     })),
   }));
 
-  const rawHotels = Array.isArray(raw.hotels) ? raw.hotels : [];
+  const rawHotels = Array.isArray(itineraryObj.hotels) ? itineraryObj.hotels : [];
   const hotels = rawHotels.map((h: any) => ({
     name: h.name || '',
     type: h.area || h.type || '',
@@ -79,7 +89,7 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     lng: h.lng || null,
   }));
 
-  const rawRestaurants = Array.isArray(raw.restaurants) ? raw.restaurants : [];
+  const rawRestaurants = Array.isArray(itineraryObj.restaurants) ? itineraryObj.restaurants : [];
   const restaurants = rawRestaurants.map((r: any) => ({
     name: r.name || '',
     cuisine: r.cuisine || '',
@@ -92,14 +102,14 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     lng: r.lng || null,
   }));
 
-  const rawGems = Array.isArray(raw.hiddenGems) ? raw.hiddenGems : [];
+  const rawGems = Array.isArray(itineraryObj.hiddenGems) ? itineraryObj.hiddenGems : [];
   const hiddenGems = rawGems.map((g: any) => ({
     name: g.name || '',
     crowdLevel: g.crowdLevel || 'LOW',
     description: g.description || '',
     location: g.howToReach || g.location || '',
     bestTime: g.bestTime || '',
-    insiderTip: g.whySpecial || g.insiderTip || '',
+    insiderTip: g.whySpecial || g.insiderTip || g.why || '',
   }));
 
   const bb: any = raw.budgetBreakdown || {};
@@ -147,8 +157,8 @@ function normalizeTripData(raw: any, tripId: string): TripData {
   };
 
   const generatedTrip: GeneratedTrip = {
-    title: raw.title || `Trip to ${raw.destination || 'Unknown'}`,
-    summary: `A ${dayCount}-day trip to ${raw.destination || 'Unknown'}`,
+    title: itineraryObj.title || raw.title || `Trip to ${raw.destination || 'Unknown'}`,
+    summary: itineraryObj.summary || `A ${dayCount}-day trip to ${raw.destination || 'Unknown'}`,
     days,
     hotels,
     restaurants,
@@ -177,18 +187,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
   const [error, setError] = useState('');
 
   const loadTrip = useCallback(() => {
-    const cookies = document.cookie.split(';');
-    const tripCookie = cookies.find((c: string) => c.trim().startsWith(`trip_${tripId}=`));
-    if (tripCookie) {
-      try {
-        const val = tripCookie.split('=').slice(1).join('=');
-        const data = JSON.parse(decodeURIComponent(val));
-        setTripData(data);
-        setLoading(false);
-        localStorage.removeItem('generating_trip_id');
-        return;
-      } catch { /* fall through */ }
-    }
     fetch(`/api/trips/${tripId}`)
       .then((r: Response) => r.json())
       .then((d: any) => {
@@ -600,7 +598,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                       </a>
                     )}
                   </div>
-                )))
+                ))
               ) : (
                 <div className="glass-card p-12 text-center">
                   <Hotel className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
