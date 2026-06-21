@@ -19,7 +19,7 @@ async function callModel(apiKey: string, modelId: string, modelName: string, mes
     const res = await fetch(GROQ_BASE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: id, messages, max_tokens: 4000, temperature: 0.7 }),
+      body: JSON.stringify({ model: modelId, messages, max_tokens: 4000, temperature: 0.7 }),
       signal: controller.signal
     });
     clearTimeout(timeout);
