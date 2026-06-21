@@ -6,7 +6,7 @@ import {
   MessageCircle, Navigation, Shield, Package, ChevronDown,
   ChevronUp, Star, AlertTriangle, Utensils, Hotel, Sparkles
 } from 'lucide-react';
-import { TripMap } from '@/components/features/map/TripMap';
+import TripMap from '@/components/features/map/TripMap';
 import { TripChat } from '@/components/features/chat/TripChat';
 import { TrackingOverlay } from '@/components/features/tracking/TrackingOverlay';
 import LiquidLoading from '@/components/features/itinerary/LiquidLoading';
