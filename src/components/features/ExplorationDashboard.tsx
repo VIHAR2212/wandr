@@ -328,7 +328,7 @@ export default function ExplorationDashboard() {
   }
 
   return (
-    <div className="h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center overflow-hidden">
+    <div className="h-[calc(100vh-4rem)] bg-neutral-950 text-neutral-100 flex items-center justify-center overflow-hidden">
       <SocialCards
         cards={EDITORIAL_TRIPS.map(trip => ({
           imgUrl: trip.imgUrl,
