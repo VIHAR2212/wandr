@@ -29,6 +29,11 @@ interface TripData {
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
 function normalizeTripData(raw: any, tripId: string): TripData {
+  // Task 1 fix: `itinerary` is stored in the Prisma Json column as a NESTED OBJECT
+  //   { title, summary, days: [...], hotels: [...], restaurants: [...],
+  //     hiddenGems: [...], transportGuide: {...}, purposes: [...], specialRequests }
+  // The schema has NO separate top-level hotels/restaurants/hiddenGems columns.
+  // Legacy/cookie shape was a bare array of days — accept both for safety.
   const itineraryObj: any =
     raw.itinerary && typeof raw.itinerary === 'object' && !Array.isArray(raw.itinerary)
       ? raw.itinerary
