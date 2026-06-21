@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { ArrowLeft, Share2, ArrowRight, Calendar, Plane, Hotel as HotelIcon } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
@@ -208,11 +208,9 @@ const EDITORIAL_TRIPS: EditorialTrip[] = [
     bestSeason: "Apr – Oct", highlights: ["Rice terraces", "Uluwatu Temple", "Mount Batur"]
   }
 ];
+
 export default function ExplorationDashboard() {
   const [activeTrip, setActiveTrip] = useState<EditorialTrip | null>(null);
-
-  const nationalTrips = EDITORIAL_TRIPS.filter(t => t.category === "NATIONAL");
-  const internationalTrips = EDITORIAL_TRIPS.filter(t => t.category === "INTERNATIONAL");
 
   // Trip Detail View
   if (activeTrip) {
@@ -236,7 +234,7 @@ export default function ExplorationDashboard() {
     );
   }
 
-  // Fan Carousel Explore View
+  // Fan Carousel Explore View — no grid cards below
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <div className="text-center pt-12 pb-2 px-6">
@@ -265,42 +263,6 @@ export default function ExplorationDashboard() {
           ),
         }))}
       />
-
-      {/* National Grid */}
-      <div className="max-w-5xl mx-auto px-6 pt-12 pb-6">
-        <div className="space-y-6">
-          <div className="space-y-1">
-            <span className="text-[10px] tracking-[0.2em] font-mono font-bold text-amber-500 uppercase">Popular · Within India</span>
-            <h2 className="text-2xl font-serif font-medium tracking-tight text-white">Closer to home</h2>
-            <p className="text-sm text-neutral-400">Handpicked national journeys. Short trips and slow ones.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {nationalTrips.map((trip) => (
-              <div key={trip.id} onClick={() => setActiveTrip(trip)}>
-                <TripCard trip={trip} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* International Grid */}
-      <div className="max-w-5xl mx-auto px-6 pb-16">
-        <div className="space-y-6">
-          <div className="space-y-1">
-            <span className="text-[10px] tracking-[0.2em] font-mono font-bold text-amber-500 uppercase">Exotic · International</span>
-            <h2 className="text-2xl font-serif font-medium tracking-tight text-white">Beyond borders</h2>
-            <p className="text-sm text-neutral-400">Passports ready? Explore curated international itineraries.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {internationalTrips.map((trip) => (
-              <div key={trip.id} onClick={() => setActiveTrip(trip)}>
-                <TripCard trip={trip} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -333,7 +295,6 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
         <div className={`absolute top-0 inset-x-0 h-32 bg-gradient-to-b ${activeTrip.gradientClass} blur-2xl opacity-40 pointer-events-none`} />
 
         <div className="relative z-10 space-y-5">
-          {/* Flight */}
           {primaryFlight ? (
             <div className="flex justify-between items-start border-b border-neutral-800/40 pb-4">
               <div className="flex items-start gap-3">
@@ -355,7 +316,6 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
             </div>
           ) : null}
 
-          {/* Hotels */}
           {activeTrip.hotels.length > 0 && (
             <div className="space-y-4 border-b border-neutral-800/40 pb-4">
               <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase flex items-center gap-2">
@@ -373,7 +333,6 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
             </div>
           )}
 
-          {/* Activities */}
           {activeTrip.activities && activeTrip.activities.length > 0 && (
             <div className="space-y-4 border-b border-neutral-800/40 pb-4">
               <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase flex items-center gap-2">
@@ -391,7 +350,6 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
             </div>
           )}
 
-          {/* Highlights */}
           {activeTrip.highlights && activeTrip.highlights.length > 0 && (
             <div className="flex flex-wrap gap-2 pb-4 border-b border-neutral-800/40">
               {activeTrip.highlights.map((h, i) => (
@@ -400,41 +358,10 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
             </div>
           )}
 
-          {/* Total */}
           <div className="border-t border-neutral-800/80 pt-4 flex justify-between items-center text-xs font-mono">
             <span className="text-neutral-500 uppercase">Total Estimated Cost</span>
             <span className="text-base font-bold text-white">₹{grandTotal.toLocaleString('en-IN')}</span>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Grid Trip Card ───────────────────────────────────────
-function TripCard({ trip }: { trip: EditorialTrip }) {
-  return (
-    <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-[2rem] p-6 flex flex-col justify-between h-[340px] relative overflow-hidden cursor-pointer group">
-      <div className="absolute inset-0 z-0">
-        <img src={trip.imgUrl} alt={trip.title} className="w-full h-full object-cover opacity-30 group-hover:opacity-50 transition-opacity duration-500" />
-        <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/80 to-neutral-950/60" />
-      </div>
-      <div className="relative z-10 flex justify-between items-center text-[10px] font-mono text-neutral-500 uppercase font-bold">
-        <span>{trip.number} · {trip.category}</span>
-        <span className="text-neutral-400">{trip.region}</span>
-      </div>
-      <div className="relative z-10 pt-2">
-        <h3 className="text-2xl font-serif text-white group-hover:text-amber-400 transition-colors">{trip.title}</h3>
-        <p className="text-xs text-neutral-400 mt-1">{trip.description}</p>
-      </div>
-      <div className="relative z-10 border-t border-neutral-800/60 pt-4 grid grid-cols-2 text-left">
-        <div>
-          <span className="block text-[9px] font-mono text-neutral-500 uppercase">From</span>
-          <span className="text-sm font-semibold text-neutral-200">₹{trip.price.toLocaleString('en-IN')}</span>
-        </div>
-        <div className="text-right">
-          <span className="block text-[9px] font-mono text-neutral-500 uppercase">Days</span>
-          <span className="text-sm font-semibold text-neutral-200">{trip.days}</span>
         </div>
       </div>
     </div>
