@@ -242,7 +242,7 @@ export default function TripMap({
           .bindPopup(
             `<div style="min-width:160px"><b>🍽️ ${r.name}</b><br>` +
             `${r.cuisine ? `${r.cuisine} · ` : ""}` +
-            `${r.rating ? `⭐ ${h.rating}<br>` : ""}` +
+            `${r.rating ? `⭐ ${r.rating}<br>` : ""}` +
             `<small>Must try: ${r.mustTry || "—"}</small></div>`
           );
       }
