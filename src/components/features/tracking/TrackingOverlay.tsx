@@ -1,21 +1,17 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, Navigation, MapPin, AlertTriangle, Clock,
-  Plane, Train, Bus, Car, Flag, Phone, CheckCircle2,
-  Bell, Hotel, Utensils, Camera, ChevronRight
+  X, Navigation, CheckCircle, Phone, Clock, AlertTriangle,
+  MapPin, Plane, Train, Bus, Car, Walking, Shield
 } from 'lucide-react';
-import TripMap from '@/components/features/map/TripMap';
-import type { GeneratedTrip, TripFormData } from '@/types';
 
 /* ─── Types ─────────────────────────────────────────────── */
-
-interface TripData {
+interface TrackingTripData {
   tripId: string;
-  formData: TripFormData;
-  generatedTrip: GeneratedTrip;
+  formData: any;
+  generatedTrip: any;
   createdAt: string;
   originLat?: number | null;
   originLng?: number | null;
@@ -23,573 +19,945 @@ interface TripData {
   destLng?: number | null;
 }
 
-interface Props {
-  tripData: TripData;
-  onClose: () => void;
-}
-
-interface Coord { lat: number; lng: number; }
-
 interface ItineraryStop {
-  id: string;
-  label: string;
+  name: string;
   location: string;
-  coord: Coord | null;
-  type: 'origin' | 'destination' | 'hotel' | 'activity' | 'food';
-  day: number;
-  needsConfirmation: boolean;
-  confirmed: boolean;
-  transportTo: string;
-  isInterCity: boolean;
+  lat: number;
+  lng: number;
+  type: string;            // sightseeing | hotel | restaurant | transport | hiddenGem
+  transportTo: string;     // "Flight" | "Train" | "Bus" | "Car" etc — only meaningful when isInterCity
+  isInterCity: boolean;    // TRUE = show transport icon; FALSE = show user icon (local travel)
+  dayNumber: number;
+  time: string;
+  description: string;
+  isHomeStop?: boolean;    // final "safe return home" stop
 }
 
-type Phase = 'geocoding' | 'transit' | 'waiting_confirmation' | 'completed';
+/* ─── Haversine distance (km) ───────────────────────────── */
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLng = Math.sin(dLng / 2);
+  const h =
+    sinDLat * sinDLat + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * sinDLng * sinDLng;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
 
-/* ─── Constants ─────────────────────────────────────────── */
+/* ─── Nominatim geocode (cached) ────────────────────────── */
+const geoCache = new Map<string, { lat: number; lng: number }>();
+async function geocode(query: string): Promise<{ lat: number; lng: number } | null> {
+  const key = query.toLowerCase().trim();
+  if (geoCache.has(key)) return geoCache.get(key)!;
 
-const REMINDER_INTERVAL_MS = 15_000;
-const MAX_REMINDERS = 5;
-const TRANSIT_DURATION_MS = 6_000;
-const TRANSIT_STEPS = 80;
-const EMERGENCY_NUMBER = 'tel:112';
-
-/* ─── Helpers ───────────────────────────────────────────── */
-
-async function geocodeLocation(query: string): Promise<Coord | null> {
-  if (!query || query.trim().length < 2) return null;
-  const attempts = [query.trim(), `${query.trim()}, India`];
+  const attempts = [query, `${query}, India`];
   for (const q of attempts) {
     try {
       const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
-        { headers: { 'User-Agent': 'Wandr-App/1.0' } }
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`,
+        { headers: { 'User-Agent': 'WandrTravel/1.0' } }
       );
-      if (!res.ok) continue;
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0 && data[0].lat && data[0].lon) {
-        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      if (data?.[0]) {
+        const coord = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        geoCache.set(key, coord);
+        return coord;
       }
-    } catch { continue; }
+    } catch {
+      /* continue to next attempt */
+    }
   }
   return null;
 }
 
-function interpolatePath(from: Coord, to: Coord, steps: number): Coord[] {
-  const points: Coord[] = [];
-  const dist = Math.sqrt((to.lat - from.lat) ** 2 + (to.lng - from.lng) ** 2);
-  const arcHeight = dist * 0.12;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const lat = from.lat + (to.lat - from.lat) * t + Math.sin(t * Math.PI) * arcHeight * 0.7;
-    const lng = from.lng + (to.lng - from.lng) * t - Math.sin(t * Math.PI) * arcHeight * 0.3;
-    points.push({ lat, lng });
-  }
-  return points;
-}
+/* ─── Constants ─────────────────────────────────────────── */
+const INTER_CITY_KM = 50;       // >= 50 km between stops = inter-city travel
+const REMINDER_INTERVAL = 15000; // 15 seconds
+const MAX_REMINDERS = 5;
+const PAN_THROTTLE = 400;
+const MOVE_THRESHOLD = 0.0002;  // ~20m — skip tiny GPS jitter
 
-function getModeFromTitle(title: string): string {
-  const t = (title || '').toLowerCase();
-  if (t.includes('flight') || t.includes('air')) return 'FLIGHT';
-  if (t.includes('train') || t.includes('rail') || t.includes('metro')) return 'TRAIN';
-  if (t.includes('bus') || t.includes('coach')) return 'BUS';
-  return 'CAR';
-}
+/* ─── Build raw stops (no isInterCity yet) ─────────────── */
+function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterCity'>[] {
+  const stops: Omit<ItineraryStop, 'lat' | 'lng' | 'isInterCity'>[] = [];
+  const days = trip?.days || [];
 
-function getTransportIcon(mode: string, cls = 'w-4 h-4') {
-  switch ((mode || '').toUpperCase()) {
-    case 'FLIGHT': return <Plane className={cls} />;
-    case 'TRAIN': return <Train className={cls} />;
-    case 'BUS': return <Bus className={cls} />;
-    default: return <Car className={cls} />;
-  }
-}
-
-function getStopIcon(type: string) {
-  switch (type) {
-    case 'hotel': return <Hotel className="w-4 h-4" />;
-    case 'food': return <Utensils className="w-4 h-4" />;
-    case 'origin': case 'destination': return <Flag className="w-4 h-4" />;
-    default: return <Camera className="w-4 h-4" />;
-  }
-}
-
-function getStopColor(type: string) {
-  switch (type) {
-    case 'hotel': return 'bg-orange-500';
-    case 'food': return 'bg-green-500';
-    case 'origin': return 'bg-blue-500';
-    case 'destination': return 'bg-purple-500';
-    default: return 'bg-teal-500';
-  }
-}
-
-/* ─── Build all itinerary stops ─────────────────────────── */
-
-function buildItineraryStops(fd: TripFormData, trip: GeneratedTrip): ItineraryStop[] {
-  const stops: ItineraryStop[] = [];
-  let stopId = 0;
-  let currentTransport = (fd.transportPreferences || [])[0] || 'CAR';
-  let prevLocation = (fd.origin || '').toLowerCase().trim();
-
-  stops.push({
-    id: `stop-${stopId++}`, label: 'Home', location: fd.origin, coord: null,
-    type: 'origin', day: 0, needsConfirmation: false, confirmed: true,
-    transportTo: currentTransport, isInterCity: true,
-  });
-
-  for (const day of (trip.days || [])) {
-    for (const act of (day.activities || [])) {
-      if (act.type === 'TRANSPORT') {
-        currentTransport = getModeFromTitle(act.title);
-        continue;
-      }
-      const typeMap: Record<string, ItineraryStop['type']> = {
-        HOTEL: 'hotel', ACCOMMODATION: 'hotel', CHECK_IN: 'hotel', CHECK_OUT: 'hotel',
-        FOOD: 'food', RESTAURANT: 'food', DINING: 'food', BREAKFAST: 'food', LUNCH: 'food', DINNER: 'food',
-        ACTIVITY: 'activity', SIGHTSEEING: 'activity', ATTRACTION: 'activity',
-        ADVENTURE: 'activity', WELLNESS: 'activity', CULTURAL: 'activity',
-        FREE_TIME: 'activity', EXPLORE: 'activity', VISIT: 'activity',
-      };
-      const actLocation = (act.location || '').toLowerCase().trim();
-      const isInterCity = actLocation !== '' && actLocation !== prevLocation;
-
+  days.forEach((day: any, dayIdx: number) => {
+    const dayNum = day.day || dayIdx + 1;
+    (day.activities || []).forEach((act: any) => {
+      const loc = act.location || act.title || '';
+      const transportTo = act.type === 'transport' ? detectTransportMode(act.title) : '';
       stops.push({
-        id: `stop-${stopId++}`,
-        label: act.title || act.location || 'Stop',
-        location: act.location || '',
-        coord: null,
-        type: typeMap[act.type] || 'activity',
-        day: day.dayNumber,
-        needsConfirmation: true,
-        confirmed: false,
-        transportTo: isInterCity ? currentTransport : '',
-        isInterCity,
+        name: act.title || 'Unnamed Stop',
+        location: loc,
+        type: act.type || 'sightseeing',
+        transportTo,
+        dayNumber: dayNum,
+        time: act.time || '',
+        description: act.description || '',
       });
-
-      if (actLocation) prevLocation = actLocation;
-    }
-  }
-
-  stops.push({
-    id: `stop-${stopId++}`, label: fd.destination, location: fd.destination, coord: null,
-    type: 'destination', day: (trip.days || []).length + 1, needsConfirmation: true, confirmed: false,
-    transportTo: currentTransport, isInterCity: true,
+    });
   });
 
+  // Final "Home — Safe Return" stop
+  const lastDay = days[days.length - 1];
+  const lastActs = lastDay?.activities || [];
+  const lastLoc = lastActs.length > 0 ? (lastActs[lastActs.length - 1].location || lastActs[lastActs.length - 1].title) : (trip?.title || 'Home');
+  const dest = trip?.title || 'Home';
   stops.push({
-    id: `stop-${stopId++}`, label: 'Home \u2014 Safe Return', location: fd.origin, coord: null,
-    type: 'origin', day: (trip.days || []).length + 2, needsConfirmation: true, confirmed: false,
-    transportTo: currentTransport, isInterCity: true,
+    name: 'Home — Safe Return',
+    location: lastLoc,
+    type: 'hotel',
+    transportTo: '',
+    dayNumber: (lastDay?.day || days.length) + 0.5,
+    time: '',
+    description: `Complete your journey and return safely to ${dest}`,
+    isHomeStop: true,
   });
 
   return stops;
 }
 
-/* ─── Main Component ────────────────────────────────────── */
+function detectTransportMode(title: string): string {
+  const t = (title || '').toLowerCase();
+  if (t.includes('flight') || t.includes('fly') || t.includes('airport')) return 'Flight';
+  if (t.includes('train') || t.includes('rail') || t.includes('metro')) return 'Train';
+  if (t.includes('bus') || t.includes('coach')) return 'Bus';
+  if (t.includes('car') || t.includes('cab') || t.includes('taxi') || t.includes('drive')) return 'Car';
+  if (t.includes('walk') || t.includes('foot')) return 'Walking';
+  return 'Car';
+}
 
-export function TrackingOverlay({ tripData, onClose }: Props) {
-  const [phase, setPhase] = useState<Phase>('geocoding');
+/* ─── Component ─────────────────────────────────────────── */
+export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripData; onClose: () => void }) {
+  const trip = tripData?.generatedTrip;
+  const originLat = tripData?.originLat;
+  const originLng = tripData?.originLng;
+
+  // State
+  const [phase, setPhase] = useState<'geocoding' | 'transit' | 'waiting_confirmation' | 'completed'>('geocoding');
   const [stops, setStops] = useState<ItineraryStop[]>([]);
-  const [currentStopIndex, setCurrentStopIndex] = useState(0);
-  const [currentPosition, setCurrentPosition] = useState<Coord | null>(null);
-  const [currentTransportMode, setCurrentTransportMode] = useState('');
-  const [alert, setAlert] = useState('');
-  const [checkpoints, setCheckpoints] = useState<{ lat: number; lng: number; ts: Date }[]>([]);
-  const [elapsed, setElapsed] = useState(0);
-  const [remindersSent, setRemindersSent] = useState(0);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [currentTransportMode, setCurrentTransportMode] = useState<string>('');
+  const [reminderCount, setReminderCount] = useState(0);
   const [showHelpline, setShowHelpline] = useState(false);
+  const [geoProgress, setGeoProgress] = useState({ done: 0, total: 0 });
+  const [mapCenter, setMapCenter] = useState<[number, number]>([19.076, 72.877]);
 
-  const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reminderTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const animFrameRef = useRef<number>(0);
-  const totalElapsedRef = useRef(0);
-  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const leafletMapRef = useRef<any>(null);
+  const userMarkerRef = useRef<any>(null);
+  const trailLineRef = useRef<any>(null);
+  const stopMarkersRef = useRef<any>(null);
+  const reminderRef = useRef<any>(null);
+  const panTimerRef = useRef<any>(null);
+  const posIntervalRef = useRef<any>(null);
+  const demoIntervalRef = useRef<any>(null);
+  const stopsRef = useRef<ItineraryStop[]>([]);
 
-  const fd = tripData.formData;
-  const trip = tripData.generatedTrip;
-  const tripId = tripData.tripId;
+  // Keep stopsRef in sync
+  useEffect(() => { stopsRef.current = stops; }, [stops]);
 
-  const currentStop = stops[currentStopIndex] || null;
-  const nextStop = stops[currentStopIndex + 1] || null;
-  const confirmedCount = stops.filter(s => s.confirmed).length;
-  const totalConfirmable = stops.filter(s => s.needsConfirmation).length;
-  const isSafeReturnStop = currentStop?.label === 'Home \u2014 Safe Return';
-
-  /* ─── Geocode all stops ──────────────────────────────── */
+  /* ─── Init: geocode all stops then determine isInterCity ─── */
   useEffect(() => {
-    async function init() {
-      setPhase('geocoding');
-      showAlert('Mapping all itinerary locations...');
+    let cancelled = false;
+    const raw = buildRawStops(trip);
 
-      const itineraryStops = buildItineraryStops(fd, trip);
-      const locationMap = new Map<string, Coord>();
+    (async () => {
+      setGeoProgress({ done: 0, total: raw.length });
 
-      if (fd.origin && tripData.originLat) {
-        locationMap.set(fd.origin, { lat: tripData.originLat, lng: tripData.originLng! });
-      }
-      if (fd.destination && tripData.destLat) {
-        locationMap.set(fd.destination, { lat: tripData.destLat, lng: tripData.destLng! });
-      }
+      // Geocode each stop
+      const geocoded: ItineraryStop[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        if (cancelled) return;
+        const s = raw[i];
 
-      const uncoded = [...new Set(
-        itineraryStops.map(s => s.location).filter(l => l && l.length >= 2 && !locationMap.has(l))
-      )];
+        // Try geocoding the location string
+        let coord = await geocode(s.location);
 
-      showAlert(`Geocoding ${uncoded.length} unique locations...`);
+        // Fallback: use provided lat/lng if available from activity data
+        if (!coord) {
+          const days = trip?.days || [];
+          let actIdx = 0;
+          for (const day of days) {
+            for (const act of day.activities || []) {
+              if (actIdx === i && act.lat && act.lng) {
+                coord = { lat: act.lat, lng: act.lng };
+                break;
+              }
+              actIdx++;
+            }
+            if (coord) break;
+          }
+        }
 
-      for (let i = 0; i < uncoded.length; i += 2) {
-        const batch = uncoded.slice(i, i + 2);
-        const results = await Promise.all(batch.map(c => geocodeLocation(c)));
-        batch.forEach((city, idx) => {
-          if (results[idx]) locationMap.set(city, results[idx]!);
+        // Fallback: for the home stop, use origin or first known coordinate
+        if (!coord && s.isHomeStop) {
+          if (originLat && originLng) coord = { lat: originLat, lng: originLng };
+          else if (geocoded.length > 0) coord = { lat: geocoded[0].lat, lng: geocoded[0].lng };
+        }
+
+        geocoded.push({
+          ...s,
+          lat: coord?.lat ?? 0,
+          lng: coord?.lng ?? 0,
+          isInterCity: false, // will be set below
         });
-        if (i + 2 < uncoded.length) await new Promise(r => setTimeout(r, 1100));
+
+        setGeoProgress({ done: i + 1, total: raw.length });
       }
 
-      const cityCount = new Map<string, number>();
-      const destCoord = locationMap.get(fd.destination) || locationMap.values().next().value;
+      if (cancelled) return;
 
-      const updatedStops = itineraryStops.map(stop => {
-        const base = locationMap.get(stop.location);
-        if (base) {
-          const count = cityCount.get(stop.location) || 0;
-          cityCount.set(stop.location, count + 1);
-          const off = 0.006 * (count + 1);
-          return { ...stop, coord: { lat: base.lat + off * (count % 2 === 0 ? 1 : -1), lng: base.lng + off * (count % 2 === 0 ? -1 : 1) } };
-        }
-        if (destCoord) {
-          const count = cityCount.get('__fb') || 0;
-          cityCount.set('__fb', count + 1);
-          const off = 0.012 * (count + 1);
-          return { ...stop, coord: { lat: destCoord.lat + off * (count % 2 === 0 ? 1 : -0.5), lng: destCoord.lng + off * (count % 2 === 0 ? -1 : 0.5) } };
-        }
-        return { ...stop, coord: { lat: 20.5937, lng: 78.9629 } };
+      // ── Now determine isInterCity using DISTANCE between consecutive stops ──
+      for (let i = 1; i < geocoded.length; i++) {
+        const prev = geocoded[i - 1];
+        const curr = geocoded[i];
+        const dist = haversineKm(
+          { lat: prev.lat, lng: prev.lng },
+          { lat: curr.lat, lng: curr.lng }
+        );
+
+        // If distance >= INTER_CITY_KM, this stop is reached via inter-city travel
+        // Also respect the activity type — transport activities between cities
+        const isTransportAct = curr.type === 'transport';
+        curr.isInterCity = dist >= INTER_CITY_KM || isTransportAct;
+      }
+      // First stop is never inter-city (starting point)
+      if (geocoded.length > 0) geocoded[0].isInterCity = false;
+
+      setStops(geocoded);
+
+      // Set initial map center to first stop
+      if (geocoded.length > 0 && geocoded[0].lat !== 0) {
+        setMapCenter([geocoded[0].lat, geocoded[0].lng]);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [trip, originLat, originLng]);
+
+  /* ─── Initialize Leaflet map after geocoding ─────────── */
+  useEffect(() => {
+    if (stops.length === 0 || phase !== 'geocoding') return;
+
+    const timer = setTimeout(async () => {
+      // Dynamically import leaflet (avoid SSR)
+      const L = (await import('leaflet')).default;
+      await import('leaflet/dist/leaflet.css');
+
+      if (!mapRef.current || leafletMapRef.current) return;
+
+      // Colored tile layer — Voyager style for vibrant look
+      const map = L.map(mapRef.current, {
+        zoomControl: false,
+        scrollWheelZoom: true,
+        attributionControl: false,
+      }).setView(mapCenter, 13);
+
+      // Vibrant colored map tiles
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+      }).addTo(map);
+
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+      // Layer group for stop markers
+      const stopGroup = L.layerGroup().addTo(map);
+      stopMarkersRef.current = stopGroup;
+
+      // Plot all stop dots
+      const allCoords: [number, number][] = [];
+      stops.forEach((stop, idx) => {
+        if (stop.lat === 0 && stop.lng === 0) return;
+        const coord: [number, number] = [stop.lat, stop.lng];
+        allCoords.push(coord);
+
+        // Color based on type
+        let dotColor = '#14B8A6'; // teal for attractions
+        if (stop.type === 'hotel') dotColor = '#F97316';
+        if (stop.type === 'restaurant') dotColor = '#22C55E';
+        if (stop.type === 'transport') dotColor = '#3B82F6';
+        if (stop.type === 'hiddenGem') dotColor = '#A855F7';
+        if (stop.isHomeStop) dotColor = '#EF4444'; // red for home
+
+        const isVisited = idx < 1; // only first stop visited initially
+        const opacity = isVisited ? 1 : 0.5;
+        const size = isVisited ? 12 : 8;
+
+        const icon = L.divIcon({
+          html: `<div style="
+            width:${size}px; height:${size}px; border-radius:50%;
+            background:${dotColor}; border:2px solid white;
+            box-shadow:0 0 ${isVisited ? '8px' : '4px'} ${dotColor}80;
+            transition: all 0.3s ease;
+          "></div>`,
+          className: '',
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+        });
+
+        L.marker(coord, { icon })
+          .addTo(stopGroup)
+          .bindPopup(`<b>${stop.name}</b><br><small>${stop.location}</small>`);
       });
 
-      setStops(updatedStops);
-      setCurrentPosition(updatedStops[0]?.coord || null);
+      // Draw route line with gradient-like color (polyline decoration)
+      if (allCoords.length > 1) {
+        // Outer glow line
+        L.polyline(allCoords, {
+          color: '#6366F1',
+          weight: 6,
+          opacity: 0.2,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(map);
 
-      const originCoord = locationMap.get(fd.origin);
-      if (originCoord && destCoord) {
-        fetch(`/api/trips/${tripId}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ originLat: originCoord.lat, originLng: originCoord.lng, destLat: destCoord.lat, destLng: destCoord.lng }),
-        }).catch(() => {});
+        // Main route line
+        L.polyline(allCoords, {
+          color: '#8B5CF6',
+          weight: 3,
+          opacity: 0.6,
+          dashArray: '8, 12',
+        }).addTo(map);
       }
 
-      showAlert(`${updatedStops.length} stops mapped! Starting journey...`);
+      // Fit bounds
+      if (allCoords.length > 1) {
+        map.fitBounds(L.latLngBounds(allCoords), { padding: [50, 50], maxZoom: 14 });
+      }
+
+      // User marker (golden pulsing dot)
+      const firstCoord = allCoords[0] || mapCenter;
+      const userIcon = L.divIcon({
+        html: `
+          <div style="position:relative; width:44px; height:44px;">
+            <div style="
+              position:absolute; inset:0; border-radius:50%;
+              background: radial-gradient(circle, rgba(255,215,0,0.4) 0%, transparent 70%);
+              animation: pulse-ring 2s ease-out infinite;
+            "></div>
+            <div style="
+              position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+              width:20px; height:20px; border-radius:50%;
+              background: linear-gradient(135deg, #FFD700, #FFA500);
+              border:3px solid white;
+              box-shadow: 0 0 12px rgba(255,215,0,0.7), 0 2px 6px rgba(0,0,0,0.3);
+            "></div>
+            <style>
+              @keyframes pulse-ring {
+                0% { transform:scale(0.8); opacity:0.8; }
+                100% { transform:scale(2.2); opacity:0; }
+              }
+            </style>
+          </div>
+        `,
+        className: '',
+        iconSize: [44, 44],
+        iconAnchor: [22, 22],
+      });
+
+      userMarkerRef.current = L.marker(firstCoord, { icon: userIcon, zIndexOffset: 2000 }).addTo(map);
+
+      // Trail line (animated path behind user)
+      trailLineRef.current = L.polyline([firstCoord], {
+        color: '#FBBF24',
+        weight: 4,
+        opacity: 0.8,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(map);
+
+      leafletMapRef.current = map;
+
+      // Transition to transit phase
       setPhase('transit');
-    }
-    init();
+      startDemoMovement();
+    }, 500);
+
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stops]);
+
+  /* ─── Create transport icon ──────────────────────────── */
+  const createTransportIcon = useCallback((mode: string) => {
+    const L = require('leaflet');
+    const emojis: Record<string, string> = {
+      Flight: '✈️', Train: '🚆', Bus: '🚌', Car: '🚗', Walking: '🚶',
+    };
+    const emoji = emojis[mode] || '🚗';
+    return L.divIcon({
+      html: `
+        <div style="
+          width:48px; height:48px; border-radius:50%;
+          background: linear-gradient(135deg, #3B82F6, #6366F1);
+          display:flex; align-items:center; justify-content:center;
+          font-size:20px; border:3px solid white;
+          box-shadow: 0 0 16px rgba(59,130,246,0.6), 0 0 32px rgba(99,102,241,0.3);
+          animation: transport-bounce 1.5s ease-in-out infinite;
+          position:relative;
+        ">
+          <style>
+            @keyframes transport-bounce {
+              0%,100% { transform:translateY(0); }
+              50% { transform:translateY(-4px); }
+            }
+          </style>
+          ${emoji}
+        </div>
+      `,
+      className: '',
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+    });
   }, []);
 
-  /* ─── Transit animation ──────────────────────────────── */
-  useEffect(() => {
-    if (phase !== 'transit' || !currentStop || !nextStop || !currentStop.coord || !nextStop.coord) return;
+  const createUserIcon = useCallback(() => {
+    const L = require('leaflet');
+    return L.divIcon({
+      html: `
+        <div style="position:relative; width:44px; height:44px;">
+          <div style="
+            position:absolute; inset:0; border-radius:50%;
+            background: radial-gradient(circle, rgba(255,215,0,0.4) 0%, transparent 70%);
+            animation: pulse-ring2 2s ease-out infinite;
+          "></div>
+          <div style="
+            position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+            width:20px; height:20px; border-radius:50%;
+            background: linear-gradient(135deg, #FFD700, #FFA500);
+            border:3px solid white;
+            box-shadow: 0 0 12px rgba(255,215,0,0.7), 0 2px 6px rgba(0,0,0,0.3);
+          "></div>
+          <style>
+            @keyframes pulse-ring2 {
+              0% { transform:scale(0.8); opacity:0.8; }
+              100% { transform:scale(2.2); opacity:0; }
+            }
+          </style>
+        </div>
+      `,
+      className: '',
+      iconSize: [44, 44],
+      iconAnchor: [22, 22],
+    });
+  }, []);
 
-    const path = interpolatePath(currentStop.coord, nextStop.coord, TRANSIT_STEPS);
-    const isInterCity = nextStop.isInterCity;
-    setCurrentTransportMode(isInterCity ? nextStop.transportTo : '');
-    const startTime = performance.now();
-    let cancelled = false;
+  /* ─── Demo movement (simulates GPS) ──────────────────── */
+  const startDemoMovement = useCallback(() => {
+    if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+    if (stopsRef.current.length < 2) return;
 
-    function tick() {
-      if (cancelled) return;
-      const progress = Math.min((performance.now() - startTime) / TRANSIT_DURATION_MS, 1);
-      const step = Math.floor(progress * (TRANSIT_STEPS - 1));
-      setCurrentPosition(path[Math.min(step, path.length - 1)]);
+    let segIdx = 0;
+    let step = 0;
+    const stepsPerSegment = 40;
 
-      if (progress < 1) {
-        animFrameRef.current = requestAnimationFrame(tick);
+    const tick = () => {
+      const allStops = stopsRef.current;
+      if (!allStops || segIdx >= allStops.length - 1) {
+        clearInterval(demoIntervalRef.current);
+        return;
+      }
+
+      const from = allStops[segIdx];
+      const to = allStops[segIdx + 1];
+      if (from.lat === 0 && from.lng === 0) { segIdx++; step = 0; return; }
+
+      const progress = step / stepsPerSegment;
+      const lat = from.lat + (to.lat - from.lat) * progress;
+      const lng = from.lng + (to.lng - from.lng) * progress;
+
+      setUserPos({ lat, lng });
+
+      // Update transport mode based on NEXT stop's isInterCity
+      const nextStop = to;
+      if (nextStop.isInterCity && nextStop.transportTo) {
+        setCurrentTransportMode(nextStop.transportTo);
       } else {
-        setCurrentStopIndex(prev => prev + 1);
-        if (nextStop.needsConfirmation) {
-          setPhase('waiting_confirmation');
-          showAlert(`Arrived at ${nextStop.label}! Tap "Reached" to confirm.`);
+        setCurrentTransportMode(''); // local travel — no transport icon
+      }
+
+      // Update map marker
+      const map = leafletMapRef.current;
+      const L = require('leaflet');
+      if (map && userMarkerRef.current) {
+        // Switch icon: transport vs user
+        const isInterCity = nextStop.isInterCity && nextStop.transportTo;
+        if (isInterCity) {
+          userMarkerRef.current.setIcon(createTransportIcon(nextStop.transportTo));
         } else {
-          showAlert(`Passing through ${nextStop.label}...`);
-          setTimeout(() => setPhase('transit'), 1200);
+          userMarkerRef.current.setIcon(createUserIcon());
+        }
+        userMarkerRef.current.setLatLng([lat, lng]);
+
+        // Trail line
+        if (trailLineRef.current) {
+          const pts = trailLineRef.current.getLatLngs() as any[];
+          pts.push(L.latLng(lat, lng));
+          trailLineRef.current.setLatLngs(pts);
+        }
+
+        // Throttled panning
+        if (!panTimerRef.current) {
+          panTimerRef.current = setTimeout(() => {
+            map.panTo([lat, lng], { animate: true, duration: 0.4 });
+            panTimerRef.current = null;
+          }, PAN_THROTTLE);
         }
       }
-    }
 
-    animFrameRef.current = requestAnimationFrame(tick);
-    return () => { cancelled = true; cancelAnimationFrame(animFrameRef.current); };
-  }, [phase, currentStopIndex, stops]);
+      step++;
+      if (step >= stepsPerSegment) {
+        // Arrived at next stop
+        setCurrentIdx(segIdx + 1);
+        setPhase('waiting_confirmation');
+        clearInterval(demoIntervalRef.current);
 
-  /* ─── Elapsed time ───────────────────────────────────── */
-  useEffect(() => {
-    elapsedIntervalRef.current = setInterval(() => {
-      totalElapsedRef.current += 1;
-      setElapsed(totalElapsedRef.current);
-    }, 1000);
-    return () => { if (elapsedIntervalRef.current) clearInterval(elapsedIntervalRef.current); };
-  }, []);
+        // Start reminder timer
+        let reminders = 0;
+        reminderRef.current = setInterval(() => {
+          reminders++;
+          setReminderCount(reminders);
+          if (reminders >= MAX_REMINDERS) {
+            clearInterval(reminderRef.current);
+            setShowHelpline(true);
+          }
+        }, REMINDER_INTERVAL);
+      }
+    };
 
-  /* ─── Reminders ──────────────────────────────────────── */
-  useEffect(() => {
-    if (phase !== 'waiting_confirmation') {
-      if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; }
-      setRemindersSent(0); setShowHelpline(false);
+    demoIntervalRef.current = setInterval(tick, 300);
+  }, [createTransportIcon, createUserIcon]);
+
+  /* ─── Handle "Reached" button ────────────────────────── */
+  const handleReached = useCallback(() => {
+    if (reminderRef.current) clearInterval(reminderRef.current);
+    setReminderCount(0);
+    setShowHelpline(false);
+
+    const nextIdx = currentIdx + 1;
+    if (nextIdx >= stops.length) {
+      // Journey complete!
+      setPhase('completed');
+      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
       return;
     }
-    reminderTimerRef.current = setInterval(() => {
-      setRemindersSent(prev => {
-        const next = prev + 1;
-        if (next >= MAX_REMINDERS) {
-          if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; }
-          setShowHelpline(true);
-          showAlert('No response! Tap the helpline button for assistance.');
-        } else {
-          showAlert(`Reminder ${next}/${MAX_REMINDERS}: Have you reached ${currentStop?.label}?`);
-        }
-        return next;
+
+    // Update the stop marker to "visited" style
+    const L = require('leaflet');
+    if (stopMarkersRef.current && leafletMapRef.current) {
+      stopMarkersRef.current.eachLayer((layer: any) => {
+        // Just re-render all markers with updated visited state
       });
-    }, REMINDER_INTERVAL_MS);
-    return () => { if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; } };
-  }, [phase, currentStop]);
-
-  /* ─── Confirm Reached ────────────────────────────────── */
-  const confirmReached = useCallback(() => {
-    if (!currentStop) return;
-    setStops(prev => prev.map((s, i) => i === currentStopIndex ? { ...s, confirmed: true } : s));
-    showAlert(`Confirmed: ${currentStop.label}`);
-    setRemindersSent(0); setShowHelpline(false);
-    if (currentStopIndex >= stops.length - 1) {
-      setPhase('completed');
-      showAlert('Safe return confirmed! Journey complete.');
-    } else {
-      setCurrentStopIndex(prev => prev + 1);
-      setTimeout(() => setPhase('transit'), 800);
     }
-  }, [currentStop, currentStopIndex, stops.length]);
 
-  /* ─── Cleanup ────────────────────────────────────────── */
+    setCurrentIdx(nextIdx);
+    setPhase('transit');
+
+    // Continue demo movement to next segment
+    setTimeout(() => {
+      if (stopsRef.current.length > nextIdx) {
+        let step = 0;
+        const segIdx = nextIdx - 1; // move FROM current TO next
+        // Actually we need to continue from currentIdx to nextIdx
+        // The demo should go from stops[currentIdx] to stops[nextIdx]
+      }
+      startDemoMovementFrom(nextIdx);
+    }, 800);
+  }, [currentIdx, stops.length]);
+
+  /* ─── Start movement from a specific index ──────────── */
+  const startDemoMovementFrom = useCallback((fromIdx: number) => {
+    if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+    const allStops = stopsRef.current;
+    if (!allStops || fromIdx >= allStops.length - 1) {
+      setPhase('completed');
+      return;
+    }
+
+    let step = 0;
+    const stepsPerSegment = 40;
+
+    const tick = () => {
+      const stops = stopsRef.current;
+      if (!stops || fromIdx >= stops.length - 1) {
+        clearInterval(demoIntervalRef.current);
+        return;
+      }
+
+      const from = stops[fromIdx];
+      const to = stops[fromIdx + 1];
+      if (from.lat === 0 && from.lng === 0) {
+        clearInterval(demoIntervalRef.current);
+        return;
+      }
+
+      const progress = step / stepsPerSegment;
+      const lat = from.lat + (to.lat - from.lat) * progress;
+      const lng = from.lng + (to.lng - from.lng) * progress;
+
+      setUserPos({ lat, lng });
+
+      // Transport mode: only for inter-city segments
+      if (to.isInterCity && to.transportTo) {
+        setCurrentTransportMode(to.transportTo);
+      } else {
+        setCurrentTransportMode('');
+      }
+
+      // Update marker
+      const map = leafletMapRef.current;
+      const L = require('leaflet');
+      if (map && userMarkerRef.current) {
+        const isInterCity = to.isInterCity && to.transportTo;
+        if (isInterCity) {
+          userMarkerRef.current.setIcon(createTransportIcon(to.transportTo));
+        } else {
+          userMarkerRef.current.setIcon(createUserIcon());
+        }
+        userMarkerRef.current.setLatLng([lat, lng]);
+
+        if (trailLineRef.current) {
+          const pts = trailLineRef.current.getLatLngs() as any[];
+          pts.push(L.latLng(lat, lng));
+          trailLineRef.current.setLatLngs(pts);
+        }
+
+        if (!panTimerRef.current) {
+          panTimerRef.current = setTimeout(() => {
+            map.panTo([lat, lng], { animate: true, duration: 0.4 });
+            panTimerRef.current = null;
+          }, PAN_THROTTLE);
+        }
+      }
+
+      step++;
+      if (step >= stepsPerSegment) {
+        setCurrentIdx(fromIdx + 1);
+        setPhase('waiting_confirmation');
+        clearInterval(demoIntervalRef.current);
+
+        let reminders = 0;
+        reminderRef.current = setInterval(() => {
+          reminders++;
+          setReminderCount(reminders);
+          if (reminders >= MAX_REMINDERS) {
+            clearInterval(reminderRef.current);
+            setShowHelpline(true);
+          }
+        }, REMINDER_INTERVAL);
+      }
+    };
+
+    demoIntervalRef.current = setInterval(tick, 300);
+  }, [createTransportIcon, createUserIcon]);
+
+  /* ─── Cleanup ───────────────────────────────────────── */
   useEffect(() => {
     return () => {
-      if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
-      if (reminderTimerRef.current) clearInterval(reminderTimerRef.current);
-      if (elapsedIntervalRef.current) clearInterval(elapsedIntervalRef.current);
-      cancelAnimationFrame(animFrameRef.current);
+      if (reminderRef.current) clearInterval(reminderRef.current);
+      if (posIntervalRef.current) clearInterval(posIntervalRef.current);
+      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+      if (panTimerRef.current) clearTimeout(panTimerRef.current);
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove();
+        leafletMapRef.current = null;
+      }
     };
   }, []);
 
-  function showAlert(msg: string) {
-    setAlert(msg);
-    if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
-    alertTimerRef.current = setTimeout(() => setAlert(''), 6000);
-  }
+  /* ─── Transport mode display helpers ────────────────── */
+  const transportIcon = (mode: string) => {
+    switch (mode) {
+      case 'Flight': return <Plane className="w-4 h-4" />;
+      case 'Train': return <Train className="w-4 h-4" />;
+      case 'Bus': return <Bus className="w-4 h-4" />;
+      case 'Car': return <Car className="w-4 h-4" />;
+      case 'Walking': return <Walking className="w-4 h-4" />;
+      default: return <Navigation className="w-4 h-4" />;
+    }
+  };
 
-  function fmtDur(s: number) { return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`; }
+  const transportColor = (mode: string) => {
+    switch (mode) {
+      case 'Flight': return 'bg-blue-500';
+      case 'Train': return 'bg-emerald-500';
+      case 'Bus': return 'bg-orange-500';
+      case 'Car': return 'bg-purple-500';
+      case 'Walking': return 'bg-teal-500';
+      default: return 'bg-slate-500';
+    }
+  };
 
+  /* ─── Current stop info ─────────────────────────────── */
+  const currentStop = stops[currentIdx] || null;
+  const nextStop = stops[currentIdx + 1] || null;
+  const progressPct = stops.length > 1 ? Math.round((currentIdx / (stops.length - 1)) * 100) : 0;
+
+  /* ─── Render ────────────────────────────────────────── */
   return (
     <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col"
     >
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/60">
         <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${
-            phase === 'transit' ? (currentTransportMode ? 'bg-blue-400' : 'bg-yellow-400') + ' animate-pulse'
-            : phase === 'waiting_confirmation' ? 'bg-yellow-400 animate-pulse'
-            : phase === 'completed' ? 'bg-green-500'
-            : 'bg-muted-foreground animate-pulse'
-          }`} />
-          <span className="font-semibold text-foreground text-sm">
-            {phase === 'geocoding' && 'Mapping Route...'}
-            {phase === 'transit' && (currentTransportMode ? `En Route \u2014 ${nextStop?.label || ''}` : `Moving to \u2014 ${nextStop?.label || ''}`)}
-            {phase === 'waiting_confirmation' && `Arrived \u2014 ${currentStop?.label || ''}`}
-            {phase === 'completed' && 'Journey Complete'}
-          </span>
-          <span className="text-xs text-muted-foreground hidden sm:inline">{fd.destination}</span>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center">
+            <Navigation className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-white font-bold text-sm">Live Journey Tracking</h2>
+            <p className="text-white/50 text-xs">{stops.length} stops · Day {currentStop?.dayNumber || '—'}</p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {phase === 'transit' && currentTransportMode && (
-            <div className="flex items-center gap-1.5 text-xs text-blue-400 font-medium">
-              {getTransportIcon(currentTransportMode, 'w-3.5 h-3.5')}<span>{currentTransportMode}</span>
-              <Navigation className="w-3.5 h-3.5 animate-spin" />
-            </div>
-          )}
-          {phase === 'transit' && !currentTransportMode && (
-            <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-medium">
-              <MapPin className="w-3.5 h-3.5" /><span>Local Travel</span>
-            </div>
-          )}
-          {phase === 'waiting_confirmation' && (
-            <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-medium">
-              <MapPin className="w-3.5 h-3.5" />Awaiting Confirmation
-            </div>
-          )}
-          {phase === 'completed' && (
-            <div className="flex items-center gap-1.5 text-xs text-green-500 font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5" />All Stops Confirmed
-            </div>
-          )}
-          <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        <button
+          onClick={onClose}
+          className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Alert */}
-      <AnimatePresence>
-        {alert && (
-          <motion.div initial={{ y: -40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -40, opacity: 0 }}
-            className="mx-4 mt-3 glass-panel rounded-2xl px-4 py-3 text-sm text-foreground border-primary/20 border">{alert}</motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Stop progress */}
-      {stops.length > 1 && (
-        <div className="mx-4 mt-3 flex items-center gap-1 overflow-x-auto scrollbar-hide px-1">
-          {stops.map((stop, i) => (
-            <div key={stop.id} className="flex items-center gap-1 flex-shrink-0">
-              <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium ${
-                stop.confirmed ? 'bg-green-500/15 text-green-400 border border-green-500/30'
-                : i === currentStopIndex ? 'bg-primary/15 text-primary border border-primary/30'
-                : 'bg-muted/50 text-muted-foreground border border-transparent'
-              }`}>
-                {stop.confirmed ? <CheckCircle2 className="w-3 h-3" />
-                  : i === currentStopIndex && phase === 'transit' && stop.isInterCity ? getTransportIcon(stop.transportTo, 'w-3 h-3')
-                  : i === currentStopIndex && phase === 'transit' ? <MapPin className="w-3 h-3" />
-                  : getStopIcon(stop.type)}
-                <span className="max-w-[80px] truncate">{stop.label.length > 12 ? stop.label.slice(0, 12) + '...' : stop.label}</span>
-              </div>
-              {i < stops.length - 1 && <ChevronRight className="w-3 h-3 text-muted-foreground/40 flex-shrink-0" />}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Map */}
-      <div className="flex-1 p-4 overflow-hidden relative">
-        {phase === 'transit' && currentStop && nextStop && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 glass-panel rounded-2xl px-4 py-2 shadow-lg">
-            {currentTransportMode ? (
-              <>{getTransportIcon(currentTransportMode, 'w-5 h-5 text-primary')}<span className="text-sm font-medium text-foreground">{currentStop.label} &rarr; {nextStop.label}</span></>
-            ) : (
-              <><MapPin className="w-5 h-5 text-yellow-400" /><span className="text-sm font-medium text-foreground">Walking to {nextStop.label}</span></>
-            )}
-          </div>
-        )}
-        {phase === 'waiting_confirmation' && currentStop && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 glass-panel rounded-2xl px-4 py-2 shadow-lg">
-            <MapPin className="w-5 h-5 text-yellow-400" /><span className="text-sm font-medium text-foreground">At: {currentStop.label}</span>
-          </div>
-        )}
-        <TripMap
-          trip={trip}
-          userLocation={currentPosition}
-          showRoute
-          userTransportMode={phase === 'transit' && currentTransportMode ? currentTransportMode : null}
-          allStopCoords={stops.map(s => s.coord).filter((c): c is Coord => c !== null)}
-        />
-      </div>
-
-      {/* Bottom Panel */}
-      <div className="p-4 border-t border-border">
-        {currentStop && (
-          <div className="glass-panel rounded-2xl p-3 mb-3 flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-xl ${getStopColor(currentStop.type)}/15 flex items-center justify-center text-primary flex-shrink-0`}>
-              {phase === 'transit' && currentTransportMode ? getTransportIcon(currentTransportMode, 'w-4 h-4')
-                : phase === 'transit' ? <MapPin className="w-4 h-4" />
-                : getStopIcon(currentStop.type)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-muted-foreground">
-                {phase === 'transit' ? (currentTransportMode ? 'Heading to' : 'Walking to') : phase === 'waiting_confirmation' ? 'Arrived at' : 'Completed'}
-                {currentStop.day > 0 && ` \u00b7 Day ${currentStop.day}`}
-              </div>
-              <div className="text-sm font-medium text-foreground truncate">{currentStop.label}</div>
-              <div className="text-[10px] text-muted-foreground truncate">{currentStop.location}</div>
-            </div>
-            {phase === 'transit' && currentTransportMode && (
-              <div className="text-right flex-shrink-0">
-                <div className="text-xs text-muted-foreground">Mode</div>
-                <div className="text-sm font-medium text-foreground uppercase flex items-center gap-1">
-                  {getTransportIcon(currentTransportMode, 'w-3.5 h-3.5')}{currentTransportMode}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-4">
-          <div className="glass-panel rounded-2xl p-3 text-center">
-            <MapPin className="w-4 h-4 text-primary mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">{currentPosition ? `${currentPosition.lat.toFixed(2)}, ${currentPosition.lng.toFixed(2)}` : '\u2014'}</div>
-            <div className="text-2xs text-muted-foreground">Position</div>
-          </div>
-          <div className="glass-panel rounded-2xl p-3 text-center">
-            <Clock className="w-4 h-4 text-blue-500 mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">{fmtDur(elapsed)}</div>
-            <div className="text-2xs text-muted-foreground">Elapsed</div>
-          </div>
-          <div className="glass-panel rounded-2xl p-3 text-center">
-            <CheckCircle2 className="w-4 h-4 text-green-500 mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">{confirmedCount}/{totalConfirmable}</div>
-            <div className="text-2xs text-muted-foreground">Confirmed</div>
-          </div>
-          <div className="glass-panel rounded-2xl p-3 text-center hidden sm:block">
-            <Flag className="w-4 h-4 text-teal-500 mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">{currentStopIndex + 1}/{stops.length}</div>
-            <div className="text-2xs text-muted-foreground">Stop</div>
-          </div>
-          <div className="glass-panel rounded-2xl p-3 text-center hidden sm:block">
-            <Bell className="w-4 h-4 text-yellow-500 mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">{remindersSent}/{MAX_REMINDERS}</div>
-            <div className="text-2xs text-muted-foreground">Reminders</div>
-          </div>
-        </div>
-
+      {/* Map area */}
+      <div className="flex-1 relative">
         {phase === 'geocoding' && (
-          <div className="text-xs text-muted-foreground mb-3 flex items-center gap-1">
-            <Navigation className="w-3 h-3 animate-spin" />Mapping all itinerary locations...
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80">
+            <div className="relative w-16 h-16 mb-4">
+              <div className="absolute inset-0 rounded-full border-4 border-violet-500/30" />
+              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-violet-500 animate-spin" />
+            </div>
+            <p className="text-white font-medium">Mapping your journey...</p>
+            <p className="text-white/40 text-sm mt-1">
+              Geocoding {geoProgress.done}/{geoProgress.total} stops
+            </p>
+            <div className="w-48 h-1.5 bg-white/10 rounded-full mt-3 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full transition-all duration-300"
+                style={{ width: `${geoProgress.total > 0 ? (geoProgress.done / geoProgress.total) * 100 : 0}%` }}
+              />
+            </div>
           </div>
         )}
 
-        {phase === 'transit' && (
-          <div className="flex gap-3">
-            <button onClick={() => {
-              if (nextStop) { setCurrentStopIndex(p => p + 1); setPhase('waiting_confirmation'); showAlert(`Tap "Reached" for ${nextStop.label}.`); }
-            }} className="flex-1 py-3 rounded-2xl text-sm font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 hover:bg-yellow-500/20 transition-all">Stop Here</button>
-            <button onClick={onClose} className="flex-1 py-3 rounded-2xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">Close</button>
-          </div>
-        )}
+        <div ref={mapRef} className="w-full h-full" />
 
-        {phase === 'waiting_confirmation' && (
-          <div className="flex flex-col gap-3">
-            <button onClick={confirmReached} className="w-full py-3.5 rounded-2xl text-sm font-semibold btn-premium flex items-center justify-center gap-2">
-              <CheckCircle2 className="w-4 h-4" />
-              {isSafeReturnStop ? "I've Reached Home Safely" : `I've Reached \u2014 ${currentStop?.label || 'Destination'}`}
-            </button>
-            {remindersSent > 0 && !showHelpline && (
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <motion.div className="h-full bg-yellow-400 rounded-full" animate={{ width: `${(remindersSent / MAX_REMINDERS) * 100}%` }} />
+        {/* Transport mode badge (only during inter-city transit) */}
+        <AnimatePresence>
+          {phase === 'transit' && currentTransportMode && (
+            <motion.div
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-20"
+            >
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${transportColor(currentTransportMode)} text-white text-sm font-semibold shadow-lg`}>
+                {transportIcon(currentTransportMode)}
+                <span>{currentTransportMode} Mode</span>
+                <div className="flex gap-0.5">
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                 </div>
-                <span className="text-[10px] text-yellow-400 font-medium">{remindersSent}/{MAX_REMINDERS}</span>
               </div>
-            )}
-            {showHelpline && (
-              <motion.a initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} href={EMERGENCY_NUMBER}
-                className="w-full py-3.5 rounded-2xl text-sm font-semibold bg-red-500 text-white flex items-center justify-center gap-2 hover:bg-red-600 transition-colors">
-                <Phone className="w-4 h-4" />Call Helpline \u2014 No Response
-              </motion.a>
-            )}
-            <button onClick={onClose} className="w-full py-3 rounded-2xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">Close (journey resumes on return)</button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Local travel badge */}
+        <AnimatePresence>
+          {phase === 'transit' && !currentTransportMode && (
+            <motion.div
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-20"
+            >
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold shadow-lg">
+                <Walking className="w-4 h-4" />
+                <span>Exploring Locally</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Journey progress bar */}
+        <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-3">
+          <div className="bg-black/60 backdrop-blur-md rounded-2xl p-3 border border-white/10">
+            <div className="flex items-center justify-between text-xs text-white/60 mb-1.5">
+              <span>Stop {currentIdx + 1} of {stops.length}</span>
+              <span className="text-white font-medium">{progressPct}% Complete</span>
+            </div>
+            <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-500 rounded-full transition-all duration-700 ease-out"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
           </div>
-        )}
+        </div>
+      </div>
 
-        {phase === 'completed' && (
-          <button onClick={onClose} className="w-full py-3 rounded-2xl text-sm font-medium btn-premium flex items-center justify-center gap-2">
-            <CheckCircle2 className="w-4 h-4" />Trip Complete \u2014 Close
-          </button>
-        )}
+      {/* Bottom panel */}
+      <div className="border-t border-white/10 bg-black/80 backdrop-blur-xl">
+        <AnimatePresence mode="wait">
+          {/* ─── Geocoding ─── */}
+          {phase === 'geocoding' && (
+            <motion.div
+              key="geocoding"
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              className="px-5 py-6 text-center"
+            >
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-sm">
+                <MapPin className="w-4 h-4 animate-pulse" />
+                Preparing your route...
+              </div>
+            </motion.div>
+          )}
 
-        <p className="text-center text-2xs text-muted-foreground mt-3">Simulated demo journey \u2014 no real location is tracked.</p>
+          {/* ─── Transit / Moving ─── */}
+          {(phase === 'transit') && nextStop && (
+            <motion.div
+              key="transit"
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              className="px-5 py-4"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                {currentTransportMode ? (
+                  <div className={`w-8 h-8 rounded-lg ${transportColor(currentTransportMode)} flex items-center justify-center text-white`}>
+                    {transportIcon(currentTransportMode)}
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center text-white">
+                    <Walking className="w-4 h-4" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-white/50 text-xs">
+                    {currentTransportMode ? `Heading to next city via ${currentTransportMode}` : 'Moving to nearby location'}
+                  </p>
+                  <p className="text-white font-semibold text-sm truncate">{nextStop.name}</p>
+                </div>
+              </div>
+              {currentTransportMode && (
+                <div className="flex items-center gap-2 text-xs text-white/40">
+                  <Clock className="w-3 h-3" />
+                  <span>Estimated travel in progress...</span>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* ─── Waiting confirmation ─── */}
+          {phase === 'waiting_confirmation' && currentStop && (
+            <motion.div
+              key="waiting"
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              className="px-5 py-4"
+            >
+              <div className="flex items-start gap-3 mb-4">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  currentStop.isHomeStop
+                    ? 'bg-red-500/20 text-red-400'
+                    : 'bg-emerald-500/20 text-emerald-400'
+                }`}>
+                  {currentStop.isHomeStop
+                    ? <Shield className="w-5 h-5" />
+                    : <MapPin className="w-5 h-5" />
+                  }
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-bold text-base">{currentStop.name}</p>
+                  <p className="text-white/50 text-xs mt-0.5">{currentStop.location}</p>
+                  {currentStop.description && (
+                    <p className="text-white/30 text-xs mt-1 line-clamp-2">{currentStop.description}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Reached button */}
+              <button
+                onClick={handleReached}
+                className={`w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                  currentStop.isHomeStop
+                    ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-lg shadow-red-500/30'
+                    : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30'
+                }`}
+              >
+                <CheckCircle className="w-5 h-5" />
+                {currentStop.isHomeStop ? 'Safely Reached Home — Complete Journey' : 'Reached'}
+              </button>
+
+              {/* Reminder counter */}
+              {reminderCount > 0 && !showHelpline && (
+                <div className="flex items-center justify-center gap-2 mt-3 text-xs text-amber-400">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Reminder {reminderCount}/{MAX_REMINDERS} — Did you reach?</span>
+                </div>
+              )}
+
+              {/* Helpline button (after 5 reminders) */}
+              {showHelpline && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-3"
+                >
+                  <a
+                    href="tel:112"
+                    className="w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg shadow-red-500/40 animate-pulse"
+                  >
+                    <Phone className="w-5 h-5" />
+                    Call Emergency Helpline (112)
+                  </a>
+                  <p className="text-center text-red-400/60 text-xs mt-1.5">
+                    No response detected — tap if you need help
+                  </p>
+                </motion.div>
+              )}
+            </motion.div>
+          )}
+
+          {/* ─── Completed ─── */}
+          {phase === 'completed' && (
+            <motion.div
+              key="completed"
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              className="px-5 py-8 text-center"
+            >
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+                className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center mx-auto mb-4 shadow-2xl shadow-emerald-500/40"
+              >
+                <CheckCircle className="w-10 h-10 text-white" />
+              </motion.div>
+              <h3 className="text-white text-xl font-bold mb-1">Journey Complete!</h3>
+              <p className="text-white/50 text-sm mb-6">
+                You have safely completed all {stops.length} stops. Welcome home!
+              </p>
+              <button
+                onClick={onClose}
+                className="px-8 py-3 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-medium text-sm transition-colors"
+              >
+                Close Tracking
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   );
