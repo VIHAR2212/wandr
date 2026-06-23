@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Navigation, CheckCircle, Phone, Clock, AlertTriangle,
-  MapPin, Plane, Train, Bus, Car, Walking, Shield
+  MapPin, Plane, Train, Bus, Car, Footprints, Shield
 } from 'lucide-react';
 
 /* ─── Types ─────────────────────────────────────────────── */
@@ -125,7 +125,7 @@ function detectTransportMode(title: string): string {
   if (t.includes('train') || t.includes('rail') || t.includes('metro')) return 'Train';
   if (t.includes('bus') || t.includes('coach')) return 'Bus';
   if (t.includes('car') || t.includes('cab') || t.includes('taxi') || t.includes('drive')) return 'Car';
-  if (t.includes('walk') || t.includes('foot')) return 'Walking';
+  if (t.includes('walk') || t.includes('foot')) return 'Footprints';
   return 'Car';
 }
 
@@ -385,7 +385,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
   const createTransportIcon = useCallback((mode: string) => {
     const L = require('leaflet');
     const emojis: Record<string, string> = {
-      Flight: '✈️', Train: '🚆', Bus: '🚌', Car: '🚗', Walking: '🚶',
+      Flight: '✈️', Train: '🚆', Bus: '🚌', Car: '🚗', Footprints: '🚶',
     };
     const emoji = emojis[mode] || '🚗';
     return L.divIcon({
@@ -675,7 +675,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       case 'Train': return <Train className="w-4 h-4" />;
       case 'Bus': return <Bus className="w-4 h-4" />;
       case 'Car': return <Car className="w-4 h-4" />;
-      case 'Walking': return <Walking className="w-4 h-4" />;
+      case 'Footprints': return <Footprints className="w-4 h-4" />;
       default: return <Navigation className="w-4 h-4" />;
     }
   };
@@ -686,7 +686,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       case 'Train': return 'bg-emerald-500';
       case 'Bus': return 'bg-orange-500';
       case 'Car': return 'bg-purple-500';
-      case 'Walking': return 'bg-teal-500';
+      case 'Footprints': return 'bg-teal-500';
       default: return 'bg-slate-500';
     }
   };
@@ -778,7 +778,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
               className="absolute top-4 left-1/2 -translate-x-1/2 z-20"
             >
               <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold shadow-lg">
-                <Walking className="w-4 h-4" />
+                <Footprints className="w-4 h-4" />
                 <span>Exploring Locally</span>
               </div>
             </motion.div>
@@ -837,7 +837,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
                   </div>
                 ) : (
                   <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center text-white">
-                    <Walking className="w-4 h-4" />
+                    <Footprints className="w-4 h-4" />
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
