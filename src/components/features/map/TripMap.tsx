@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Fix default Leaflet icon URLs
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
@@ -20,9 +19,10 @@ interface MapProps {
   isTracking?: boolean;
   onTrackingToggle?: () => void;
   userPosition?: { lat: number; lng: number } | null;
+  userTransportMode?: string | null;
+  allStopCoords?: { lat: number; lng: number }[];
 }
 
-// ─── Custom icon factory ──────────────────────────────────
 function createIcon(emoji: string, bgColor: string, size: number = 36): L.DivIcon {
   return L.divIcon({
     html: `
@@ -48,7 +48,6 @@ function createIcon(emoji: string, bgColor: string, size: number = 36): L.DivIco
   });
 }
 
-// Golden pulsing user location icon
 function createUserIcon(): L.DivIcon {
   return L.divIcon({
     html: `
@@ -83,7 +82,40 @@ function createUserIcon(): L.DivIcon {
   });
 }
 
-// ─── Icon instances ───────────────────────────────────────
+function createTransportIcon(emoji: string): L.DivIcon {
+  return L.divIcon({
+    html: `
+      <div style="
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #3B82F6, #1D4ED8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        border: 3px solid white;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.4), 0 0 20px rgba(59,130,246,0.5), 0 2px 8px rgba(0,0,0,0.3);
+        position: relative;
+        z-index: 2000;
+        animation: transportPulse 1.5s ease-in-out infinite;
+      ">
+        <style>
+          @keyframes transportPulse {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(59,130,246,0.4), 0 0 20px rgba(59,130,246,0.5), 0 2px 8px rgba(0,0,0,0.3); }
+            50% { box-shadow: 0 0 0 7px rgba(59,130,246,0.15), 0 0 32px rgba(59,130,246,0.6), 0 2px 12px rgba(0,0,0,0.3); }
+          }
+        </style>
+        ${emoji}
+      </div>
+    `,
+    className: "",
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+    popupAnchor: [0, -26],
+  });
+}
+
 const icons = {
   flight:     createIcon("✈️", "#3B82F6"),
   train:      createIcon("🚆", "#3B82F6"),
@@ -94,6 +126,11 @@ const icons = {
   hiddenGem:  createIcon("✨", "#A855F7"),
   attraction: createIcon("📍", "#14B8A6"),
   user:       createUserIcon(),
+  flightActive: createTransportIcon("✈️"),
+  trainActive: createTransportIcon("🚆"),
+  busActive:  createTransportIcon("🚌"),
+  carActive:  createTransportIcon("🚗"),
+  stopDot:    createIcon("⬤", "rgba(255,255,255,0.3)", 16),
 };
 
 function getTransportIcon(title?: string): L.DivIcon {
@@ -105,18 +142,32 @@ function getTransportIcon(title?: string): L.DivIcon {
   return icons.transport;
 }
 
-// ─── Component ────────────────────────────────────────────
-export default function TripMap({ trip, tripData, userLocation, showRoute, isTracking = false, onTrackingToggle, userPosition }: MapProps) {
+function getActiveTransportIcon(mode?: string | null): L.DivIcon {
+  if (!mode) return icons.user;
+  switch (mode.toUpperCase()) {
+    case "FLIGHT": return icons.flightActive;
+    case "TRAIN":  return icons.trainActive;
+    case "BUS":    return icons.busActive;
+    default:       return icons.carActive;
+  }
+}
+
+export default function TripMap({
+  trip, tripData, userLocation, showRoute,
+  isTracking = false, onTrackingToggle,
+  userPosition, userTransportMode, allStopCoords
+}: MapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const trackingMarkerRef = useRef<L.Marker | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const layersGroupRef = useRef<L.LayerGroup | null>(null);
+  const stopMarkersGroupRef = useRef<L.LayerGroup | null>(null);
+  const trailLineRef = useRef<L.Polyline | null>(null);
+  const trailPointsRef = useRef<Array<[number, number]>>([]);
 
   const [routePoints, setRoutePoints] = useState<Array<{ lat: number; lng: number; name: string; type: string }>>([]);
-
-  // Accept both `trip` (from TripResultView Map tab) and `tripData` (from TrackingOverlay)
   const data = trip || tripData;
 
   // ─── Initialize map ────────────────────────────────────
@@ -133,30 +184,30 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
     }).addTo(map);
 
     layersGroupRef.current = L.layerGroup().addTo(map);
+    stopMarkersGroupRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     return () => {
       map.remove();
       mapRef.current = null;
       layersGroupRef.current = null;
+      stopMarkersGroupRef.current = null;
     };
   }, []);
 
-  // ─── Plot markers and routes ────────────────────────────
+  // ─── Plot markers and routes from trip data ────────────
   useEffect(() => {
     if (!mapRef.current || !data || !layersGroupRef.current) return;
     const map = mapRef.current;
     const group = layersGroupRef.current;
-
     group.clearLayers();
     const points: Array<{ lat: number; lng: number; name: string; type: string }> = [];
 
-    // Days / Activities
     const days = data.days || [];
     days.forEach((day: any) => {
       (day.activities || []).forEach((act: any) => {
         if (act.lat && act.lng) {
-          const isTransport = act.type === "transport";
+          const isTransport = act.type === "transport" || act.type === "TRANSPORT";
           const icon = isTransport ? getTransportIcon(act.title) : icons.attraction;
           points.push({ lat: act.lat, lng: act.lng, name: act.title, type: act.type || "activity" });
           L.marker([act.lat, act.lng], { icon, zIndexOffset: 500 })
@@ -170,7 +221,6 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
       });
     });
 
-    // Hotels
     (data.hotels || []).forEach((h: any) => {
       if (h.lat && h.lng) {
         points.push({ lat: h.lat, lng: h.lng, name: h.name, type: "hotel" });
@@ -184,7 +234,6 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
       }
     });
 
-    // Restaurants
     (data.restaurants || []).forEach((r: any) => {
       if (r.lat && r.lng) {
         points.push({ lat: r.lat, lng: r.lng, name: r.name, type: "restaurant" });
@@ -193,13 +242,12 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
           .bindPopup(
             `<div style="min-width:160px"><b>🍽️ ${r.name}</b><br>` +
             `${r.cuisine ? `${r.cuisine} · ` : ""}` +
-            `${r.rating ? `⭐ ${r.rating}<br>` : ""}` +
+            `${r.rating ? `⭐ ${h.rating}<br>` : ""}` +
             `<small>Must try: ${r.mustTry || "—"}</small></div>`
           );
       }
     });
 
-    // Hidden Gems
     (data.hiddenGems || []).forEach((g: any) => {
       if (g.lat && g.lng) {
         points.push({ lat: g.lat, lng: g.lng, name: g.name, type: "hiddenGem" });
@@ -213,26 +261,15 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
       }
     });
 
-    // Draw route polyline connecting all points
     if (points.length > 1) {
       L.polyline(points.map((p) => [p.lat, p.lng]), {
-        color: "#3B82F6",
-        weight: 3,
-        opacity: 0.6,
-        dashArray: "8, 12",
+        color: "#3B82F6", weight: 3, opacity: 0.6, dashArray: "8, 12",
       }).addTo(group);
-
       L.polyline(points.map((p) => [p.lat, p.lng]), {
-        color: "#60A5FA",
-        weight: 6,
-        opacity: 0.15,
-        lineCap: "round",
-        lineJoin: "round",
+        color: "#60A5FA", weight: 6, opacity: 0.15, lineCap: "round", lineJoin: "round",
       }).addTo(group);
-
       map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lng])), {
-        padding: [60, 60],
-        maxZoom: 14,
+        padding: [60, 60], maxZoom: 14,
       });
     } else if (points.length === 1) {
       map.setView([points[0].lat, points[0].lng], 13);
@@ -241,28 +278,80 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
     setRoutePoints(points);
   }, [data]);
 
-  // ─── User position marker (golden dot) ──────────────────
+  // ─── Plot itinerary stop dots from TrackingOverlay ────
+  useEffect(() => {
+    if (!mapRef.current || !stopMarkersGroupRef.current || !allStopCoords || allStopCoords.length === 0) return;
+    const group = stopMarkersGroupRef.current;
+    group.clearLayers();
+
+    allStopCoords.forEach((coord, i) => {
+      L.marker([coord.lat, coord.lng], { icon: icons.stopDot, zIndexOffset: 100 })
+        .addTo(group);
+    });
+
+    if (allStopCoords.length > 1) {
+      const bounds = L.latLngBounds(allStopCoords.map(c => [c.lat, c.lng]));
+      if (routePoints.length === 0) {
+        mapRef.current.fitBounds(bounds, { padding: [80, 80], maxZoom: 13 });
+      }
+    } else if (allStopCoords.length === 1) {
+      mapRef.current.setView([allStopCoords[0].lat, allStopCoords[0].lng], 13);
+    }
+  }, [allStopCoords, routePoints.length]);
+
+  // ─── User / Transport position marker ─────────────────
   useEffect(() => {
     if (!mapRef.current || !layersGroupRef.current) return;
+    const group = layersGroupRef.current;
 
     if (userMarkerRef.current) {
-      layersGroupRef.current.removeLayer(userMarkerRef.current);
+      group.removeLayer(userMarkerRef.current);
       userMarkerRef.current = null;
     }
 
     const pos = userPosition || userLocation;
     if (pos) {
+      const isActiveTransport = userTransportMode && userTransportMode.length > 0;
+      const markerIcon = isActiveTransport ? getActiveTransportIcon(userTransportMode) : icons.user;
+      const modeLabel = isActiveTransport ? `🚀 ${userTransportMode} Mode` : "👤 Your Location";
+
       userMarkerRef.current = L.marker([pos.lat, pos.lng], {
-        icon: icons.user,
-        zIndexOffset: 1000,
+        icon: markerIcon,
+        zIndexOffset: isActiveTransport ? 2500 : 2000,
       })
-        .addTo(layersGroupRef.current)
+        .addTo(group)
         .bindPopup(
-          `<div style="min-width:120px"><b>👤 Your Location</b><br>` +
+          `<div style="min-width:140px"><b>${modeLabel}</b><br>` +
           `<small>${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}</small></div>`
         );
+
+      // Draw trail line behind moving transport
+      if (isActiveTransport) {
+        trailPointsRef.current.push([pos.lat, pos.lng]);
+        if (trailLineRef.current) {
+          group.removeLayer(trailLineRef.current);
+        }
+        if (trailPointsRef.current.length > 1) {
+          trailLineRef.current = L.polyline(trailPointsRef.current, {
+            color: "#60A5FA",
+            weight: 4,
+            opacity: 0.8,
+            lineCap: "round",
+            lineJoin: "round",
+          }).addTo(group);
+        }
+      } else {
+        // Clear trail when stopped
+        trailPointsRef.current = [];
+        if (trailLineRef.current) {
+          group.removeLayer(trailLineRef.current);
+          trailLineRef.current = null;
+        }
+      }
+
+      mapRef.current.panTo([pos.lat, pos.lng], { animate: true, duration: 0.8 });
     }
-  }, [userPosition, userLocation]);
+  }, [userPosition, userLocation, userTransportMode]);
 
   // ─── Notification permission ───────────────────────────
   useEffect(() => {
@@ -271,7 +360,7 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
     }
   }, []);
 
-  // ─── Tracking animation ───────────────────────────────
+  // ─── Tracking animation (legacy) ──────────────────────
   useEffect(() => {
     if (!isTracking || routePoints.length < 2 || !mapRef.current || !layersGroupRef.current) return;
     const map = mapRef.current;
@@ -334,7 +423,6 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
     <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-white/10">
       <div ref={mapContainerRef} className="w-full h-full absolute inset-0 z-0" />
 
-      {/* Legend */}
       <div className="absolute top-4 left-4 z-10 bg-black/80 backdrop-blur-md p-3 rounded-xl border border-white/10 text-xs space-y-1.5 font-medium shadow-lg">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#3B82F6] text-[12px]">✈️</span>
@@ -358,11 +446,23 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
         </div>
         {(userPosition || userLocation || isTracking) && (
           <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/20">
-            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[14px]"
-              style={{ background: "linear-gradient(135deg, #FFD700, #FFA500)", boxShadow: "0 0 8px rgba(255,215,0,0.5)" }}>
-              👤
-            </span>
-            <span className="text-yellow-300 font-bold">Your Location</span>
+            {userTransportMode ? (
+              <>
+                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[14px]"
+                  style={{ background: "linear-gradient(135deg, #3B82F6, #1D4ED8)", boxShadow: "0 0 8px rgba(59,130,246,0.5)" }}>
+                  {userTransportMode === "FLIGHT" ? "✈️" : userTransportMode === "TRAIN" ? "🚆" : userTransportMode === "BUS" ? "🚌" : "🚗"}
+                </span>
+                <span className="text-blue-300 font-bold">{userTransportMode}</span>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[14px]"
+                  style={{ background: "linear-gradient(135deg, #FFD700, #FFA500)", boxShadow: "0 0 8px rgba(255,215,0,0.5)" }}>
+                  👤
+                </span>
+                <span className="text-yellow-300 font-bold">Your Location</span>
+              </>
+            )}
           </div>
         )}
         {isTracking && (
