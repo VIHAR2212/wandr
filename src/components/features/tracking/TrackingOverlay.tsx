@@ -40,6 +40,7 @@ interface ItineraryStop {
   needsConfirmation: boolean;
   confirmed: boolean;
   transportTo: string;
+  isInterCity: boolean;
 }
 
 type Phase = 'geocoding' | 'transit' | 'waiting_confirmation' | 'completed';
@@ -48,41 +49,39 @@ type Phase = 'geocoding' | 'transit' | 'waiting_confirmation' | 'completed';
 
 const REMINDER_INTERVAL_MS = 15_000;
 const MAX_REMINDERS = 5;
-const TRANSIT_DURATION_MS = 8_000;
-const TRANSIT_STEPS = 120;
+const TRANSIT_DURATION_MS = 6_000;
+const TRANSIT_STEPS = 80;
 const EMERGENCY_NUMBER = 'tel:112';
 
 /* ─── Helpers ───────────────────────────────────────────── */
 
-async function geocodeCity(city: string): Promise<Coord | null> {
-  try {
-    const q = encodeURIComponent(city.trim());
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`,
-      { headers: { 'User-Agent': 'Wandr-App/1.0' } }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (Array.isArray(data) && data.length > 0 && data[0].lat && data[0].lon) {
-      return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-    }
-    return null;
-  } catch {
-    return null;
+async function geocodeLocation(query: string): Promise<Coord | null> {
+  if (!query || query.trim().length < 2) return null;
+  const attempts = [query.trim(), `${query.trim()}, India`];
+  for (const q of attempts) {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
+        { headers: { 'User-Agent': 'Wandr-App/1.0' } }
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0 && data[0].lat && data[0].lon) {
+        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      }
+    } catch { continue; }
   }
+  return null;
 }
 
 function interpolatePath(from: Coord, to: Coord, steps: number): Coord[] {
   const points: Coord[] = [];
   const dist = Math.sqrt((to.lat - from.lat) ** 2 + (to.lng - from.lng) ** 2);
-  const arcHeight = dist * 0.15;
+  const arcHeight = dist * 0.12;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    let lat = from.lat + (to.lat - from.lat) * t;
-    let lng = from.lng + (to.lng - from.lng) * t;
-    const arc = Math.sin(t * Math.PI) * arcHeight;
-    lat += arc * 0.7;
-    lng -= arc * 0.3;
+    const lat = from.lat + (to.lat - from.lat) * t + Math.sin(t * Math.PI) * arcHeight * 0.7;
+    const lng = from.lng + (to.lng - from.lng) * t - Math.sin(t * Math.PI) * arcHeight * 0.3;
     points.push({ lat, lng });
   }
   return points;
@@ -130,17 +129,12 @@ function buildItineraryStops(fd: TripFormData, trip: GeneratedTrip): ItinerarySt
   const stops: ItineraryStop[] = [];
   let stopId = 0;
   let currentTransport = (fd.transportPreferences || [])[0] || 'CAR';
+  let prevLocation = (fd.origin || '').toLowerCase().trim();
 
   stops.push({
-    id: `stop-${stopId++}`,
-    label: 'Home',
-    location: fd.origin,
-    coord: null,
-    type: 'origin',
-    day: 0,
-    needsConfirmation: false,
-    confirmed: true,
-    transportTo: currentTransport,
+    id: `stop-${stopId++}`, label: 'Home', location: fd.origin, coord: null,
+    type: 'origin', day: 0, needsConfirmation: false, confirmed: true,
+    transportTo: currentTransport, isInterCity: true,
   });
 
   for (const day of (trip.days || [])) {
@@ -150,11 +144,15 @@ function buildItineraryStops(fd: TripFormData, trip: GeneratedTrip): ItinerarySt
         continue;
       }
       const typeMap: Record<string, ItineraryStop['type']> = {
-        HOTEL: 'hotel', ACCOMMODATION: 'hotel',
-        FOOD: 'food', RESTAURANT: 'food', DINING: 'food',
+        HOTEL: 'hotel', ACCOMMODATION: 'hotel', CHECK_IN: 'hotel', CHECK_OUT: 'hotel',
+        FOOD: 'food', RESTAURANT: 'food', DINING: 'food', BREAKFAST: 'food', LUNCH: 'food', DINNER: 'food',
         ACTIVITY: 'activity', SIGHTSEEING: 'activity', ATTRACTION: 'activity',
         ADVENTURE: 'activity', WELLNESS: 'activity', CULTURAL: 'activity',
+        FREE_TIME: 'activity', EXPLORE: 'activity', VISIT: 'activity',
       };
+      const actLocation = (act.location || '').toLowerCase().trim();
+      const isInterCity = actLocation !== '' && actLocation !== prevLocation;
+
       stops.push({
         id: `stop-${stopId++}`,
         label: act.title || act.location || 'Stop',
@@ -164,33 +162,24 @@ function buildItineraryStops(fd: TripFormData, trip: GeneratedTrip): ItinerarySt
         day: day.dayNumber,
         needsConfirmation: true,
         confirmed: false,
-        transportTo: currentTransport,
+        transportTo: isInterCity ? currentTransport : '',
+        isInterCity,
       });
+
+      if (actLocation) prevLocation = actLocation;
     }
   }
 
   stops.push({
-    id: `stop-${stopId++}`,
-    label: fd.destination,
-    location: fd.destination,
-    coord: null,
-    type: 'destination',
-    day: (trip.days || []).length + 1,
-    needsConfirmation: true,
-    confirmed: false,
-    transportTo: currentTransport,
+    id: `stop-${stopId++}`, label: fd.destination, location: fd.destination, coord: null,
+    type: 'destination', day: (trip.days || []).length + 1, needsConfirmation: true, confirmed: false,
+    transportTo: currentTransport, isInterCity: true,
   });
 
   stops.push({
-    id: `stop-${stopId++}`,
-    label: 'Home \u2014 Safe Return',
-    location: fd.origin,
-    coord: null,
-    type: 'origin',
-    day: (trip.days || []).length + 2,
-    needsConfirmation: true,
-    confirmed: false,
-    transportTo: currentTransport,
+    id: `stop-${stopId++}`, label: 'Home \u2014 Safe Return', location: fd.origin, coord: null,
+    type: 'origin', day: (trip.days || []).length + 2, needsConfirmation: true, confirmed: false,
+    transportTo: currentTransport, isInterCity: true,
   });
 
   return stops;
@@ -203,7 +192,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
   const [stops, setStops] = useState<ItineraryStop[]>([]);
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
   const [currentPosition, setCurrentPosition] = useState<Coord | null>(null);
-  const [currentTransportMode, setCurrentTransportMode] = useState('CAR');
+  const [currentTransportMode, setCurrentTransportMode] = useState('');
   const [alert, setAlert] = useState('');
   const [checkpoints, setCheckpoints] = useState<{ lat: number; lng: number; ts: Date }[]>([]);
   const [elapsed, setElapsed] = useState(0);
@@ -243,57 +232,65 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
       }
 
       const uncoded = [...new Set(
-        itineraryStops.map(s => s.location).filter(l => l && !locationMap.has(l))
+        itineraryStops.map(s => s.location).filter(l => l && l.length >= 2 && !locationMap.has(l))
       )];
 
-      for (let i = 0; i < uncoded.length; i += 3) {
-        const batch = uncoded.slice(i, i + 3);
-        const results = await Promise.all(batch.map(c => geocodeCity(c)));
+      showAlert(`Geocoding ${uncoded.length} unique locations...`);
+
+      for (let i = 0; i < uncoded.length; i += 2) {
+        const batch = uncoded.slice(i, i + 2);
+        const results = await Promise.all(batch.map(c => geocodeLocation(c)));
         batch.forEach((city, idx) => {
           if (results[idx]) locationMap.set(city, results[idx]!);
         });
+        if (i + 2 < uncoded.length) await new Promise(r => setTimeout(r, 1100));
       }
 
       const cityCount = new Map<string, number>();
+      const destCoord = locationMap.get(fd.destination) || locationMap.values().next().value;
+
       const updatedStops = itineraryStops.map(stop => {
         const base = locationMap.get(stop.location);
-        if (!base) return { ...stop, coord: { lat: 0, lng: 0 } };
-        const count = cityCount.get(stop.location) || 0;
-        cityCount.set(stop.location, count + 1);
-        const offsetLat = count * 0.005 * (count % 2 === 0 ? 1 : -1);
-        const offsetLng = count * 0.005 * (count % 2 === 0 ? -1 : 1);
-        return { ...stop, coord: { lat: base.lat + offsetLat, lng: base.lng + offsetLng } };
+        if (base) {
+          const count = cityCount.get(stop.location) || 0;
+          cityCount.set(stop.location, count + 1);
+          const off = 0.006 * (count + 1);
+          return { ...stop, coord: { lat: base.lat + off * (count % 2 === 0 ? 1 : -1), lng: base.lng + off * (count % 2 === 0 ? -1 : 1) } };
+        }
+        if (destCoord) {
+          const count = cityCount.get('__fb') || 0;
+          cityCount.set('__fb', count + 1);
+          const off = 0.012 * (count + 1);
+          return { ...stop, coord: { lat: destCoord.lat + off * (count % 2 === 0 ? 1 : -0.5), lng: destCoord.lng + off * (count % 2 === 0 ? -1 : 0.5) } };
+        }
+        return { ...stop, coord: { lat: 20.5937, lng: 78.9629 } };
       });
 
       setStops(updatedStops);
       setCurrentPosition(updatedStops[0]?.coord || null);
 
       const originCoord = locationMap.get(fd.origin);
-      const destCoord = locationMap.get(fd.destination);
       if (originCoord && destCoord) {
         fetch(`/api/trips/${tripId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            originLat: originCoord.lat, originLng: originCoord.lng,
-            destLat: destCoord.lat, destLng: destCoord.lng,
-          }),
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ originLat: originCoord.lat, originLng: originCoord.lng, destLat: destCoord.lat, destLng: destCoord.lng }),
         }).catch(() => {});
       }
 
-      showAlert(`Route mapped! ${updatedStops.length} stops ready. Starting journey...`);
+      showAlert(`${updatedStops.length} stops mapped! Starting journey...`);
       setPhase('transit');
     }
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ─── Transit animation between stops ────────────────── */
+  /* ─── Transit animation ──────────────────────────────── */
   useEffect(() => {
     if (phase !== 'transit' || !currentStop || !nextStop || !currentStop.coord || !nextStop.coord) return;
 
     const path = interpolatePath(currentStop.coord, nextStop.coord, TRANSIT_STEPS);
-    setCurrentTransportMode(nextStop.transportTo);
+    const isInterCity = nextStop.isInterCity;
+    setCurrentTransportMode(isInterCity ? nextStop.transportTo : '');
     const startTime = performance.now();
     let cancelled = false;
 
@@ -301,16 +298,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
       if (cancelled) return;
       const progress = Math.min((performance.now() - startTime) / TRANSIT_DURATION_MS, 1);
       const step = Math.floor(progress * (TRANSIT_STEPS - 1));
-      const point = path[Math.min(step, path.length - 1)];
-
-      setCurrentPosition(point);
-      setCheckpoints(prev => {
-        const last = prev[prev.length - 1];
-        if (!last || Math.abs(last.lat - point.lat) > 0.001 || Math.abs(last.lng - point.lng) > 0.001) {
-          return [...prev.slice(-99), { ...point, ts: new Date() }];
-        }
-        return prev;
-      });
+      setCurrentPosition(path[Math.min(step, path.length - 1)]);
 
       if (progress < 1) {
         animFrameRef.current = requestAnimationFrame(tick);
@@ -321,7 +309,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
           showAlert(`Arrived at ${nextStop.label}! Tap "Reached" to confirm.`);
         } else {
           showAlert(`Passing through ${nextStop.label}...`);
-          setTimeout(() => setPhase('transit'), 1500);
+          setTimeout(() => setPhase('transit'), 1200);
         }
       }
     }
@@ -330,7 +318,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
     return () => { cancelled = true; cancelAnimationFrame(animFrameRef.current); };
   }, [phase, currentStopIndex, stops]);
 
-  /* ─── Elapsed time counter ───────────────────────────── */
+  /* ─── Elapsed time ───────────────────────────────────── */
   useEffect(() => {
     elapsedIntervalRef.current = setInterval(() => {
       totalElapsedRef.current += 1;
@@ -339,12 +327,11 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
     return () => { if (elapsedIntervalRef.current) clearInterval(elapsedIntervalRef.current); };
   }, []);
 
-  /* ─── Reminder system ────────────────────────────────── */
+  /* ─── Reminders ──────────────────────────────────────── */
   useEffect(() => {
     if (phase !== 'waiting_confirmation') {
       if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; }
-      setRemindersSent(0);
-      setShowHelpline(false);
+      setRemindersSent(0); setShowHelpline(false);
       return;
     }
     reminderTimerRef.current = setInterval(() => {
@@ -353,7 +340,7 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
         if (next >= MAX_REMINDERS) {
           if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; }
           setShowHelpline(true);
-          showAlert('No response received! Tap the helpline button for assistance.');
+          showAlert('No response! Tap the helpline button for assistance.');
         } else {
           showAlert(`Reminder ${next}/${MAX_REMINDERS}: Have you reached ${currentStop?.label}?`);
         }
@@ -363,21 +350,18 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
     return () => { if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; } };
   }, [phase, currentStop]);
 
-  /* ─── Confirm "Reached" ──────────────────────────────── */
+  /* ─── Confirm Reached ────────────────────────────────── */
   const confirmReached = useCallback(() => {
     if (!currentStop) return;
-    setStops(prev => prev.map((s, i) =>
-      i === currentStopIndex ? { ...s, confirmed: true } : s
-    ));
+    setStops(prev => prev.map((s, i) => i === currentStopIndex ? { ...s, confirmed: true } : s));
     showAlert(`Confirmed: ${currentStop.label}`);
-    setRemindersSent(0);
-    setShowHelpline(false);
+    setRemindersSent(0); setShowHelpline(false);
     if (currentStopIndex >= stops.length - 1) {
       setPhase('completed');
       showAlert('Safe return confirmed! Journey complete.');
     } else {
       setCurrentStopIndex(prev => prev + 1);
-      setTimeout(() => setPhase('transit'), 1000);
+      setTimeout(() => setPhase('transit'), 800);
     }
   }, [currentStop, currentStopIndex, stops.length]);
 
@@ -397,42 +381,40 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
     alertTimerRef.current = setTimeout(() => setAlert(''), 6000);
   }
 
-  function formatDuration(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
+  function fmtDur(s: number) { return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`; }
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col"
     >
-      {/* ─── Header ─── */}
+      {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className={`w-3 h-3 rounded-full ${
-            phase === 'transit' ? 'bg-blue-400 animate-pulse'
+            phase === 'transit' ? (currentTransportMode ? 'bg-blue-400' : 'bg-yellow-400') + ' animate-pulse'
             : phase === 'waiting_confirmation' ? 'bg-yellow-400 animate-pulse'
             : phase === 'completed' ? 'bg-green-500'
             : 'bg-muted-foreground animate-pulse'
           }`} />
           <span className="font-semibold text-foreground text-sm">
             {phase === 'geocoding' && 'Mapping Route...'}
-            {phase === 'transit' && `En Route \u2014 ${nextStop?.label || ''}`}
+            {phase === 'transit' && (currentTransportMode ? `En Route \u2014 ${nextStop?.label || ''}` : `Moving to \u2014 ${nextStop?.label || ''}`)}
             {phase === 'waiting_confirmation' && `Arrived \u2014 ${currentStop?.label || ''}`}
             {phase === 'completed' && 'Journey Complete'}
           </span>
           <span className="text-xs text-muted-foreground hidden sm:inline">{fd.destination}</span>
         </div>
         <div className="flex items-center gap-3">
-          {phase === 'transit' && (
+          {phase === 'transit' && currentTransportMode && (
             <div className="flex items-center gap-1.5 text-xs text-blue-400 font-medium">
-              {getTransportIcon(currentTransportMode, 'w-3.5 h-3.5')}
-              <span>{currentTransportMode}</span>
+              {getTransportIcon(currentTransportMode, 'w-3.5 h-3.5')}<span>{currentTransportMode}</span>
               <Navigation className="w-3.5 h-3.5 animate-spin" />
+            </div>
+          )}
+          {phase === 'transit' && !currentTransportMode && (
+            <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-medium">
+              <MapPin className="w-3.5 h-3.5" /><span>Local Travel</span>
             </div>
           )}
           {phase === 'waiting_confirmation' && (
@@ -445,50 +427,35 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
               <CheckCircle2 className="w-3.5 h-3.5" />All Stops Confirmed
             </div>
           )}
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-          >
+          <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* ─── Alert banner ─── */}
+      {/* Alert */}
       <AnimatePresence>
         {alert && (
-          <motion.div
-            initial={{ y: -40, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -40, opacity: 0 }}
-            className="mx-4 mt-3 glass-panel rounded-2xl px-4 py-3 text-sm text-foreground border-primary/20 border"
-          >
-            {alert}
-          </motion.div>
+          <motion.div initial={{ y: -40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -40, opacity: 0 }}
+            className="mx-4 mt-3 glass-panel rounded-2xl px-4 py-3 text-sm text-foreground border-primary/20 border">{alert}</motion.div>
         )}
       </AnimatePresence>
 
-      {/* ─── Stop progress bar ─── */}
+      {/* Stop progress */}
       {stops.length > 1 && (
         <div className="mx-4 mt-3 flex items-center gap-1 overflow-x-auto scrollbar-hide px-1">
           {stops.map((stop, i) => (
             <div key={stop.id} className="flex items-center gap-1 flex-shrink-0">
               <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium ${
-                stop.confirmed
-                  ? 'bg-green-500/15 text-green-400 border border-green-500/30'
-                  : i === currentStopIndex
-                  ? 'bg-primary/15 text-primary border border-primary/30'
-                  : 'bg-muted/50 text-muted-foreground border border-transparent'
+                stop.confirmed ? 'bg-green-500/15 text-green-400 border border-green-500/30'
+                : i === currentStopIndex ? 'bg-primary/15 text-primary border border-primary/30'
+                : 'bg-muted/50 text-muted-foreground border border-transparent'
               }`}>
-                {stop.confirmed
-                  ? <CheckCircle2 className="w-3 h-3" />
-                  : i === currentStopIndex && phase === 'transit'
-                  ? getTransportIcon(currentTransportMode, 'w-3 h-3')
-                  : getStopIcon(stop.type)
-                }
-                <span className="max-w-[80px] truncate">
-                  {stop.label.length > 12 ? stop.label.slice(0, 12) + '...' : stop.label}
-                </span>
+                {stop.confirmed ? <CheckCircle2 className="w-3 h-3" />
+                  : i === currentStopIndex && phase === 'transit' && stop.isInterCity ? getTransportIcon(stop.transportTo, 'w-3 h-3')
+                  : i === currentStopIndex && phase === 'transit' ? <MapPin className="w-3 h-3" />
+                  : getStopIcon(stop.type)}
+                <span className="max-w-[80px] truncate">{stop.label.length > 12 ? stop.label.slice(0, 12) + '...' : stop.label}</span>
               </div>
               {i < stops.length - 1 && <ChevronRight className="w-3 h-3 text-muted-foreground/40 flex-shrink-0" />}
             </div>
@@ -496,50 +463,49 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
         </div>
       )}
 
-      {/* ─── Map ─── */}
+      {/* Map */}
       <div className="flex-1 p-4 overflow-hidden relative">
         {phase === 'transit' && currentStop && nextStop && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 glass-panel rounded-2xl px-4 py-2 shadow-lg">
-            {getTransportIcon(currentTransportMode, 'w-5 h-5 text-primary')}
-            <span className="text-sm font-medium text-foreground">
-              {currentStop.label} &rarr; {nextStop.label}
-            </span>
+            {currentTransportMode ? (
+              <>{getTransportIcon(currentTransportMode, 'w-5 h-5 text-primary')}<span className="text-sm font-medium text-foreground">{currentStop.label} &rarr; {nextStop.label}</span></>
+            ) : (
+              <><MapPin className="w-5 h-5 text-yellow-400" /><span className="text-sm font-medium text-foreground">Walking to {nextStop.label}</span></>
+            )}
           </div>
         )}
         {phase === 'waiting_confirmation' && currentStop && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 glass-panel rounded-2xl px-4 py-2 shadow-lg">
-            <MapPin className="w-5 h-5 text-yellow-400" />
-            <span className="text-sm font-medium text-foreground">At: {currentStop.label}</span>
+            <MapPin className="w-5 h-5 text-yellow-400" /><span className="text-sm font-medium text-foreground">At: {currentStop.label}</span>
           </div>
         )}
         <TripMap
           trip={trip}
           userLocation={currentPosition}
           showRoute
-          userTransportMode={phase === 'transit' ? currentTransportMode : null}
+          userTransportMode={phase === 'transit' && currentTransportMode ? currentTransportMode : null}
           allStopCoords={stops.map(s => s.coord).filter((c): c is Coord => c !== null)}
         />
       </div>
 
-      {/* ─── Bottom Panel ─── */}
+      {/* Bottom Panel */}
       <div className="p-4 border-t border-border">
         {currentStop && (
           <div className="glass-panel rounded-2xl p-3 mb-3 flex items-center gap-3">
             <div className={`w-8 h-8 rounded-xl ${getStopColor(currentStop.type)}/15 flex items-center justify-center text-primary flex-shrink-0`}>
-              {phase === 'transit'
-                ? getTransportIcon(currentTransportMode, 'w-4 h-4')
-                : getStopIcon(currentStop.type)
-              }
+              {phase === 'transit' && currentTransportMode ? getTransportIcon(currentTransportMode, 'w-4 h-4')
+                : phase === 'transit' ? <MapPin className="w-4 h-4" />
+                : getStopIcon(currentStop.type)}
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-xs text-muted-foreground">
-                {phase === 'transit' ? 'Heading to' : phase === 'waiting_confirmation' ? 'Arrived at' : 'Completed'}
+                {phase === 'transit' ? (currentTransportMode ? 'Heading to' : 'Walking to') : phase === 'waiting_confirmation' ? 'Arrived at' : 'Completed'}
                 {currentStop.day > 0 && ` \u00b7 Day ${currentStop.day}`}
               </div>
               <div className="text-sm font-medium text-foreground truncate">{currentStop.label}</div>
               <div className="text-[10px] text-muted-foreground truncate">{currentStop.location}</div>
             </div>
-            {phase === 'transit' && (
+            {phase === 'transit' && currentTransportMode && (
               <div className="text-right flex-shrink-0">
                 <div className="text-xs text-muted-foreground">Mode</div>
                 <div className="text-sm font-medium text-foreground uppercase flex items-center gap-1">
@@ -553,14 +519,12 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-4">
           <div className="glass-panel rounded-2xl p-3 text-center">
             <MapPin className="w-4 h-4 text-primary mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">
-              {currentPosition ? `${currentPosition.lat.toFixed(2)}, ${currentPosition.lng.toFixed(2)}` : '\u2014'}
-            </div>
+            <div className="text-xs font-medium text-foreground">{currentPosition ? `${currentPosition.lat.toFixed(2)}, ${currentPosition.lng.toFixed(2)}` : '\u2014'}</div>
             <div className="text-2xs text-muted-foreground">Position</div>
           </div>
           <div className="glass-panel rounded-2xl p-3 text-center">
             <Clock className="w-4 h-4 text-blue-500 mx-auto mb-1" />
-            <div className="text-xs font-medium text-foreground">{formatDuration(elapsed)}</div>
+            <div className="text-xs font-medium text-foreground">{fmtDur(elapsed)}</div>
             <div className="text-2xs text-muted-foreground">Elapsed</div>
           </div>
           <div className="glass-panel rounded-2xl p-3 text-center">
@@ -588,90 +552,44 @@ export function TrackingOverlay({ tripData, onClose }: Props) {
 
         {phase === 'transit' && (
           <div className="flex gap-3">
-            <button
-              onClick={() => {
-                if (nextStop) {
-                  setCurrentStopIndex(prev => prev + 1);
-                  setPhase('waiting_confirmation');
-                  showAlert(`Manual stop. Tap "Reached" for ${nextStop.label}.`);
-                }
-              }}
-              className="flex-1 py-3 rounded-2xl text-sm font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 hover:bg-yellow-500/20 transition-all"
-            >
-              Stop Here
-            </button>
-            <button
-              onClick={onClose}
-              className="flex-1 py-3 rounded-2xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              Close
-            </button>
+            <button onClick={() => {
+              if (nextStop) { setCurrentStopIndex(p => p + 1); setPhase('waiting_confirmation'); showAlert(`Tap "Reached" for ${nextStop.label}.`); }
+            }} className="flex-1 py-3 rounded-2xl text-sm font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 hover:bg-yellow-500/20 transition-all">Stop Here</button>
+            <button onClick={onClose} className="flex-1 py-3 rounded-2xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">Close</button>
           </div>
         )}
 
         {phase === 'waiting_confirmation' && (
           <div className="flex flex-col gap-3">
-            <button
-              onClick={confirmReached}
-              className="w-full py-3.5 rounded-2xl text-sm font-semibold btn-premium flex items-center justify-center gap-2"
-            >
+            <button onClick={confirmReached} className="w-full py-3.5 rounded-2xl text-sm font-semibold btn-premium flex items-center justify-center gap-2">
               <CheckCircle2 className="w-4 h-4" />
-              {isSafeReturnStop
-                ? "I've Reached Home Safely"
-                : `I've Reached \u2014 ${currentStop?.label || 'Destination'}`
-              }
+              {isSafeReturnStop ? "I've Reached Home Safely" : `I've Reached \u2014 ${currentStop?.label || 'Destination'}`}
             </button>
-
             {remindersSent > 0 && !showHelpline && (
               <div className="flex items-center gap-2">
                 <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <motion.div
-                    className="h-full bg-yellow-400 rounded-full"
-                    animate={{ width: `${(remindersSent / MAX_REMINDERS) * 100}%` }}
-                  />
+                  <motion.div className="h-full bg-yellow-400 rounded-full" animate={{ width: `${(remindersSent / MAX_REMINDERS) * 100}%` }} />
                 </div>
-                <span className="text-[10px] text-yellow-400 font-medium">
-                  {remindersSent}/{MAX_REMINDERS} reminders
-                </span>
+                <span className="text-[10px] text-yellow-400 font-medium">{remindersSent}/{MAX_REMINDERS}</span>
               </div>
             )}
-
             {showHelpline && (
-              <motion.a
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                href={EMERGENCY_NUMBER}
-                className="w-full py-3.5 rounded-2xl text-sm font-semibold bg-red-500 text-white flex items-center justify-center gap-2 hover:bg-red-600 transition-colors"
-              >
-                <Phone className="w-4 h-4" />
-                Call Helpline \u2014 No Response
+              <motion.a initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} href={EMERGENCY_NUMBER}
+                className="w-full py-3.5 rounded-2xl text-sm font-semibold bg-red-500 text-white flex items-center justify-center gap-2 hover:bg-red-600 transition-colors">
+                <Phone className="w-4 h-4" />Call Helpline \u2014 No Response
               </motion.a>
             )}
-
-            <button
-              onClick={onClose}
-              className="w-full py-3 rounded-2xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              Close (journey resumes on return)
-            </button>
+            <button onClick={onClose} className="w-full py-3 rounded-2xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">Close (journey resumes on return)</button>
           </div>
         )}
 
         {phase === 'completed' && (
-          <div className="flex gap-3">
-            <button
-              onClick={onClose}
-              className="flex-1 py-3 rounded-2xl text-sm font-medium btn-premium flex items-center justify-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              Trip Complete \u2014 Close
-            </button>
-          </div>
+          <button onClick={onClose} className="w-full py-3 rounded-2xl text-sm font-medium btn-premium flex items-center justify-center gap-2">
+            <CheckCircle2 className="w-4 h-4" />Trip Complete \u2014 Close
+          </button>
         )}
 
-        <p className="text-center text-2xs text-muted-foreground mt-3">
-          Simulated demo journey \u2014 no real location is tracked.
-        </p>
+        <p className="text-center text-2xs text-muted-foreground mt-3">Simulated demo journey \u2014 no real location is tracked.</p>
       </div>
     </motion.div>
   );
