@@ -144,7 +144,7 @@ RULES:
         endDate: endD,
         duration,
         travelers: Number(travelers) || 1,
-        purpose,
+        purpose: purpose ?? 'GENERAL',
         budget: Number(budget),
         currency,
         foodPref: foodPreference,
