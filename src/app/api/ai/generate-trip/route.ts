@@ -1,190 +1,181 @@
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
-import { generateAIJson } from "@/lib/ai";
-import { TripPurpose, FoodPreference } from "@prisma/client";
+// src/app/api/ai/generate-trip/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { callAITrip } from '@/lib/ai';
+import { auth } from '@/lib/auth';
+import prisma from '@/lib/db';
 
-function mapPurpose(purpose: string): TripPurpose {
-  const map: Record<string, TripPurpose> = {
-    ADVENTURE: "ADVENTURE", DEVOTIONAL: "DEVOTIONAL", HIKING: "HIKING",
-    HONEYMOON: "HONEYMOON", FAMILY: "FAMILY", PHOTOGRAPHY: "PHOTOGRAPHY",
-    BUSINESS: "BUSINESS", FOOD_EXPLORATION: "FOOD_EXPLORATION", WELLNESS: "WELLNESS",
-    CULTURAL: "CULTURAL", SOLO: "SOLO", BACKPACKING: "BACKPACKING",
-  };
-  return map[purpose] || "BACKPACKING";
-}
-
-function mapFoodPref(diet?: string): FoodPreference {
-  const map: Record<string, FoodPreference> = {
-    veg: "VEG", vegetarian: "VEG", jain: "JAIN", vegan: "VEGAN",
-    halal: "HALAL", non_veg: "NON_VEG", "non-veg": "NON_VEG",
-    nonveg: "NON_VEG", non: "NON_VEG", meat: "NON_VEG",
-  };
-  return map[(diet || "").toLowerCase().trim()] || "NON_VEG";
-}
+export const runtime = 'nodejs';
+export const maxDuration = 10;
 
 export async function POST(req: NextRequest) {
   try {
-    let userId: string | undefined;
-    try {
-      const session = await auth();
-      userId = session?.user?.id;
-    } catch (authError) {
-      return NextResponse.json({ error: "Auth service error." }, { status: 500 });
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: 'You must be signed in to generate a trip.' },
+        { status: 401 }
+      );
     }
 
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await req.json();
+    const formData = await req.json();
     const {
-      origin, destination, startDate, endDate, budget, travelers, currency,
-      purposes, foodPreference, hotelPreference, transportPreferences,
-      specialRequests,
-    } = body;
+      origin, destination, startDate, endDate, travelers,
+      budget, currency, purpose, foodPreference, hotelPreference,
+      transportPreferences, specialRequests, includeHiddenGems, flexibleBudget,
+    } = formData;
 
-    if (!destination || !startDate || !endDate || !budget) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    if (!origin || !destination || !startDate || !endDate || !budget) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const startD = new Date(startDate);
+    const endD = new Date(endDate);
+    const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
-    if (days < 1 || days > 30) {
-      return NextResponse.json({ error: "Trip must be 1-30 days" }, { status: 400 });
-    }
+    const CURRENCY_SYMBOL: Record<string, string> = {
+      INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', JPY: '¥', SGD: 'S$',
+    };
+    const sym = CURRENCY_SYMBOL[currency] ?? currency;
 
-    const purposesList = Array.isArray(purposes) && purposes.length > 0 ? purposes : ["BACKPACKING"];
-    const primaryPurpose = purposesList[0];
-    const purposesStr = purposesList.join(" + ");
-    const specialInstruction = specialRequests?.trim() ? `\nCRITICAL Special Request: "${specialRequests.trim()}" - You MUST include this.` : "";
+    const PURPOSE_LABEL: Record<string, string> = {
+      ADVENTURE: 'adventure and thrill-seeking',
+      DEVOTIONAL: 'religious/devotional visits and spiritual experiences',
+      HIKING: 'trekking and nature hiking',
+      HONEYMOON: 'romantic honeymoon experiences',
+      FAMILY: 'family-friendly activities suitable for all ages',
+      PHOTOGRAPHY: 'photography — golden hours, landscapes, architecture',
+      BUSINESS: 'business travel with efficient scheduling',
+      FOOD_EXPLORATION: 'food exploration and culinary discovery',
+      WELLNESS: 'wellness, yoga, meditation, and relaxation',
+      CULTURAL: 'cultural immersion, museums, local heritage',
+      SOLO: 'solo travel with safety and social opportunities',
+      BACKPACKING: 'budget backpacking',
+    };
 
-    const systemPrompt = `You are an expert travel planner. Respond ONLY with valid JSON. No markdown, no text, just raw JSON. All costs in ${currency || "INR"}.`;
+    const FOOD_LABEL: Record<string, string> = {
+      VEG: 'strictly vegetarian (no meat, fish, or eggs)',
+      JAIN: 'Jain diet (no root vegetables like onion, garlic, potato)',
+      VEGAN: 'fully vegan (no animal products)',
+      HALAL: 'halal-certified food only',
+      NON_VEG: 'any cuisine including non-vegetarian',
+    };
 
-    const prompt = `Create a ${days}-day trip for ${destination}. Budget: ${budget} ${currency || "INR"} for ${travelers || 1} person(s). Food: ${foodPreference || "Any"}. Hotel: ${hotelPreference || "Standard"}. Purpose: ${purposesStr}. ${specialInstruction}
+    const systemPrompt = `Expert travel planner. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose}. Hotel: ${hotelPreference}.`;
 
-Return STRICTLY this JSON (no other text, no markdown fences):
-{
-  "destination": "${destination}",
-  "title": "Short trip title",
-  "summary": "2-3 sentence trip overview",
-  "totalDays": ${days},
-  "itinerary": [
-    {
-      "day": 1, "date": "${startDate}", "theme": "Theme",
-      "activities": [
-        {"time": "09:00", "title": "Visit Place", "description": "Details", "location": "Exact Place Name", "lat": 19.076, "lng": 72.877, "cost": 500, "type": "attraction", "tips": "Tip"}
-      ]
-    }
-  ],
-  "hotels": [{"name": "Hotel Name", "area": "Area", "lat": 19.08, "lng": 72.88, "pricePerNight": 2000, "rating": 4.5, "description": "Good hotel", "bookingTip": "Book early"}],
-  "restaurants": [{"name": "Restaurant Name", "cuisine": "Food type", "diet": "${foodPreference || "all"}", "priceRange": "$$", "rating": 4.5, "mustTry": "Best dish", "location": "Area", "lat": 19.09, "lng": 72.89}],
-  "hiddenGems": [{"name": "Offbeat Spot", "description": "Why it's special", "lat": 19.10, "lng": 72.90, "why": "Reason to visit", "bestTime": "Morning"}],
-  "transportGuide": {
-    "overview": "Brief transport overview",
-    "legs": [{"from": "Origin", "to": "Destination", "mode": "FLIGHT", "duration": "2h", "cost": 5000, "tips": "Book in advance"}]
-  },
-  "budgetBreakdown": {"accommodation": 0, "food": 0, "transport": 0, "activities": 0, "misc": 0, "total": ${budget}},
-  "packingList": [{"item": "Comfortable shoes", "reason": "For walking", "essential": true, "category": "clothing"}],
-  "weatherForecast": {"expected": "Pleasant", "avgTemp": "28°C", "tips": ["Carry water"], "forecast": [{"date": "${startDate}", "condition": "Sunny", "high": 30, "low": 22}]},
-  "safety": {"overallScore": 8, "tips": ["Stay aware"], "emergencyNumber": "112", "scamAlerts": ["Common scam"], "safeAreas": ["Tourist area"], "avoidAreas": ["Isolated spot at night"]}
-}
+    const userPrompt = `${duration}-day ${destination} trip. Budget: ${budget} ${currency ?? 'INR'}, ${travelers ?? 1} traveler(s), ${startDate} to ${endDate}. Transport pref: ${(transportPreferences ?? []).join('/') || 'any'}.${specialRequests ? ` Notes: ${specialRequests}.` : ''}
+
+STRICT JSON (no markdown, no text):
+{"destination":"${destination}","title":"...","summary":"2-3 lines","totalDays":${duration},"itinerary":[{"day":1,"date":"${startDate}","theme":"Theme","activities":[{"time":"06:00-08:15","type":"TRANSPORT","title":"Flight: ${origin} to ${destination}","description":"IndiGo 6E-204 · T2 Departure · Arrives T1","location":"${origin} Airport","lat":0,"lng":0,"cost":0,"duration":135,"notes":"Reach airport 2hrs early"},{"time":"09:00","type":"SIGHTSEEING","title":"Visit Place","description":"Details","location":"Exact Place Name","lat":0,"lng":0,"cost":0,"duration":90,"notes":"tip"}]}],"hotels":[{"name":"Hotel Name","area":"Area","lat":0,"lng":0,"pricePerNight":2000,"rating":4,"amenities":["WiFi"],"diet":"${foodPreference || 'all'}"}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","diet":"${foodPreference || 'all'}","lat":0,"lng":0,"pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","lat":0,"lng":0,"when":"Early morning","cost":0}],"transportGuide":{"overview":"Brief transport overview","legs":[{"from":"${origin}","to":"${destination}","mode":"${(transportPreferences ?? ['FLIGHT'])[0]}","duration":"2h","cost":0,"operator":"Airline/Railway","vehicleNo":"6E-204","vehicle":"A320neo"}]},"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"],"forecast":[{"date":"${startDate}","condition":"Sunny","high":32,"low":22}]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
 
 RULES:
-1. Generate EXACTLY ${days} days.
-2. Each day MUST have 4-6 activities.
-3. Total budget MUST equal ${budget}.
-4. Provide 2 hotels and 3 restaurants.
-5. Provide 3-5 hiddenGems (offbeat, non-touristy).
-6. Provide a transportGuide with at least 1 leg.
-7. Provide 8-15 packingList items with category in {clothing, toiletries, electronics, documents, misc}.
-8. Provide weatherForecast for the trip dates.
-9. Provide safety with overallScore 1-10 and at least 3 tips.
-10. CRITICAL: You MUST provide accurate decimal "lat" and "lng" for EVERY activity, hotel, restaurant, and hidden gem.`;
+1. Exactly ${duration} days, 4-6 activities each.
+2. Budget totals ${budget}.
+3. 2 hotels, 3 restaurants, 3-5 hiddenGems, 8-15 packing items (cat: clothing|toiletries|electronics|documents|misc).
+4. Accurate lat/lng on EVERY item (use real coordinates for ${destination} landmarks).
+5. TRANSPORT (MANDATORY): First activity of Day 1 MUST be type:"TRANSPORT" — Flight or Train from "${origin}" to "${destination}" with real airline/train name, number, departure time.
+6. If any day's city changes vs previous day's last location, add transport entry as that day's FIRST activity.
+7. LOCAL transport (same city): NO separate activity. Add in next activity's notes: "Auto from [place] (~₹50)".`;
 
-    console.log("🔄 Generating trip with 4-Groq fallback system...");
+    const result = await callAITrip(systemPrompt, [{ role: 'user', content: userPrompt }]);
 
-    let tripData: any = null;
-    let provider: string = 'unknown';
-    let retryCount = 0;
-
-    while (retryCount <= 2) {
-      const result = await generateAIJson(prompt, systemPrompt);
-      if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
-        throw new Error("Invalid data structure");
-      }
-
-      tripData = result.data;
-      provider = result.provider;
-      const generatedDays = Array.isArray(tripData?.itinerary) ? tripData.itinerary.length : 0;
-
-      if (generatedDays >= Math.min(days, 2)) {
-        console.log(`✅ Trip generated via ${provider}! Got ${generatedDays} days.`);
-        break;
-      }
-      retryCount++;
-    }
-
-    let trip;
+    let trip: Record<string, unknown>;
     try {
-      trip = await prisma.trip.create({
-        data: {
-          userId: userId,
-          title: `Trip to ${destination}`,
-          origin: origin || "Not specified",
-          destination: tripData.destination || destination,
-          startDate: start,
-          endDate: end,
-          duration: days,
-          travelers: Number(travelers) || 1,
-          purpose: mapPurpose(primaryPurpose),
-          budget: Number(budget),
-          currency: currency || "INR",
-          foodPref: mapFoodPref(foodPreference),
-          hotelPref: (hotelPreference || "STANDARD").toUpperCase(),
-          transportPref: Array.isArray(transportPreferences) ? transportPreferences : [],
-          // Nest EVERYTHING the AI returned (except budget/safety/packing/weather,
-          // which live in their own columns) into the itinerary Json field.
-          // Per schema constraint: no separate hotels/restaurants/hiddenGems columns.
-          itinerary: {
-            title: tripData.title || `Trip to ${destination}`,
-            summary: tripData.summary || "",
-            days: tripData.itinerary || [],
-            hotels: tripData.hotels || [],
-            restaurants: tripData.restaurants || [],
-            hiddenGems: tripData.hiddenGems || [],
-            transportGuide: tripData.transportGuide || { overview: "", legs: [] },
-            purposes: purposesList,
-            specialRequests: specialRequests || "",
-          },
-          budgetBreakdown: tripData.budgetBreakdown || {},
-          packingList: tripData.packingList || [{ item: "Comfortable shoes", reason: "For walking", essential: true, category: "clothing" }],
-          // AI may return either "weatherForecast" (per spec) or "weather" (legacy) — accept both.
-          weatherInfo: tripData.weatherForecast || tripData.weather || { expected: "Pleasant", avgTemp: "28°C", tips: ["Carry water"], forecast: [] },
-          // AI may return either "safety" (per spec) or "safetyInfo" (legacy) — accept both.
-          safetyInfo: tripData.safety || tripData.safetyInfo || { overallScore: 8, tips: ["Stay aware"], emergencyNumber: "112", scamAlerts: [], safeAreas: [], avoidAreas: [] },
-          // NOTE: originLat/originLng/destLat/destLng intentionally NOT set here.
-          // Task 3 (TrackingOverlay) will geocode origin/destination on first journey
-          // start and PATCH them back via /api/trips/[id].
-        },
-      });
-    } catch (dbError: any) {
-      console.error("💥 Database Error:", dbError);
-      return NextResponse.json({ error: `Database failed: ${dbError.message}` }, { status: 500 });
+      const text = result.text.trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('No JSON object found in AI response');
+      trip = JSON.parse(match[0]);
+    } catch {
+      throw new Error('AI returned invalid JSON. Please try again.');
     }
 
-    // Return the SAVED Prisma row verbatim so the client sees the SAME shape
-    // from POST /api/ai/generate-trip as it does from GET /api/trips/[id].
+    const totalCost = Number(trip.totalCost ?? 0);
+    const maxAllowed = flexibleBudget ? budget * 1.10 : budget;
+    if (totalCost > maxAllowed) {
+      trip.totalCost = budget;
+      if (trip.budget && typeof trip.budget === 'object') {
+        (trip.budget as Record<string, unknown>).actualCost = budget;
+      }
+    }
+
+    const rawDays = (trip.itinerary ?? trip.days ?? []) as Record<string, unknown>[];
+    const normalisedDays = rawDays.map((d, i) => ({
+      dayNumber: d.dayNumber ?? d.day ?? i + 1,
+      date: d.date ?? '',
+      theme: d.theme ?? '',
+      summary: d.summary ?? '',
+      totalCost: d.totalCost ?? 0,
+      activities: d.activities ?? [],
+    }));
+
+    const rawGuide = trip.transportGuide as Record<string, unknown> | undefined;
+    const normalisedGuide = rawGuide ? {
+      overview: rawGuide.overview ?? rawGuide.details ?? '',
+      primaryRoute: rawGuide.primaryRoute ?? rawGuide.legs ?? [],
+      totalTransportCost: rawGuide.totalTransportCost ?? 0,
+      tips: rawGuide.tips ?? [],
+    } : null;
+
+    const rawBudget = (trip.budget ?? trip.budgetBreakdown ?? {}) as Record<string, unknown>;
+    const normalisedBudget = {
+      total: rawBudget.total ?? budget,
+      actualCost: rawBudget.actualCost ?? rawBudget.total ?? budget,
+      transport: rawBudget.transport ?? 0,
+      accommodation: rawBudget.accommodation ?? 0,
+      food: rawBudget.food ?? 0,
+      activities: rawBudget.activities ?? 0,
+      miscellaneous: rawBudget.misc ?? rawBudget.miscellaneous ?? 0,
+      emergencyFund: rawBudget.emergencyFund ?? 0,
+      perDay: rawBudget.perDay ?? Math.round(Number(budget) / duration),
+      perPerson: rawBudget.perPerson ?? Math.round(Number(budget) / (Number(travelers) || 1)),
+      breakdown: rawBudget.breakdown ?? [],
+    };
+
+    const itineraryPayload = {
+      title: trip.title ?? null,
+      summary: trip.summary ?? null,
+      days: normalisedDays,
+      hotels: trip.hotels ?? [],
+      restaurants: trip.restaurants ?? [],
+      hiddenGems: trip.hiddenGems ?? [],
+      transportGuide: normalisedGuide,
+      seasonalTips: trip.seasonalTips ?? [],
+      localPhrases: trip.localPhrases ?? [],
+      crowdPrediction: trip.crowdPrediction ?? null,
+    };
+
+    const newTrip = await prisma.trip.create({
+      data: {
+        userId: session.user.id,
+        title: String(trip.title ?? `Trip to ${destination}`),
+        origin,
+        destination,
+        startDate: startD,
+        endDate: endD,
+        duration,
+        travelers: Number(travelers) || 1,
+        purpose,
+        budget: Number(budget),
+        currency,
+        foodPref: foodPreference,
+        hotelPref: hotelPreference,
+        transportPref: transportPreferences ?? [],
+        itinerary: itineraryPayload,
+        budgetBreakdown: normalisedBudget,
+        packingList: trip.packingList ?? null,
+        weatherInfo: trip.weatherForecast ?? trip.weatherInfo ?? null,
+        safetyInfo: trip.safety ?? trip.safetyInfo ?? null,
+        status: 'PLANNING',
+      },
+    });
+
     return NextResponse.json({
       success: true,
-      tripId: trip.id,
-      trip,
-      provider,
+      tripId: newTrip.id,
+      aiProvider: result.provider,
     });
-  } catch (error: any) {
-    console.error("💥 Trip generation error:", error);
-    return NextResponse.json({ error: error.message || "Failed to generate trip." }, { status: 500 });
+  } catch (error: unknown) {
+    console.error('[Generate Trip]', error);
+    const message = error instanceof Error ? error.message : 'Failed to generate trip';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
