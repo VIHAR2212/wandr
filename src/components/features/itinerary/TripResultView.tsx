@@ -267,7 +267,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
     const fmtCur = (amt: number) => formatCurrency(amt, fd.currency);
 
     // ---------- Color Palette ----------
-    const C: Record<string, number[]> = {
+    const C: Record<string, [number, number, number]> = {
       primary: [30, 58, 138],
       primaryLight: [59, 130, 246],
       accent: [14, 165, 133],
