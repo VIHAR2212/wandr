@@ -1,6 +1,5 @@
-// src/app/api/ai/generate-trip/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { callAI } from '@/lib/ai';
+import { generateAIJson } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 
@@ -31,11 +30,6 @@ export async function POST(req: NextRequest) {
     const startD = new Date(startDate);
     const endD = new Date(endDate);
     const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
-
-    const CURRENCY_SYMBOL: Record<string, string> = {
-      INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', JPY: '¥', SGD: 'S$',
-    };
-    const sym = CURRENCY_SYMBOL[currency] ?? currency;
 
     const PURPOSE_LABEL: Record<string, string> = {
       ADVENTURE: 'adventure and thrill-seeking',
@@ -76,25 +70,15 @@ RULES:
 6. If any day's city changes vs previous day's last location, add transport entry as that day's FIRST activity.
 7. LOCAL transport (same city): NO separate activity. Add in next activity's notes: "Auto from [place] (~₹50)".`;
 
-    const result = await callAI(systemPrompt, [{ role: 'user', content: userPrompt }], 4096);
+    const result = await generateAIJson(userPrompt, systemPrompt);
+    const trip = result.data as Record<string, unknown>;
 
-    let trip: Record<string, unknown>;
-    try {
-      const text = result.text.trim().replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
-      const match = text.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('No JSON object found in AI response');
-      trip = JSON.parse(match[0]);
-    } catch {
-      throw new Error('AI returned invalid JSON. Please try again.');
-    }
+    if (!trip) throw new Error('AI returned empty response');
 
     const totalCost = Number(trip.totalCost ?? 0);
     const maxAllowed = flexibleBudget ? budget * 1.10 : budget;
     if (totalCost > maxAllowed) {
       trip.totalCost = budget;
-      if (trip.budget && typeof trip.budget === 'object') {
-        (trip.budget as Record<string, unknown>).actualCost = budget;
-      }
     }
 
     const rawDays = (trip.itinerary ?? trip.days ?? []) as Record<string, unknown>[];
