@@ -6,6 +6,41 @@ import prisma from '@/lib/db';
 export const runtime = 'nodejs';
 export const maxDuration = 10;
 
+const VALID_PURPOSES = [
+  'ADVENTURE', 'DEVOTIONAL', 'HIKING', 'HONEYMOON', 'FAMILY',
+  'PHOTOGRAPHY', 'BUSINESS', 'FOOD_EXPLORATION', 'WELLNESS',
+  'CULTURAL', 'SOLO', 'BACKPACKING',
+] as const;
+
+const PURPOSE_LABEL: Record<string, string> = {
+  ADVENTURE: 'adventure and thrill-seeking',
+  DEVOTIONAL: 'religious/devotional visits and spiritual experiences',
+  HIKING: 'trekking and nature hiking',
+  HONEYMOON: 'romantic honeymoon experiences',
+  FAMILY: 'family-friendly activities suitable for all ages',
+  PHOTOGRAPHY: 'photography — golden hours, landscapes, architecture',
+  BUSINESS: 'business travel with efficient scheduling',
+  FOOD_EXPLORATION: 'food exploration and culinary discovery',
+  WELLNESS: 'wellness, yoga, meditation, and relaxation',
+  CULTURAL: 'cultural immersion, museums, local heritage',
+  SOLO: 'solo travel with safety and social opportunities',
+  BACKPACKING: 'budget backpacking',
+};
+
+const FOOD_LABEL: Record<string, string> = {
+  VEG: 'strictly vegetarian (no meat, fish, or eggs)',
+  JAIN: 'Jain diet (no root vegetables like onion, garlic, potato)',
+  VEGAN: 'fully vegan (no animal products)',
+  HALAL: 'halal-certified food only',
+  NON_VEG: 'any cuisine including non-vegetarian',
+};
+
+function safePurpose(value: unknown) {
+  return typeof value === 'string' && VALID_PURPOSES.includes(value as any)
+    ? value
+    : 'CULTURAL';
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await auth();
@@ -31,30 +66,7 @@ export async function POST(req: NextRequest) {
     const endD = new Date(endDate);
     const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
-    const PURPOSE_LABEL: Record<string, string> = {
-      ADVENTURE: 'adventure and thrill-seeking',
-      DEVOTIONAL: 'religious/devotional visits and spiritual experiences',
-      HIKING: 'trekking and nature hiking',
-      HONEYMOON: 'romantic honeymoon experiences',
-      FAMILY: 'family-friendly activities suitable for all ages',
-      PHOTOGRAPHY: 'photography — golden hours, landscapes, architecture',
-      BUSINESS: 'business travel with efficient scheduling',
-      FOOD_EXPLORATION: 'food exploration and culinary discovery',
-      WELLNESS: 'wellness, yoga, meditation, and relaxation',
-      CULTURAL: 'cultural immersion, museums, local heritage',
-      SOLO: 'solo travel with safety and social opportunities',
-      BACKPACKING: 'budget backpacking',
-    };
-
-    const FOOD_LABEL: Record<string, string> = {
-      VEG: 'strictly vegetarian (no meat, fish, or eggs)',
-      JAIN: 'Jain diet (no root vegetables like onion, garlic, potato)',
-      VEGAN: 'fully vegan (no animal products)',
-      HALAL: 'halal-certified food only',
-      NON_VEG: 'any cuisine including non-vegetarian',
-    };
-
-    const systemPrompt = `Expert travel planner. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose}. Hotel: ${hotelPreference}.`;
+    const systemPrompt = `Expert travel planner. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose ?? 'general travel'}. Hotel: ${hotelPreference}.`;
 
     const userPrompt = `${duration}-day ${destination} trip. Budget: ${budget} ${currency ?? 'INR'}, ${travelers ?? 1} traveler(s), ${startDate} to ${endDate}. Transport pref: ${(transportPreferences ?? []).join('/') || 'any'}.${specialRequests ? ` Notes: ${specialRequests}.` : ''}
 
@@ -144,7 +156,7 @@ RULES:
         endDate: endD,
         duration,
         travelers: Number(travelers) || 1,
-        purpose: purpose ?? 'GENERAL',
+        purpose: safePurpose(purpose) as any,
         budget: Number(budget),
         currency,
         foodPref: foodPreference,
