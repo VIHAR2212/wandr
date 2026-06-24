@@ -1,16 +1,182 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   MapPin, Calendar, Users, Wallet, Compass, Utensils,
-  Hotel, Train, ChevronRight, ChevronLeft, Sparkles, Loader2, Wand2
+  Hotel, Train, ChevronRight, ChevronLeft, Sparkles, Loader2, Wand2, X
 } from 'lucide-react';
 import type { TripFormData, TripPurpose, FoodPreference, HotelType, TransportType } from '@/types';
 import { cn, formatCurrency } from '@/lib/utils';
+import { GlassFilter } from '@/components/ui/button';
 
 const STEPS = ['Route', 'Budget & Travelers', 'Purpose & Food', 'Accommodation', 'Review'];
+
+const INDIAN_PLACES = [
+  // States & Regions
+  'Andaman & Nicobar Islands, India',
+  'Andhra Pradesh, India',
+  'Arunachal Pradesh, India',
+  'Assam, India',
+  'Bihar, India',
+  'Chhattisgarh, India',
+  'Goa, India',
+  'Gujarat, India',
+  'Haryana, India',
+  'Himachal Pradesh, India',
+  'Jammu & Kashmir, India',
+  'Jharkhand, India',
+  'Karnataka, India',
+  'Kerala, India',
+  'Ladakh, India',
+  'Lakshadweep, India',
+  'Madhya Pradesh, India',
+  'Maharashtra, India',
+  'Manipur, India',
+  'Meghalaya, India',
+  'Mizoram, India',
+  'Nagaland, India',
+  'Odisha, India',
+  'Punjab, India',
+  'Rajasthan, India',
+  'Sikkim, India',
+  'Tamil Nadu, India',
+  'Telangana, India',
+  'Tripura, India',
+  'Uttar Pradesh, India',
+  'Uttarakhand, India',
+  'West Bengal, India',
+  // Major Cities
+  'Agra, India',
+  'Ahmedabad, India',
+  'Aizawl, India',
+  'Ajmer, India',
+  'Allahabad, India',
+  'Amritsar, India',
+  'Aurangabad, India',
+  'Bangalore, India',
+  'Bhopal, India',
+  'Bhubaneswar, India',
+  'Chandigarh, India',
+  'Chennai, India',
+  'Coimbatore, India',
+  'Dehradun, India',
+  'Delhi, India',
+  'Dharamshala, India',
+  'Dwarka, India',
+  'Gangtok, India',
+  'Guwahati, India',
+  'Gwalior, India',
+  'Hampi, India',
+  'Haridwar, India',
+  'Hyderabad, India',
+  'Indore, India',
+  'Jaipur, India',
+  'Jaisalmer, India',
+  'Jammu, India',
+  'Jodhpur, India',
+  'Kochi, India',
+  'Kodaikanal, India',
+  'Kohima, India',
+  'Kolkata, India',
+  'Kovalam, India',
+  'Kufri, India',
+  'Kullu, India',
+  'Kurukshetra, India',
+  'Leh, India',
+  'Lonavala, India',
+  'Lucknow, India',
+  'Ludhiana, India',
+  'Madurai, India',
+  'Manali, India',
+  'Mangalore, India',
+  'Mathura, India',
+  'Meerut, India',
+  'Mumbai, India',
+  'Munnar, India',
+  'Mussoorie, India',
+  'Mysore, India',
+  'Nagpur, India',
+  'Nainital, India',
+  'Nashik, India',
+  'Ooty, India',
+  'Panjim, India',
+  'Patna, India',
+  'Pondicherry, India',
+  'Port Blair, India',
+  'Puri, India',
+  'Pushkar, India',
+  'Raipur, India',
+  'Ranchi, India',
+  'Rishikesh, India',
+  'Shimla, India',
+  'Shillong, India',
+  'Siliguri, India',
+  'Srinagar, India',
+  'Surat, India',
+  'Tirupati, India',
+  'Udaipur, India',
+  'Vadodara, India',
+  'Varanasi, India',
+  'Varkala, India',
+  'Vijayawada, India',
+  'Visakhapatnam, India',
+  // Popular Tourist Destinations
+  'Alleppey, India',
+  'Andaman Islands, India',
+  'Auli, India',
+  'Badrinath, India',
+  'Bandhavgarh, India',
+  'Bir Billing, India',
+  'Chopta, India',
+  'Coorg, India',
+  'Darjeeling, India',
+  'Dhanaulti, India',
+  'Dooars, India',
+  'Dudhwa, India',
+  'Dzukou Valley, India',
+  'Ellora, India',
+  'Gokarna, India',
+  'Gulmarg, India',
+  'Jog Falls, India',
+  'Kanha, India',
+  'Kaziranga, India',
+  'Kedarnath, India',
+  'Khajuraho, India',
+  'Khandala, India',
+  'Kodagu, India',
+  'Konark, India',
+  'Lansdowne, India',
+  'Lakshadweep Islands, India',
+  'Mahabaleshwar, India',
+  'Majuli, India',
+  'Mandu, India',
+  'McLeod Ganj, India',
+  'Mawlynnong, India',
+  'Mount Abu, India',
+  'Munsiyari, India',
+  'Nagarhole, India',
+  'Nubra Valley, India',
+  'Pachmarhi, India',
+  'Pangong Lake, India',
+  'Ranthambore, India',
+  'Sabrimala, India',
+  'Sandakphu, India',
+  'Sariska, India',
+  'Shoja, India',
+  'Spiti Valley, India',
+  'Sundarbans, India',
+  'Tawang, India',
+  'Thekkady, India',
+  'Valley of Flowers, India',
+  'Wayanad, India',
+  'Zanskar, India',
+  // Kashmir specific
+  'Kashmir, India',
+  'Pahalgam, India',
+  'Sonamarg, India',
+];
 
 const PURPOSES: { value: TripPurpose; label: string; emoji: string }[] = [
   { value: 'ADVENTURE', label: 'Adventure', emoji: '🧗' },
@@ -57,7 +223,150 @@ const TRANSPORT_TYPES: { value: TransportType; label: string; emoji: string }[] 
   { value: 'BICYCLE', label: 'Bicycle', emoji: '🚲' },
 ];
 
-// Auto-select transport & hotel based on budget
+const ROUTE_SUGGESTIONS = [
+  { from: 'Mumbai', to: 'Kashmir' },
+  { from: 'Delhi', to: 'Goa' },
+  { from: 'Mumbai', to: 'Manali' },
+  { from: 'Delhi', to: 'Kerala' },
+  { from: 'Bangalore', to: 'Rajasthan' },
+  { from: 'Mumbai', to: 'Andaman' },
+];
+
+// ── Autocomplete hook ──────────────────────────────────────────────
+function usePlaceAutocomplete(value: string) {
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    const q = value.trim().toLowerCase();
+    if (q.length === 0) {
+      setSuggestions([]);
+      return;
+    }
+    const filtered = INDIAN_PLACES.filter(p =>
+      p.toLowerCase().startsWith(q) || p.toLowerCase().includes(`, ${q}`)
+    ).slice(0, 7);
+    setSuggestions(filtered);
+  }, [value]);
+
+  return suggestions;
+}
+
+// ── PlaceInput component ───────────────────────────────────────────
+function PlaceInput({
+  value,
+  onChange,
+  placeholder,
+  icon,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder: string;
+  icon: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const suggestions = usePlaceAutocomplete(value);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const showDropdown = open && suggestions.length > 0;
+
+  function highlight(text: string) {
+    const q = value.trim();
+    if (!q) return text;
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <span className="text-primary font-semibold">{text.slice(idx, idx + q.length)}</span>
+        {text.slice(idx + q.length)}
+      </>
+    );
+  }
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          onChange={e => {
+            onChange(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            setFocused(true);
+            setOpen(true);
+          }}
+          onBlur={() => setFocused(false)}
+          placeholder={placeholder}
+          className="glass-input pr-8"
+          autoComplete="off"
+        />
+        {value && (
+          <button
+            onMouseDown={e => {
+              e.preventDefault();
+              onChange('');
+              setOpen(false);
+            }}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {showDropdown && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.15 }}
+            className="absolute z-50 left-0 right-0 mt-1.5 rounded-2xl border border-border overflow-hidden"
+            style={{
+              background: 'var(--glass-bg, rgba(20,20,20,0.92))',
+              backdropFilter: 'blur(20px)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+            }}
+          >
+            {suggestions.map((s, i) => (
+              <button
+                key={s}
+                onMouseDown={e => {
+                  e.preventDefault();
+                  onChange(s);
+                  setOpen(false);
+                }}
+                className={cn(
+                  'w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors hover:bg-primary/10',
+                  i !== suggestions.length - 1 && 'border-b border-border/50'
+                )}
+              >
+                <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-foreground truncate">{highlight(s)}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ── Smart Recommendations ──────────────────────────────────────────
 function getSmartRecommendations(budget: number, travelers: number, days: number) {
   const perDayPerPerson = days > 0 ? budget / (days * travelers) : budget;
   let transport: TransportType[] = [];
@@ -83,7 +392,6 @@ function getSmartRecommendations(budget: number, travelers: number, days: number
   return { transport, hotel };
 }
 
-// Format date to dd-mm-yyyy
 function fmtDate(dateStr: string): string {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -142,7 +450,6 @@ export function TripPlannerWizard() {
     }));
   }
 
-  // Auto-fill transport & hotel when budget changes and smart mode is on
   useEffect(() => {
     if (form.smartBudget && form.budget > 0 && form.travelers > 0) {
       const duration = form.startDate && form.endDate
@@ -252,18 +559,18 @@ export function TripPlannerWizard() {
                   <h2 className="text-2xl font-bold text-foreground mb-1">Where are you going?</h2>
                   <p className="text-muted-foreground text-sm">Enter your starting point and dream destination.</p>
                 </div>
+
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium text-foreground flex items-center gap-2 mb-2">
                       <MapPin className="w-4 h-4 text-muted-foreground" />
                       Starting From
                     </label>
-                    <input
-                      type="text"
+                    <PlaceInput
                       value={form.origin}
-                      onChange={e => update('origin', e.target.value)}
+                      onChange={val => update('origin', val)}
                       placeholder="Mumbai, India"
-                      className="glass-input"
+                      icon={<MapPin className="w-4 h-4" />}
                     />
                   </div>
                   <div>
@@ -271,19 +578,46 @@ export function TripPlannerWizard() {
                       <Compass className="w-4 h-4 text-muted-foreground" />
                       Destination
                     </label>
-                    <input
-                      type="text"
+                    <PlaceInput
                       value={form.destination}
-                      onChange={e => update('destination', e.target.value)}
+                      onChange={val => update('destination', val)}
                       placeholder="Gujarat, India"
-                      className="glass-input"
+                      icon={<Compass className="w-4 h-4" />}
                     />
                   </div>
                 </div>
+
+                {/* Liquid Glass Route Suggestion Chips */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-3">Popular routes</p>
+                  <div className="flex flex-wrap gap-2">
+                    {ROUTE_SUGGESTIONS.map(({ from, to }) => (
+                      <button
+                        key={`${from}-${to}`}
+                        onClick={() => {
+                          update('origin', `${from}, India`);
+                          update('destination', `${to}, India`);
+                        }}
+                        className="relative px-4 py-2 rounded-full text-xs font-medium text-foreground transition-all duration-200 hover:scale-105 active:scale-95 hover:text-primary"
+                        style={{
+                          boxShadow: 'inset 3px 3px 0.5px -3.5px rgba(255,255,255,0.09), inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.85), inset 1px 1px 1px -0.5px rgba(255,255,255,0.6), inset -1px -1px 1px -0.5px rgba(255,255,255,0.6), inset 0 0 6px 6px rgba(255,255,255,0.12), inset 0 0 2px 2px rgba(255,255,255,0.06), 0 0 12px rgba(0,0,0,0.15)',
+                        }}
+                      >
+                        <div
+                          className="absolute inset-0 rounded-full -z-10"
+                          style={{ backdropFilter: 'url("#container-glass") blur(4px)' }}
+                        />
+                        {from} → {to}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <GlassFilter />
               </div>
             )}
 
-            {/* Step 1: Budget & Travelers (moved up before purpose) */}
+            {/* Step 1: Budget & Travelers */}
             {step === 1 && (
               <div className="space-y-6">
                 <div>
@@ -291,7 +625,6 @@ export function TripPlannerWizard() {
                   <p className="text-muted-foreground text-sm">AI will optimize everything within your budget.</p>
                 </div>
 
-                {/* Smart Budget Toggle */}
                 <div className="glass-panel rounded-2xl p-4 border-primary/20 border">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -441,7 +774,6 @@ export function TripPlannerWizard() {
                   </div>
                 )}
 
-                {/* Show smart recommendations */}
                 {form.smartBudget && form.budget > 0 && (
                   <div className="glass-panel rounded-2xl p-4 border-primary/20 border">
                     <div className="text-xs text-primary font-medium mb-2">✨ Smart Budget selected:</div>
