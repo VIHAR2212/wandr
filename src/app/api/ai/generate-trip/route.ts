@@ -62,13 +62,12 @@ STRICT JSON (no markdown, no text):
 {"destination":"${destination}","title":"...","summary":"2-3 lines","totalDays":${duration},"itinerary":[{"day":1,"date":"${startDate}","theme":"Theme","activities":[{"time":"06:00-08:15","type":"TRANSPORT","title":"Flight: ${origin} to ${destination}","description":"IndiGo 6E-204 · T2 Departure · Arrives T1","location":"${origin} Airport","lat":0,"lng":0,"cost":0,"duration":135,"notes":"Reach airport 2hrs early"},{"time":"09:00","type":"SIGHTSEEING","title":"Visit Place","description":"Details","location":"Exact Place Name","lat":0,"lng":0,"cost":0,"duration":90,"notes":"tip"}]}],"hotels":[{"name":"Hotel Name","area":"Area","lat":0,"lng":0,"pricePerNight":2000,"rating":4,"amenities":["WiFi"],"diet":"${foodPreference || 'all'}"}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","diet":"${foodPreference || 'all'}","lat":0,"lng":0,"pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","lat":0,"lng":0,"when":"Early morning","cost":0}],"transportGuide":{"overview":"Brief transport overview","legs":[{"from":"${origin}","to":"${destination}","mode":"${(transportPreferences ?? ['FLIGHT'])[0]}","duration":"2h","cost":0,"operator":"Airline/Railway","vehicleNo":"6E-204","vehicle":"A320neo"}]},"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"],"forecast":[{"date":"${startDate}","condition":"Sunny","high":32,"low":22}]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
 
 RULES:
-1. Exactly ${duration} days, 4-6 activities each.
-2. Budget totals ${budget}.
-3. 2 hotels, 3 restaurants, 3-5 hiddenGems, 8-15 packing items (cat: clothing|toiletries|electronics|documents|misc).
-4. Accurate lat/lng on EVERY item (use real coordinates for ${destination} landmarks).
-5. TRANSPORT (MANDATORY): First activity of Day 1 MUST be type:"TRANSPORT" — Flight or Train from "${origin}" to "${destination}" with real airline/train name, number, departure time.
-6. If any day's city changes vs previous day's last location, add transport entry as that day's FIRST activity.
-7. LOCAL transport (same city): NO separate activity. Add in next activity's notes: "Auto from [place] (~₹50)".`;
+1. Return ONLY valid JSON. No markdown fences, no comments, no trailing commas.
+2. Each day has an activities array. If city changed from previous day, add transport activity FIRST: {type:"transport", title:"Flight/Train to [City]", description:"[Airline] [Code] dep [HH:MM] → arr [HH:MM]" or "[Train Name] [Number] ([Class]) dep [HH:MM] → arr [HH:MM]", time:"HH:MM", duration:"Xh Ym", cost:Number}.
+3. Use REAL codes: Delhi→Mumbai: 6E-2116/6E-2647/UK-917/AI-865 | Rajdhani 12952(2A). Delhi→Bangalore: 6E-2191/6E-6036/AI-509 | Rajdhani 22691(2A). Delhi→Goa: 6E-2072/6E-5467/SG-325. Mumbai→Goa: 6E-6134/6E-5261/SG-673 | Jan Shatabdi 12051(CC). Mumbai→Jaipur: 6E-6358/UK-731/AI-647 | 12955(SL). Mumbai→Bangalore: 6E-5072/6E-2175/AI-614 | 16529(SL). Delhi→Jaipur: 6E-6231/UK-627 | Shatabdi 12015(CC). Delhi→Kolkata: 6E-2507/UK-705/AI-701 | 12302(2A). Delhi→Hyderabad: 6E-2841/AI-839 | 12724(2A). Mumbai→Kolkata: 6E-5053/UK-781 | 12859(SL). Any other route: pick plausible 6E-xxxx/UK-xxx/AI-xxx.
+4. Local transport (auto,bus,walk) goes in tips notes, NOT as activities.
+5. Budget must sum correctly across all days.
+6. Include 3-5 activities per day with real places, real timings, real costs in INR.
 
     const result = await generateAIJson(userPrompt, systemPrompt);
     const trip = result.data as Record<string, unknown>;
