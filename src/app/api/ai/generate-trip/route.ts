@@ -145,9 +145,9 @@ RULES:
         transportPref: transportPreferences ?? [],
         itinerary: itineraryPayload,
         budgetBreakdown: normalisedBudget,
-        packingList: trip.packingList ?? null,
-        weatherInfo: trip.weatherForecast ?? trip.weatherInfo ?? null,
-        safetyInfo: trip.safety ?? trip.safetyInfo ?? null,
+        packingList: trip.packingList ?? undefined,
+        weatherInfo: trip.weatherForecast ?? trip.weatherInfo ?? undefined,
+        safetyInfo: trip.safety ?? trip.safetyInfo ?? undefined,
         status: 'PLANNING',
       },
     });
