@@ -111,7 +111,7 @@ function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterC
     });
   });
 
-  // Final "Home — Safe Return" stop
+  // Final "Home \u2014 Safe Return" stop
   const lastDay = days[days.length - 1];
   const lastActs = lastDay?.activities || [];
   const lastLoc =
@@ -133,13 +133,13 @@ function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterC
   return stops;
 }
 
-/* ─── Icon factories (use L directly, no require) ──────── */
+/* ─── Icon factories ───────────────────────────────────── */
 function makeUserDivIcon(): L.DivIcon {
   return L.divIcon({
     html: `
       <div style="position:relative;width:46px;height:46px;">
-        <div style="position:absolute;inset:-4px;border-radius:50%;background:radial-gradient(circle,rgba(255,215,0,0.35) 0%,transparent 70%);animation:up2 2s ease-out infinite;"></div>
-        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FFD700,#FFA500);border:3px solid white;box-shadow:0 0 14px rgba(255,215,0,0.7),0 2px 8px rgba(0,0,0,0.3);z-index:2;"></div>
+        <div style="position:absolute;inset:-4px;border-radius:50%;background:radial-gradient(circle,rgba(249,115,22,0.4) 0%,transparent 70%);animation:up2 2s ease-out infinite;"></div>
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#F97316,#EA580C);border:3px solid white;box-shadow:0 0 14px rgba(249,115,22,0.7),0 2px 8px rgba(0,0,0,0.3);z-index:2;"></div>
         <style>@keyframes up2{0%{transform:scale(0.8);opacity:0.8}100%{transform:scale(2.4);opacity:0}}</style>
       </div>`,
     className: '',
@@ -155,7 +155,7 @@ function makeTransportDivIcon(mode: string): L.DivIcon {
   const emoji = emojis[mode] || '\uD83D\uDE97';
   return L.divIcon({
     html: `
-      <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#3B82F6,#6366F1);display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid white;box-shadow:0 0 16px rgba(59,130,246,0.6),0 0 32px rgba(99,102,241,0.3);animation:tb 1.5s ease-in-out infinite;">
+      <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#F97316,#EA580C);display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid white;box-shadow:0 0 16px rgba(249,115,22,0.6),0 0 32px rgba(234,88,12,0.3);animation:tb 1.5s ease-in-out infinite;">
         <style>@keyframes tb{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}</style>
         ${emoji}
       </div>`,
@@ -189,9 +189,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopsRef = useRef<ItineraryStop[]>([]);
 
-  useEffect(() => {
-    stopsRef.current = stops;
-  }, [stops]);
+  useEffect(() => { stopsRef.current = stops; }, [stops]);
 
   /* ─── Geocode all stops + distance-based isInterCity ── */
   useEffect(() => {
@@ -200,14 +198,13 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
     (async () => {
       setGeoProgress({ done: 0, total: raw.length });
-
       const geocoded: ItineraryStop[] = [];
+
       for (let i = 0; i < raw.length; i++) {
         if (cancelled) return;
         const s = raw[i];
         let coord = await geocode(s.location);
 
-        // Fallback: use lat/lng from activity data
         if (!coord) {
           let actIdx = 0;
           for (const day of trip?.days || []) {
@@ -222,32 +219,23 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           }
         }
 
-        // Fallback for home stop
         if (!coord && s.isHomeStop) {
           if (originLat && originLng) coord = { lat: originLat, lng: originLng };
           else if (geocoded.length > 0) coord = { lat: geocoded[0].lat, lng: geocoded[0].lng };
         }
 
-        geocoded.push({
-          ...s,
-          lat: coord?.lat ?? 0,
-          lng: coord?.lng ?? 0,
-          isInterCity: false,
-        });
+        geocoded.push({ ...s, lat: coord?.lat ?? 0, lng: coord?.lng ?? 0, isInterCity: false });
         setGeoProgress({ done: i + 1, total: raw.length });
       }
 
       if (cancelled) return;
 
-      // ── Distance-based isInterCity ──
       for (let i = 1; i < geocoded.length; i++) {
-        const prev = geocoded[i - 1];
-        const curr = geocoded[i];
         const dist = haversineKm(
-          { lat: prev.lat, lng: prev.lng },
-          { lat: curr.lat, lng: curr.lng }
+          { lat: geocoded[i - 1].lat, lng: geocoded[i - 1].lng },
+          { lat: geocoded[i].lat, lng: geocoded[i].lng }
         );
-        curr.isInterCity = dist >= INTER_CITY_KM || curr.type === 'transport';
+        geocoded[i].isInterCity = dist >= INTER_CITY_KM || geocoded[i].type === 'transport';
       }
       if (geocoded.length > 0) geocoded[0].isInterCity = false;
 
@@ -257,7 +245,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     return () => { cancelled = true; };
   }, [trip, originLat, originLng]);
 
-  /* ─── Init Leaflet map once stops are ready ─────────── */
+  /* ─── Init Leaflet map ──────────────────────────────── */
   useEffect(() => {
     if (stops.length === 0 || phase !== 'geocoding') return;
 
@@ -265,18 +253,12 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       if (!mapContainerRef.current || leafletMapRef.current) return;
 
       const map = L.map(mapContainerRef.current, {
-        zoomControl: false,
-        scrollWheelZoom: true,
-        attributionControl: false,
+        zoomControl: false, scrollWheelZoom: true, attributionControl: false,
       }).setView([stops[0].lat || 19.076, stops[0].lng || 72.877], 13);
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-      }).addTo(map);
-
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-      // Plot stop dots
       const stopGroup = L.layerGroup().addTo(map);
       stopGroupRef.current = stopGroup;
 
@@ -286,8 +268,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         const coord: L.LatLngExpression = [stop.lat, stop.lng];
         allCoords.push(coord);
 
-        let dotColor = '#14B8A6';
-        if (stop.type === 'hotel') dotColor = '#F97316';
+        let dotColor = '#F97316';
         if (stop.type === 'restaurant') dotColor = '#22C55E';
         if (stop.type === 'transport') dotColor = '#3B82F6';
         if (stop.type === 'hiddenGem') dotColor = '#A855F7';
@@ -297,27 +278,21 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         const sz = visited ? 12 : 8;
         const dotIcon = L.divIcon({
           html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 ${visited ? '8px' : '4px'} ${dotColor}80;transition:all .3s;"></div>`,
-          className: '',
-          iconSize: [sz, sz],
-          iconAnchor: [sz / 2, sz / 2],
+          className: '', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
         });
         L.marker(coord, { icon: dotIcon }).addTo(stopGroup).bindPopup(`<b>${stop.name}</b><br><small>${stop.location}</small>`);
       });
 
-      // Route lines
       if (allCoords.length > 1) {
-        L.polyline(allCoords, { color: '#6366F1', weight: 6, opacity: 0.2, lineCap: 'round', lineJoin: 'round' }).addTo(map);
-        L.polyline(allCoords, { color: '#8B5CF6', weight: 3, opacity: 0.6, dashArray: '8, 12' }).addTo(map);
+        L.polyline(allCoords, { color: '#F97316', weight: 6, opacity: 0.2, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+        L.polyline(allCoords, { color: '#EA580C', weight: 3, opacity: 0.6, dashArray: '8, 12' }).addTo(map);
         map.fitBounds(L.latLngBounds(allCoords), { padding: [50, 50], maxZoom: 14 });
       }
 
-      // User marker
       const firstCoord: L.LatLngExpression = allCoords[0] || [19.076, 72.877];
       userMarkerRef.current = L.marker(firstCoord, { icon: makeUserDivIcon(), zIndexOffset: 2000 }).addTo(map);
-
-      // Trail line
       trailLineRef.current = L.polyline([firstCoord], {
-        color: '#FBBF24', weight: 4, opacity: 0.8, lineCap: 'round', lineJoin: 'round',
+        color: '#F97316', weight: 4, opacity: 0.8, lineCap: 'round', lineJoin: 'round',
       }).addTo(map);
 
       leafletMapRef.current = map;
@@ -329,14 +304,11 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stops]);
 
-  /* ─── Single demo engine: move from stops[fromIdx] → stops[fromIdx+1] ── */
+  /* ─── Demo engine ───────────────────────────────────── */
   const beginDemo = useCallback((fromIdx: number) => {
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
     const allStops = stopsRef.current;
-    if (!allStops || fromIdx >= allStops.length - 1) {
-      setPhase('completed');
-      return;
-    }
+    if (!allStops || fromIdx >= allStops.length - 1) { setPhase('completed'); return; }
 
     const from = allStops[fromIdx];
     const to = allStops[fromIdx + 1];
@@ -345,29 +317,18 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     let step = 0;
     const stepsPerSeg = 40;
 
-    // Set transport mode for this segment
-    if (to.isInterCity && to.transportTo) {
-      setCurrentTransportMode(to.transportTo);
-    } else {
-      setCurrentTransportMode('');
-    }
+    if (to.isInterCity && to.transportTo) setCurrentTransportMode(to.transportTo);
+    else setCurrentTransportMode('');
 
-    // Switch icon immediately
     const map = leafletMapRef.current;
     if (map && userMarkerRef.current) {
-      if (to.isInterCity && to.transportTo) {
-        userMarkerRef.current.setIcon(makeTransportDivIcon(to.transportTo));
-      } else {
-        userMarkerRef.current.setIcon(makeUserDivIcon());
-      }
+      if (to.isInterCity && to.transportTo) userMarkerRef.current.setIcon(makeTransportDivIcon(to.transportTo));
+      else userMarkerRef.current.setIcon(makeUserDivIcon());
     }
 
     demoIntervalRef.current = setInterval(() => {
       const s = stopsRef.current;
-      if (!s || fromIdx >= s.length - 1) {
-        if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
-        return;
-      }
+      if (!s || fromIdx >= s.length - 1) { if (demoIntervalRef.current) clearInterval(demoIntervalRef.current); return; }
 
       const progress = step / stepsPerSeg;
       const lat = from.lat + (to.lat - from.lat) * progress;
@@ -375,14 +336,11 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
       if (map && userMarkerRef.current) {
         userMarkerRef.current.setLatLng([lat, lng]);
-
         if (trailLineRef.current) {
           const pts: L.LatLng[] = trailLineRef.current.getLatLngs() as L.LatLng[];
           pts.push(L.latLng(lat, lng));
           trailLineRef.current.setLatLngs(pts);
         }
-
-        // Throttled pan
         if (!panTimerRef.current) {
           panTimerRef.current = setTimeout(() => {
             map.panTo([lat, lng], { animate: true, duration: 0.4 });
@@ -396,17 +354,12 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
         setCurrentIdx(fromIdx + 1);
         setPhase('waiting_confirmation');
-
-        // Start reminder timer
         let rc = 0;
         if (reminderRef.current) clearInterval(reminderRef.current);
         reminderRef.current = setInterval(() => {
           rc++;
           setReminderCount(rc);
-          if (rc >= MAX_REMINDERS) {
-            if (reminderRef.current) clearInterval(reminderRef.current);
-            setShowHelpline(true);
-          }
+          if (rc >= MAX_REMINDERS) { if (reminderRef.current) clearInterval(reminderRef.current); setShowHelpline(true); }
         }, REMINDER_INTERVAL);
       }
     }, 300);
@@ -418,14 +371,8 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     if (reminderRef.current) clearInterval(reminderRef.current);
     setReminderCount(0);
     setShowHelpline(false);
-
     const nextIdx = currentIdx + 1;
-    if (nextIdx >= stops.length) {
-      setPhase('completed');
-      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
-      return;
-    }
-
+    if (nextIdx >= stops.length) { setPhase('completed'); if (demoIntervalRef.current) clearInterval(demoIntervalRef.current); return; }
     setCurrentIdx(nextIdx);
     setPhase('transit');
     setTimeout(() => beginDemo(nextIdx), 800);
@@ -437,10 +384,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       if (reminderRef.current) clearInterval(reminderRef.current);
       if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
       if (panTimerRef.current) clearTimeout(panTimerRef.current);
-      if (leafletMapRef.current) {
-        leafletMapRef.current.remove();
-        leafletMapRef.current = null;
-      }
+      if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; }
     };
   }, []);
 
@@ -474,46 +418,44 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
   /* ─── Render ────────────────────────────────────────── */
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/60">
+      {/* ── Header (orange/black) ── */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-orange-500/20 bg-black/80">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg shadow-orange-500/20">
             <Navigation className="w-5 h-5 text-white" />
           </div>
           <div>
             <h2 className="text-white font-bold text-sm">Live Journey Tracking</h2>
-            <p className="text-white/50 text-xs">{stops.length} stops &middot; Day {currentStop?.dayNumber || '\u2014'}</p>
+            <p className="text-white/40 text-xs">{stops.length} stops &middot; Day {currentStop?.dayNumber || '\u2014'}</p>
           </div>
         </div>
-        <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-colors">
+        <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-orange-500/20 flex items-center justify-center text-white/60 hover:text-orange-400 transition-colors">
           <X className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Map */}
+      {/* ── Map ── */}
       <div className="flex-1 relative">
         {phase === 'geocoding' && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80">
             <div className="relative w-16 h-16 mb-4">
-              <div className="absolute inset-0 rounded-full border-4 border-violet-500/30" />
-              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-violet-500 animate-spin" />
+              <div className="absolute inset-0 rounded-full border-4 border-orange-500/30" />
+              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-orange-500 animate-spin" />
             </div>
             <p className="text-white font-medium">Mapping your journey...</p>
             <p className="text-white/40 text-sm mt-1">Geocoding {geoProgress.done}/{geoProgress.total} stops</p>
             <div className="w-48 h-1.5 bg-white/10 rounded-full mt-3 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full transition-all duration-300" style={{ width: `${geoProgress.total > 0 ? (geoProgress.done / geoProgress.total) * 100 : 0}%` }} />
+              <div className="h-full bg-gradient-to-r from-orange-500 to-orange-700 rounded-full transition-all duration-300" style={{ width: `${geoProgress.total > 0 ? (geoProgress.done / geoProgress.total) * 100 : 0}%` }} />
             </div>
           </div>
         )}
 
         <div ref={mapContainerRef} className="w-full h-full" />
 
-        {/* Transport badge (inter-city only) */}
+        {/* Transport badge (inter-city) */}
         <AnimatePresence>
           {phase === 'transit' && currentTransportMode && (
             <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
@@ -534,7 +476,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         <AnimatePresence>
           {phase === 'transit' && !currentTransportMode && (
             <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
-              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold shadow-lg">
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-orange-600 to-orange-500 text-white text-sm font-semibold shadow-lg">
                 <Footprints className="w-4 h-4" />
                 <span>Exploring Locally</span>
               </div>
@@ -542,26 +484,27 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           )}
         </AnimatePresence>
 
-        {/* Progress bar */}
+        {/* Progress bar (orange) */}
         <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-3">
-          <div className="bg-black/60 backdrop-blur-md rounded-2xl p-3 border border-white/10">
-            <div className="flex items-center justify-between text-xs text-white/60 mb-1.5">
+          <div className="bg-black/70 backdrop-blur-md rounded-2xl p-3 border border-orange-500/20">
+            <div className="flex items-center justify-between text-xs text-white/50 mb-1.5">
               <span>Stop {currentIdx + 1} of {stops.length}</span>
-              <span className="text-white font-medium">{progressPct}% Complete</span>
+              <span className="text-orange-400 font-medium">{progressPct}%</span>
             </div>
             <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-500 rounded-full transition-all duration-700 ease-out" style={{ width: `${progressPct}%` }} />
+              <div className="h-full bg-gradient-to-r from-orange-600 to-orange-400 rounded-full transition-all duration-700 ease-out" style={{ width: `${progressPct}%` }} />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Bottom panel */}
-      <div className="border-t border-white/10 bg-black/80 backdrop-blur-xl">
+      {/* ── Bottom panel (orange/black) ── */}
+      <div className="border-t border-orange-500/20 bg-black/90 backdrop-blur-xl">
         <AnimatePresence mode="wait">
+
           {phase === 'geocoding' && (
             <motion.div key="geo" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="px-5 py-6 text-center">
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-sm">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-sm">
                 <MapPin className="w-4 h-4 animate-pulse" />
                 Preparing your route...
               </div>
@@ -570,25 +513,24 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
           {phase === 'transit' && nextStop && (
             <motion.div key="transit" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="px-5 py-4">
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-3 mb-2">
                 {currentTransportMode ? (
-                  <div className={`w-8 h-8 rounded-lg ${transportColor(currentTransportMode)} flex items-center justify-center text-white`}>
+                  <div className={`w-9 h-9 rounded-lg ${transportColor(currentTransportMode)} flex items-center justify-center text-white shadow-lg`}>
                     {transportIconEl(currentTransportMode)}
                   </div>
                 ) : (
-                  <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center text-white">
+                  <div className="w-9 h-9 rounded-lg bg-orange-600 flex items-center justify-center text-white shadow-lg shadow-orange-500/30">
                     <Footprints className="w-4 h-4" />
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-white/50 text-xs">{currentTransportMode ? `Heading to next city via ${currentTransportMode}` : 'Moving to nearby location'}</p>
+                  <p className="text-white/40 text-xs">{currentTransportMode ? `Heading via ${currentTransportMode}` : 'Moving to nearby location'}</p>
                   <p className="text-white font-semibold text-sm truncate">{nextStop.name}</p>
                 </div>
               </div>
               {currentTransportMode && (
-                <div className="flex items-center gap-2 text-xs text-white/40">
-                  <Clock className="w-3 h-3" />
-                  <span>Estimated travel in progress...</span>
+                <div className="flex items-center gap-2 text-xs text-white/30">
+                  <Clock className="w-3 h-3" /> <span>Travel in progress...</span>
                 </div>
               )}
             </motion.div>
@@ -597,17 +539,18 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           {phase === 'waiting_confirmation' && currentStop && (
             <motion.div key="wait" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="px-5 py-4">
               <div className="flex items-start gap-3 mb-4">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${currentStop.isHomeStop ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${currentStop.isHomeStop ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'}`}>
                   {currentStop.isHomeStop ? <Shield className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-white font-bold text-base">{currentStop.name}</p>
-                  <p className="text-white/50 text-xs mt-0.5">{currentStop.location}</p>
-                  {currentStop.description && <p className="text-white/30 text-xs mt-1 line-clamp-2">{currentStop.description}</p>}
+                  <p className="text-white/40 text-xs mt-0.5">{currentStop.location}</p>
+                  {currentStop.description && <p className="text-white/25 text-xs mt-1 line-clamp-2">{currentStop.description}</p>}
                 </div>
               </div>
 
-              <button onClick={handleReached} className={`w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${currentStop.isHomeStop ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-lg shadow-red-500/30' : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30'}`}>
+              {/* ORANGE "Reached" button — matches your app theme */}
+              <button onClick={handleReached} className={`w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${currentStop.isHomeStop ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg shadow-red-500/30' : 'bg-gradient-to-r from-orange-600 to-orange-500 text-white shadow-lg shadow-orange-500/30'}`}>
                 <CheckCircle className="w-5 h-5" />
                 {currentStop.isHomeStop ? 'Safely Reached Home \u2014 Complete Journey' : 'Reached'}
               </button>
@@ -633,12 +576,12 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
           {phase === 'completed' && (
             <motion.div key="done" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="px-5 py-8 text-center">
-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 200, damping: 15 }} className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center mx-auto mb-4 shadow-2xl shadow-emerald-500/40">
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 200, damping: 15 }} className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center mx-auto mb-4 shadow-2xl shadow-orange-500/40">
                 <CheckCircle className="w-10 h-10 text-white" />
               </motion.div>
               <h3 className="text-white text-xl font-bold mb-1">Journey Complete!</h3>
-              <p className="text-white/50 text-sm mb-6">You have safely completed all {stops.length} stops. Welcome home!</p>
-              <button onClick={onClose} className="px-8 py-3 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-medium text-sm transition-colors">
+              <p className="text-white/40 text-sm mb-6">All {stops.length} stops done. Welcome home!</p>
+              <button onClick={onClose} className="px-8 py-3 rounded-2xl bg-orange-500/10 border border-orange-500/30 hover:bg-orange-500/20 text-orange-400 font-medium text-sm transition-colors">
                 Close Tracking
               </button>
             </motion.div>
