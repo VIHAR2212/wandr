@@ -638,7 +638,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
       const safety = trip.safety as any;
       if (safety.overallScore) {
         const scoreColor = safety.overallScore >= 7 ? C.accent : safety.overallScore >= 4 ? C.orange : C.pink;
-        drawRoundedRect(margin, y - 1, 50, 8, 2, [scoreColor[0], scoreColor[1], scoreColor[2], 30] as unknown as number[]);
+        drawRoundedRect(margin, y - 1, 50, 8, 2, scoreColor);
         setFont(8, scoreColor, 'bold');
         doc.text(`Safety Score: ${safety.overallScore}/10`, margin + 4, y + 4);
         y += 12;
@@ -692,29 +692,29 @@ export function TripResultView({ tripId }: { tripId: string }) {
             </div>
           </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-        {[
-          { icon: MapPin, label: 'Destination', value: fd.destination },
-          {
-            icon: Calendar,
-            label: 'Duration',
-            value: fd.startDate && fd.endDate
-              ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days`
-              : '-- days',
-          },
-          { icon: Users, label: 'Travelers', value: `${fd.travelers} people` },
-          { icon: Wallet, label: 'Total Cost', value: formatCurrency(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0, fd.currency) },
-          { icon: Wallet, label: 'Per Day', value: formatCurrency(Number(trip.budget?.perDay) || 0, fd.currency) },
-          { icon: Wallet, label: 'Per Person', value: formatCurrency(Number(trip.budget?.perPerson) || 0, fd.currency) },
-        ].map(({ icon: Icon, label, value }: { icon: any; label: string; value: string }) => (
-          <div key={label} className="glass-panel rounded-2xl px-4 py-3">
-            <Icon className="w-3.5 h-3.5 text-muted-foreground mb-1" />
-            <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
-            <div className="text-sm font-semibold text-foreground truncate">{value}</div>
+          {/* Quick Stats */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+            {[
+              { icon: MapPin, label: 'Destination', value: fd.destination },
+              {
+                icon: Calendar,
+                label: 'Duration',
+                value: fd.startDate && fd.endDate
+                  ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days`
+                  : '-- days',
+              },
+              { icon: Users, label: 'Travelers', value: `${fd.travelers} people` },
+              { icon: Wallet, label: 'Total Cost', value: formatCurrency(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0, fd.currency) },
+              { icon: Wallet, label: 'Per Day', value: formatCurrency(Number(trip.budget?.perDay) || 0, fd.currency) },
+              { icon: Wallet, label: 'Per Person', value: formatCurrency(Number(trip.budget?.perPerson) || 0, fd.currency) },
+            ].map(({ icon: Icon, label, value }: { icon: any; label: string; value: string }) => (
+              <div key={label} className="glass-panel rounded-2xl px-4 py-3">
+                <Icon className="w-3.5 h-3.5 text-muted-foreground mb-1" />
+                <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+                <div className="text-sm font-semibold text-foreground truncate">{value}</div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
         </motion.div>
       </div>
 
