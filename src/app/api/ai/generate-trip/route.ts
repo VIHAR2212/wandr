@@ -68,7 +68,7 @@ RULES:
 4. Local transport (auto,bus,walk) goes in tips notes, NOT as activities.
 5. Budget must sum correctly across all days.
 6. Include 3-5 activities per day with real places, real timings, real costs in INR.
-7. "location" must ALWAYS be a plain string like "Manali, India". NEVER use GeoJSON objects.
+7. "location" must ALWAYS be a plain string like "Manali, India". NEVER use GeoJSON objects.`;
 
     const result = await generateAIJson(userPrompt, systemPrompt);
     const trip = result.data as Record<string, unknown>;
@@ -88,7 +88,14 @@ RULES:
       theme: d.theme ?? '',
       summary: d.summary ?? '',
       totalCost: d.totalCost ?? 0,
-      activities: d.activities ?? [],
+      activities: (d.activities as any[] ?? []).map((act: any) => ({
+        ...act,
+        location: typeof act.location === 'string'
+          ? act.location
+          : act.location?.coordinates
+            ? `${act.lat ?? ''}, ${act.lng ?? ''}`
+            : String(act.location ?? ''),
+      })),
     }));
 
     const rawGuide = trip.transportGuide as Record<string, unknown> | undefined;
