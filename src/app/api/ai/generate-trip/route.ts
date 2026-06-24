@@ -1,6 +1,6 @@
 // src/app/api/ai/generate-trip/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { callAITrip } from '@/lib/ai';
+import { callAI } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 
@@ -76,7 +76,7 @@ RULES:
 6. If any day's city changes vs previous day's last location, add transport entry as that day's FIRST activity.
 7. LOCAL transport (same city): NO separate activity. Add in next activity's notes: "Auto from [place] (~₹50)".`;
 
-    const result = await callAITrip(systemPrompt, [{ role: 'user', content: userPrompt }]);
+    const result = await callAI(systemPrompt, [{ role: 'user', content: userPrompt }], 4096);
 
     let trip: Record<string, unknown>;
     try {
