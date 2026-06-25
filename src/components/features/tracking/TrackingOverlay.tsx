@@ -111,7 +111,6 @@ function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterC
     });
   });
 
-  // Final "Home — Safe Return" stop
   const lastDay = days[days.length - 1];
   const lastActs = lastDay?.activities || [];
   const lastLoc =
@@ -254,16 +253,16 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         style: styleUrl,
         center: [stops[0].lng || 72.877, stops[0].lat || 19.076],
         zoom: 13,
-        projection: 'globe' as any,
         attributionControl: false,
       });
+
+      (map as any).setProjection({ type: 'globe' });
 
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
       map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: true }), 'bottom-right');
 
       map.on('load', () => {
-        // Globe atmosphere
-        map.setFog({
+        (map as any).setFog({
           color: 'rgb(16, 24, 42)',
           'high-color': 'rgb(40, 60, 120)',
           'horizon-blend': 0.02,
@@ -300,18 +299,20 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
         // Route lines
         if (allCoords.length > 1) {
-          const routeGeo = { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: allCoords }, properties: {} };
+          const routeGeo: any = { type: 'Feature', geometry: { type: 'LineString', coordinates: allCoords }, properties: {} };
 
-          map.addSource('tracking-route-glow', { type: 'geojson', data: routeGeo as any });
+          map.addSource('tracking-route-glow', { type: 'geojson', data: routeGeo });
           map.addLayer({
             id: 'tracking-route-glow', type: 'line', source: 'tracking-route-glow',
-            paint: { 'line-color': '#F97316', 'line-width': 6, 'line-opacity': 0.2, 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#F97316', 'line-width': 6, 'line-opacity': 0.2 },
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
           });
 
-          map.addSource('tracking-route-main', { type: 'geojson', data: routeGeo as any });
+          map.addSource('tracking-route-main', { type: 'geojson', data: routeGeo });
           map.addLayer({
             id: 'tracking-route-main', type: 'line', source: 'tracking-route-main',
-            paint: { 'line-color': '#EA580C', 'line-width': 3, 'line-opacity': 0.6, 'line-dasharray': [8, 12], 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#EA580C', 'line-width': 3, 'line-opacity': 0.6, 'line-dasharray': [8, 12] },
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
           });
 
           const bounds = new maplibregl.LngLatBounds();
@@ -329,11 +330,12 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         trailCoords.current = [firstCoord];
         map.addSource('tracking-trail', {
           type: 'geojson',
-          data: { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: trailCoords.current }, properties: {} },
+          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: trailCoords.current }, properties: {} },
         });
         map.addLayer({
           id: 'tracking-trail-line', type: 'line', source: 'tracking-trail',
-          paint: { 'line-color': '#F97316', 'line-width': 4, 'line-opacity': 0.8, 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#F97316', 'line-width': 4, 'line-opacity': 0.8 },
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
         });
 
         setPhase('transit');
@@ -387,8 +389,8 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         trailCoords.current.push(coord);
         const src = map.getSource('tracking-trail') as maplibregl.GeoJSONSource;
         src?.setData({
-          type: 'Feature' as const,
-          geometry: { type: 'LineString' as const, coordinates: [...trailCoords.current] },
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: [...trailCoords.current] },
           properties: {},
         });
 
@@ -475,7 +477,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col"
     >
-      {/* ── Header (orange/black) ── */}
+      {/* ── Header ── */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-orange-500/20 bg-black/80">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg shadow-orange-500/20">
@@ -509,7 +511,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
         <div ref={mapContainerRef} className="w-full h-full" />
 
-        {/* Transport badge (inter-city) */}
         <AnimatePresence>
           {phase === 'transit' && currentTransportMode && (
             <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
@@ -526,7 +527,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           )}
         </AnimatePresence>
 
-        {/* Local travel badge */}
         <AnimatePresence>
           {phase === 'transit' && !currentTransportMode && (
             <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
@@ -538,7 +538,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           )}
         </AnimatePresence>
 
-        {/* Progress bar (orange) */}
         <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-3">
           <div className="bg-black/70 backdrop-blur-md rounded-2xl p-3 border border-orange-500/20">
             <div className="flex items-center justify-between text-xs text-white/50 mb-1.5">
@@ -552,7 +551,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         </div>
       </div>
 
-      {/* ── Bottom panel (orange/black) ── */}
+      {/* ── Bottom panel ── */}
       <div className="border-t border-orange-500/20 bg-black/90 backdrop-blur-xl">
         <AnimatePresence mode="wait">
 
@@ -603,7 +602,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
                 </div>
               </div>
 
-              {/* ORANGE "Reached" button */}
               <button onClick={handleReached} className={`w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${currentStop.isHomeStop ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg shadow-red-500/30' : 'bg-gradient-to-r from-orange-600 to-orange-500 text-white shadow-lg shadow-orange-500/30'}`}>
                 <CheckCircle className="w-5 h-5" />
                 {currentStop.isHomeStop ? 'Safely Reached Home \u2014 Complete Journey' : 'Reached'}
