@@ -13,8 +13,8 @@ const navLinks = [
   { href: '/dashboard', label: 'My Trips' },
   { href: '/explore', label: 'Explore' },
   { href: '/#features', label: 'Features' },
+  { href: '/#how-it-works', label: 'How It Works' },
 ];
-
 
 const HIDE_NAV_LINKS = ['/plan', '/trip', '/auth', '/dashboard', '/admin'];
 const SHOW_BACK = ['/plan', '/trip', '/auth/login', '/auth/register', '/dashboard', '/admin'];
