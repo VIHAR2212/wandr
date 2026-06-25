@@ -186,6 +186,7 @@ export default function TripMap({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const trailMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const tripMarkersRef = useRef<maplibregl.Marker[]>([]);
   const [isDark, setIsDark] = useState(false);
   const [routePoints, setRoutePoints] = useState<MapPoint[]>([]);
   const controlsAddedRef = useRef(false);
@@ -275,13 +276,11 @@ export default function TripMap({
       attributionControl: false,
     });
 
-    // Globe projection (not in TS types, cast to any)
     (map as any).setProjection({ type: "globe" });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
     map.on("load", () => {
-      // Globe atmosphere + stars (not in TS types, cast to any)
       (map as any).setFog({
         color: isDark ? "rgb(16, 24, 42)" : "rgb(186, 210, 235)",
         "high-color": isDark ? "rgb(40, 60, 120)" : "rgb(36, 92, 223)",
@@ -290,11 +289,9 @@ export default function TripMap({
         "star-intensity": isDark ? 0.8 : 0.6,
       });
 
-      // ── Add glassmorphic controls (only once) ──
       if (!controlsAddedRef.current) {
         controlsAddedRef.current = true;
 
-        // Top-right toolbar
         const toolbarEl = document.createElement("div");
         toolbarEl.style.cssText = "display:flex;flex-direction:column;gap:8px;";
         toolbarEl.innerHTML = [
@@ -331,7 +328,6 @@ export default function TripMap({
         };
         map.addControl(toolbarCtrl, "top-right");
 
-        // Bottom-right zoom
         const zoomEl = document.createElement("div");
         zoomEl.style.cssText = "display:flex;flex-direction:column;gap:4px;";
         zoomEl.innerHTML = [glassZoomBtnHTML("+"), glassZoomBtnHTML("−")].join("");
@@ -348,7 +344,6 @@ export default function TripMap({
         map.addControl(zoomCtrl, "bottom-right");
       }
 
-      // ── Fit bounds ──
       if (points.length > 1) {
         const bounds = new maplibregl.LngLatBounds();
         points.forEach((p) => bounds.extend([p.lng, p.lat]));
@@ -392,12 +387,9 @@ export default function TripMap({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Remove existing trip markers
-    map.eachLayer((layer) => {
-      if (layer instanceof maplibregl.Marker && (layer as any)._isTripMarker) {
-        layer.remove();
-      }
-    });
+    // Remove existing trip markers using ref array
+    tripMarkersRef.current.forEach((m) => m.remove());
+    tripMarkersRef.current = [];
 
     // Remove existing route layers/sources
     ["route-glow", "route-main", "route-dots"].forEach((id) => {
@@ -415,21 +407,18 @@ export default function TripMap({
         properties: {},
       };
 
-      // Glow
       map.addSource("route-glow-src", { type: "geojson", data: routeGeoJSON });
       map.addLayer({
         id: "route-glow", type: "line", source: "route-glow-src",
         paint: { "line-color": "#6366F1", "line-width": 8, "line-opacity": 0.15, "line-cap": "round", "line-join": "round" },
       });
 
-      // Main dashed
       map.addSource("route-main-src", { type: "geojson", data: routeGeoJSON });
       map.addLayer({
         id: "route-main", type: "line", source: "route-main-src",
         paint: { "line-color": "#8B5CF6", "line-width": 3, "line-opacity": 0.7, "line-dasharray": [10, 14], "line-cap": "round", "line-join": "round" },
       });
 
-      // Colored waypoint dots
       const dotFeatures = points.map((p) => ({
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
@@ -459,7 +448,7 @@ export default function TripMap({
         .setLngLat([p.lng, p.lat])
         .setPopup(new maplibregl.Popup({ offset: 25, closeButton: true, className: "maplibregl-popup" }).setHTML(popupHTML(p)))
         .addTo(map);
-      (marker as any)._isTripMarker = true;
+      tripMarkersRef.current.push(marker);
     });
 
     // ── Hotel Markers ──
@@ -470,7 +459,7 @@ export default function TripMap({
         .setLngLat([p.lng, p.lat])
         .setPopup(new maplibregl.Popup({ offset: 25, closeButton: true, className: "maplibregl-popup" }).setHTML(popupHTML(p)))
         .addTo(map);
-      (marker as any)._isTripMarker = true;
+      tripMarkersRef.current.push(marker);
     });
 
     // ── Restaurant Markers ──
@@ -481,7 +470,7 @@ export default function TripMap({
         .setLngLat([p.lng, p.lat])
         .setPopup(new maplibregl.Popup({ offset: 25, closeButton: true, className: "maplibregl-popup" }).setHTML(popupHTML(p)))
         .addTo(map);
-      (marker as any)._isTripMarker = true;
+      tripMarkersRef.current.push(marker);
     });
 
     // ── Hidden Gem Markers ──
@@ -492,7 +481,7 @@ export default function TripMap({
         .setLngLat([p.lng, p.lat])
         .setPopup(new maplibregl.Popup({ offset: 25, closeButton: true, className: "maplibregl-popup" }).setHTML(popupHTML(p)))
         .addTo(map);
-      (marker as any)._isTripMarker = true;
+      tripMarkersRef.current.push(marker);
     });
   }, [points, routeCoords, activityPoints, hotelPoints, restaurantPoints, gemPoints]);
 
@@ -628,16 +617,14 @@ export default function TripMap({
 
   return (
     <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-border/30">
-      {/* Map container */}
       <div ref={mapRef} className="w-full h-full absolute inset-0 z-0" />
 
-      {/* ── Legend (bottom-left) ── */}
       <div
         className={`absolute bottom-4 left-4 z-10 p-3.5 rounded-2xl border text-xs space-y-2.5 shadow-lg backdrop-blur-xl transition-colors duration-300 ${
           isDark ? "bg-black/50 border-white/10 text-white" : "bg-white/90 border-gray-200/60 text-gray-700"
         }`}
       >
-        <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isDark ? "text-gray-400" : "text-gray-400"}`}>
+        <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 text-gray-400`}>
           Map Legend
         </p>
         <LegendRow emoji="✈️" label="Transport" bg="#3B82F6" />
@@ -666,7 +653,6 @@ export default function TripMap({
         )}
       </div>
 
-      {/* ── Globe hint badge ── */}
       <div
         className={`absolute top-4 left-4 z-10 px-3 py-1.5 rounded-full text-[10px] font-semibold uppercase tracking-wider backdrop-blur-md border shadow-sm transition-all duration-500 ${
           isDark ? "bg-white/5 border-white/10 text-white/50" : "bg-black/5 border-black/10 text-black/50"
