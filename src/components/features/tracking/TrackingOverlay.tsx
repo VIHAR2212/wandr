@@ -6,8 +6,8 @@ import {
   X, Navigation, CheckCircle, Phone, Clock, AlertTriangle,
   MapPin, Plane, Train, Bus, Car, Footprints, Shield
 } from 'lucide-react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 /* ─── Types ─────────────────────────────────────────────── */
 interface TrackingTripData {
@@ -111,7 +111,7 @@ function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterC
     });
   });
 
-  // Final "Home \u2014 Safe Return" stop
+  // Final "Home — Safe Return" stop
   const lastDay = days[days.length - 1];
   const lastActs = lastDay?.activities || [];
   const lastLoc =
@@ -133,36 +133,28 @@ function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterC
   return stops;
 }
 
-/* ─── Icon factories ───────────────────────────────────── */
-function makeUserDivIcon(): L.DivIcon {
-  return L.divIcon({
-    html: `
-      <div style="position:relative;width:46px;height:46px;">
-        <div style="position:absolute;inset:-4px;border-radius:50%;background:radial-gradient(circle,rgba(249,115,22,0.4) 0%,transparent 70%);animation:up2 2s ease-out infinite;"></div>
-        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#F97316,#EA580C);border:3px solid white;box-shadow:0 0 14px rgba(249,115,22,0.7),0 2px 8px rgba(0,0,0,0.3);z-index:2;"></div>
-        <style>@keyframes up2{0%{transform:scale(0.8);opacity:0.8}100%{transform:scale(2.4);opacity:0}}</style>
-      </div>`,
-    className: '',
-    iconSize: [46, 46],
-    iconAnchor: [23, 23],
-  });
+/* ─── Marker element factories (MapLibre) ──────────────── */
+function makeUserEl(): HTMLElement {
+  const el = document.createElement('div');
+  el.innerHTML = `<div style="position:relative;width:46px;height:46px;">
+    <div style="position:absolute;inset:-4px;border-radius:50%;background:radial-gradient(circle,rgba(249,115,22,0.4) 0%,transparent 70%);animation:up2 2s ease-out infinite;"></div>
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#F97316,#EA580C);border:3px solid white;box-shadow:0 0 14px rgba(249,115,22,0.7),0 2px 8px rgba(0,0,0,0.3);z-index:2;"></div>
+    <style>@keyframes up2{0%{transform:scale(0.8);opacity:0.8}100%{transform:scale(2.4);opacity:0}}</style>
+  </div>`;
+  return el;
 }
 
-function makeTransportDivIcon(mode: string): L.DivIcon {
+function makeTransportEl(mode: string): HTMLElement {
   const emojis: Record<string, string> = {
     Flight: '\u2708\uFE0F', Train: '\uD83D\uDE86', Bus: '\uD83D\uDE8C', Car: '\uD83D\uDE97', Walking: '\uD83D\uDEB6',
   };
   const emoji = emojis[mode] || '\uD83D\uDE97';
-  return L.divIcon({
-    html: `
-      <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#F97316,#EA580C);display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid white;box-shadow:0 0 16px rgba(249,115,22,0.6),0 0 32px rgba(234,88,12,0.3);animation:tb 1.5s ease-in-out infinite;">
-        <style>@keyframes tb{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}</style>
-        ${emoji}
-      </div>`,
-    className: '',
-    iconSize: [48, 48],
-    iconAnchor: [24, 24],
-  });
+  const el = document.createElement('div');
+  el.innerHTML = `<div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#F97316,#EA580C);display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid white;box-shadow:0 0 16px rgba(249,115,22,0.6),0 0 32px rgba(234,88,12,0.3);animation:tb 1.5s ease-in-out infinite;">
+    <style>@keyframes tb{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}</style>
+    ${emoji}
+  </div>`;
+  return el;
 }
 
 /* ─── Component ─────────────────────────────────────────── */
@@ -180,10 +172,10 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
   const [geoProgress, setGeoProgress] = useState({ done: 0, total: 0 });
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const leafletMapRef = useRef<L.Map | null>(null);
-  const userMarkerRef = useRef<L.Marker | null>(null);
-  const trailLineRef = useRef<L.Polyline | null>(null);
-  const stopGroupRef = useRef<L.LayerGroup | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const userMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const stopMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const trailCoords = useRef<[number, number][]>([]);
   const reminderRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const panTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -245,59 +237,110 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     return () => { cancelled = true; };
   }, [trip, originLat, originLng]);
 
-  /* ─── Init Leaflet map ──────────────────────────────── */
+  /* ─── Init MapLibre map ─────────────────────────────── */
   useEffect(() => {
     if (stops.length === 0 || phase !== 'geocoding') return;
 
     const timer = setTimeout(() => {
-      if (!mapContainerRef.current || leafletMapRef.current) return;
+      if (!mapContainerRef.current || mapRef.current) return;
 
-      const map = L.map(mapContainerRef.current, {
-        zoomControl: false, scrollWheelZoom: true, attributionControl: false,
-      }).setView([stops[0].lat || 19.076, stops[0].lng || 72.877], 13);
+      const isDark = document.documentElement.classList.contains('dark');
+      const styleUrl = isDark
+        ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+        : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-      L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-      const stopGroup = L.layerGroup().addTo(map);
-      stopGroupRef.current = stopGroup;
-
-      const allCoords: L.LatLngExpression[] = [];
-      stops.forEach((stop, idx) => {
-        if (stop.lat === 0 && stop.lng === 0) return;
-        const coord: L.LatLngExpression = [stop.lat, stop.lng];
-        allCoords.push(coord);
-
-        let dotColor = '#F97316';
-        if (stop.type === 'restaurant') dotColor = '#22C55E';
-        if (stop.type === 'transport') dotColor = '#3B82F6';
-        if (stop.type === 'hiddenGem') dotColor = '#A855F7';
-        if (stop.isHomeStop) dotColor = '#EF4444';
-
-        const visited = idx < 1;
-        const sz = visited ? 12 : 8;
-        const dotIcon = L.divIcon({
-          html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 ${visited ? '8px' : '4px'} ${dotColor}80;transition:all .3s;"></div>`,
-          className: '', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
-        });
-        L.marker(coord, { icon: dotIcon }).addTo(stopGroup).bindPopup(`<b>${stop.name}</b><br><small>${stop.location}</small>`);
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: styleUrl,
+        center: [stops[0].lng || 72.877, stops[0].lat || 19.076],
+        zoom: 13,
+        projection: 'globe' as any,
+        attributionControl: false,
       });
 
-      if (allCoords.length > 1) {
-        L.polyline(allCoords, { color: '#F97316', weight: 6, opacity: 0.2, lineCap: 'round', lineJoin: 'round' }).addTo(map);
-        L.polyline(allCoords, { color: '#EA580C', weight: 3, opacity: 0.6, dashArray: '8, 12' }).addTo(map);
-        map.fitBounds(L.latLngBounds(allCoords), { padding: [50, 50], maxZoom: 14 });
-      }
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: true }), 'bottom-right');
 
-      const firstCoord: L.LatLngExpression = allCoords[0] || [19.076, 72.877];
-      userMarkerRef.current = L.marker(firstCoord, { icon: makeUserDivIcon(), zIndexOffset: 2000 }).addTo(map);
-      trailLineRef.current = L.polyline([firstCoord], {
-        color: '#F97316', weight: 4, opacity: 0.8, lineCap: 'round', lineJoin: 'round',
-      }).addTo(map);
+      map.on('load', () => {
+        // Globe atmosphere
+        map.setFog({
+          color: 'rgb(16, 24, 42)',
+          'high-color': 'rgb(40, 60, 120)',
+          'horizon-blend': 0.02,
+          'space-color': 'rgb(5, 5, 15)',
+          'star-intensity': 0.8,
+        });
 
-      leafletMapRef.current = map;
-      setPhase('transit');
-      beginDemo(0);
+        const allCoords: [number, number][] = [];
+        const validStops = stops.filter(s => !(s.lat === 0 && s.lng === 0));
+
+        // Stop markers
+        validStops.forEach((stop, idx) => {
+          const coord: [number, number] = [stop.lng, stop.lat];
+          allCoords.push(coord);
+
+          let dotColor = '#F97316';
+          if (stop.type === 'restaurant') dotColor = '#22C55E';
+          if (stop.type === 'transport') dotColor = '#3B82F6';
+          if (stop.type === 'hiddenGem') dotColor = '#A855F7';
+          if (stop.isHomeStop) dotColor = '#EF4444';
+
+          const visited = idx < 1;
+          const sz = visited ? 12 : 8;
+          const dotEl = document.createElement('div');
+          dotEl.innerHTML = `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 ${visited ? '8px' : '4px'} ${dotColor}80;transition:all .3s;"></div>`;
+
+          const marker = new maplibregl.Marker({ element: dotEl })
+            .setLngLat(coord)
+            .setPopup(new maplibregl.Popup({ offset: 25, closeButton: false }).setHTML(`<b>${stop.name}</b><br><small>${stop.location}</small>`))
+            .addTo(map);
+
+          stopMarkersRef.current.push(marker);
+        });
+
+        // Route lines
+        if (allCoords.length > 1) {
+          const routeGeo = { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: allCoords }, properties: {} };
+
+          map.addSource('tracking-route-glow', { type: 'geojson', data: routeGeo as any });
+          map.addLayer({
+            id: 'tracking-route-glow', type: 'line', source: 'tracking-route-glow',
+            paint: { 'line-color': '#F97316', 'line-width': 6, 'line-opacity': 0.2, 'line-cap': 'round', 'line-join': 'round' },
+          });
+
+          map.addSource('tracking-route-main', { type: 'geojson', data: routeGeo as any });
+          map.addLayer({
+            id: 'tracking-route-main', type: 'line', source: 'tracking-route-main',
+            paint: { 'line-color': '#EA580C', 'line-width': 3, 'line-opacity': 0.6, 'line-dasharray': [8, 12], 'line-cap': 'round', 'line-join': 'round' },
+          });
+
+          const bounds = new maplibregl.LngLatBounds();
+          allCoords.forEach(c => bounds.extend(c));
+          map.fitBounds(bounds, { padding: 50, maxZoom: 14 });
+        }
+
+        // User marker
+        const firstCoord: [number, number] = allCoords[0] || [72.877, 19.076];
+        userMarkerRef.current = new maplibregl.Marker({ element: makeUserEl() })
+          .setLngLat(firstCoord)
+          .addTo(map);
+
+        // Trail line
+        trailCoords.current = [firstCoord];
+        map.addSource('tracking-trail', {
+          type: 'geojson',
+          data: { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: trailCoords.current }, properties: {} },
+        });
+        map.addLayer({
+          id: 'tracking-trail-line', type: 'line', source: 'tracking-trail',
+          paint: { 'line-color': '#F97316', 'line-width': 4, 'line-opacity': 0.8, 'line-cap': 'round', 'line-join': 'round' },
+        });
+
+        setPhase('transit');
+        beginDemo(0);
+      });
+
+      mapRef.current = map;
     }, 400);
 
     return () => clearTimeout(timer);
@@ -320,10 +363,13 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     if (to.isInterCity && to.transportTo) setCurrentTransportMode(to.transportTo);
     else setCurrentTransportMode('');
 
-    const map = leafletMapRef.current;
+    const map = mapRef.current;
     if (map && userMarkerRef.current) {
-      if (to.isInterCity && to.transportTo) userMarkerRef.current.setIcon(makeTransportDivIcon(to.transportTo));
-      else userMarkerRef.current.setIcon(makeUserDivIcon());
+      const newEl = (to.isInterCity && to.transportTo) ? makeTransportEl(to.transportTo) : makeUserEl();
+      userMarkerRef.current.remove();
+      userMarkerRef.current = new maplibregl.Marker({ element: newEl })
+        .setLngLat([from.lng, from.lat])
+        .addTo(map);
     }
 
     demoIntervalRef.current = setInterval(() => {
@@ -333,17 +379,22 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       const progress = step / stepsPerSeg;
       const lat = from.lat + (to.lat - from.lat) * progress;
       const lng = from.lng + (to.lng - from.lng) * progress;
+      const coord: [number, number] = [lng, lat];
 
       if (map && userMarkerRef.current) {
-        userMarkerRef.current.setLatLng([lat, lng]);
-        if (trailLineRef.current) {
-          const pts: L.LatLng[] = trailLineRef.current.getLatLngs() as L.LatLng[];
-          pts.push(L.latLng(lat, lng));
-          trailLineRef.current.setLatLngs(pts);
-        }
+        userMarkerRef.current.setLngLat(coord);
+
+        trailCoords.current.push(coord);
+        const src = map.getSource('tracking-trail') as maplibregl.GeoJSONSource;
+        src?.setData({
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: [...trailCoords.current] },
+          properties: {},
+        });
+
         if (!panTimerRef.current) {
           panTimerRef.current = setTimeout(() => {
-            map.panTo([lat, lng], { animate: true, duration: 0.4 });
+            map.panTo(coord, { animate: true, duration: 400 });
             panTimerRef.current = null;
           }, PAN_THROTTLE);
         }
@@ -384,7 +435,10 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       if (reminderRef.current) clearInterval(reminderRef.current);
       if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
       if (panTimerRef.current) clearTimeout(panTimerRef.current);
-      if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; }
+      stopMarkersRef.current.forEach(m => m.remove());
+      stopMarkersRef.current = [];
+      if (userMarkerRef.current) { userMarkerRef.current.remove(); userMarkerRef.current = null; }
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
     };
   }, []);
 
@@ -549,7 +603,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
                 </div>
               </div>
 
-              {/* ORANGE "Reached" button — matches your app theme */}
+              {/* ORANGE "Reached" button */}
               <button onClick={handleReached} className={`w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${currentStop.isHomeStop ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg shadow-red-500/30' : 'bg-gradient-to-r from-orange-600 to-orange-500 text-white shadow-lg shadow-orange-500/30'}`}>
                 <CheckCircle className="w-5 h-5" />
                 {currentStop.isHomeStop ? 'Safely Reached Home \u2014 Complete Journey' : 'Reached'}
