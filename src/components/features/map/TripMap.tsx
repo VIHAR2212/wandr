@@ -273,9 +273,11 @@ export default function TripMap({
       style: mapStyle,
       center,
       zoom: points.length > 1 ? 4 : 13,
-      projection: "globe" as any,
       attributionControl: false,
     });
+
+    // Set globe projection after creation (not in constructor due to TS types)
+    (map as any).setProjection({ type: "globe" });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -305,7 +307,6 @@ export default function TripMap({
 
         const toolbarCtrl = new maplibregl.Control({ showCompass: false } as any);
         toolbarCtrl.onAdd = () => {
-          // Wire up button clicks
           const buttons = toolbarEl.querySelectorAll("button");
           if (buttons[0]) buttons[0].addEventListener("click", () => {
             const terrain = map.getTerrain();
@@ -391,7 +392,7 @@ export default function TripMap({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Remove existing markers and route layers
+    // Remove existing markers
     map.eachLayer((layer) => {
       if (layer instanceof maplibregl.Marker && (layer as any)._isTripMarker) {
         layer.remove();
@@ -427,7 +428,7 @@ export default function TripMap({
       });
 
       // Colored waypoint dots
-      const dotFeatures = points.map((p, i) => ({
+      const dotFeatures = points.map((p) => ({
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
         properties: { color: TYPE_COLORS[p.type] || "#14B8A6" },
@@ -498,7 +499,6 @@ export default function TripMap({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Wait for style to be loaded
     if (!map.isStyleLoaded()) {
       map.once("style.load", () => addMarkersAndRoutes());
     } else {
