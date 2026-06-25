@@ -130,13 +130,47 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
   const userMarkerRef = useRef<L.Marker | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const layersGroupRef = useRef<L.LayerGroup | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
 
   const [routePoints, setRoutePoints] = useState<Array<{ lat: number; lng: number; name: string; type: string }>>([]);
+  const [isDark, setIsDark] = useState(false);
 
   // Accept both `trip` (from TripResultView Map tab) and `tripData` (from TrackingOverlay)
   const data = trip || tripData;
 
-  // ─── Initialize map with colorful tiles ─────────────────
+  // ─── Detect dark mode ─────────────────────────────────
+  useEffect(() => {
+    const check = () => {
+      const dark = document.documentElement.classList.contains("dark");
+      setIsDark(dark);
+    };
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  // ─── Tile URLs: Carto Dark Matter (dark) / Carto Positron (light) ───
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const map = mapRef.current;
+
+    // Remove old tile layer
+    if (tileLayerRef.current) {
+      map.removeLayer(tileLayerRef.current);
+    }
+
+    const tileUrl = isDark
+      ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+      : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+
+    tileLayerRef.current = L.tileLayer(tileUrl, {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+      maxZoom: 19,
+    }).addTo(map);
+  }, [isDark]);
+
+  // ─── Initialize map ───────────────────────────────────
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
     const map = L.map(mapContainerRef.current, {
@@ -144,8 +178,12 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
       scrollWheelZoom: true,
     }).setView([19.076, 72.877], 5);
 
-    // Vibrant Voyager tiles — colorful, readable, modern
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    // Default tiles (will be replaced by dark/light effect)
+    const tileUrl = document.documentElement.classList.contains("dark")
+      ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+      : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+
+    tileLayerRef.current = L.tileLayer(tileUrl, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
       maxZoom: 19,
     }).addTo(map);
@@ -157,6 +195,7 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
       map.remove();
       mapRef.current = null;
       layersGroupRef.current = null;
+      tileLayerRef.current = null;
     };
   }, []);
 
@@ -441,34 +480,38 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
   }, [isTracking, routePoints]);
 
   return (
-    <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-white/10">
+    <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-border/30">
       <div ref={mapContainerRef} className="w-full h-full absolute inset-0 z-0" />
 
-      {/* Legend — colorful glass card */}
-      <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur-xl p-3.5 rounded-2xl border border-gray-200/60 text-xs space-y-2 shadow-lg shadow-black/5">
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Map Legend</p>
+      {/* Legend — adaptive glass card */}
+      <div className={`absolute top-4 left-4 z-10 p-3.5 rounded-2xl border text-xs space-y-2 shadow-lg backdrop-blur-xl ${
+        isDark
+          ? "bg-black/60 border-white/10 text-white"
+          : "bg-white/90 border-gray-200/60 text-gray-700"
+      }`}>
+        <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${isDark ? "text-gray-400" : "text-gray-400"}`}>Map Legend</p>
         <div className="flex items-center gap-2.5">
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-500 text-[12px] shadow-sm shadow-blue-500/30">✈️</span>
-          <span className="text-gray-700 font-medium">Transport</span>
+          <span className="font-medium">Transport</span>
         </div>
         <div className="flex items-center gap-2.5">
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-orange-500 text-[12px] shadow-sm shadow-orange-500/30">🏨</span>
-          <span className="text-gray-700 font-medium">Hotels</span>
+          <span className="font-medium">Hotels</span>
         </div>
         <div className="flex items-center gap-2.5">
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 text-[12px] shadow-sm shadow-green-500/30">🍽️</span>
-          <span className="text-gray-700 font-medium">Restaurants</span>
+          <span className="font-medium">Restaurants</span>
         </div>
         <div className="flex items-center gap-2.5">
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-purple-500 text-[12px] shadow-sm shadow-purple-500/30">✨</span>
-          <span className="text-gray-700 font-medium">Hidden Gems</span>
+          <span className="font-medium">Hidden Gems</span>
         </div>
         <div className="flex items-center gap-2.5">
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-teal-500 text-[12px] shadow-sm shadow-teal-500/30">📍</span>
-          <span className="text-gray-700 font-medium">Attractions</span>
+          <span className="font-medium">Attractions</span>
         </div>
         {(userPosition || userLocation || isTracking) && (
-          <div className="flex items-center gap-2.5 mt-2 pt-2 border-t border-gray-200/60">
+          <div className={`flex items-center gap-2.5 mt-2 pt-2 border-t ${isDark ? "border-white/10" : "border-gray-200/60"}`}>
             <span
               className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[14px]"
               style={{
@@ -478,11 +521,11 @@ export default function TripMap({ trip, tripData, userLocation, showRoute, isTra
             >
               👤
             </span>
-            <span className="text-amber-600 font-bold">Your Location</span>
+            <span className="text-amber-500 font-bold">Your Location</span>
           </div>
         )}
         {isTracking && (
-          <div className="flex items-center gap-2 text-green-600 font-bold mt-2 pt-2 border-t border-gray-200/60 animate-pulse">
+          <div className="flex items-center gap-2 text-green-400 font-bold mt-2 pt-2 border-t border-white/10 animate-pulse">
             <div className="w-3 h-3 bg-green-500 rounded-full shadow-lg shadow-green-500/50"></div>
             Live Tracking Active
           </div>
