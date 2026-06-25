@@ -256,12 +256,11 @@ export default function TripMap({
   const routeCoords: [number, number][] = useMemo(() => points.map((p) => [p.lng, p.lat]), [points]);
   const userPos = userPosition || userLocation || null;
 
-  // ── Build map style with globe projection ─────────────────
+  // ── Build map style ───────────────────────────────────────
   const mapStyle = useMemo(() => {
-    const baseUrl = isDark
+    return isDark
       ? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
       : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
-    return baseUrl;
   }, [isDark]);
 
   // ── Initialize Map ────────────────────────────────────────
@@ -276,13 +275,13 @@ export default function TripMap({
       attributionControl: false,
     });
 
-    // Set globe projection after creation (not in constructor due to TS types)
+    // Globe projection (not in TS types, cast to any)
     (map as any).setProjection({ type: "globe" });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
     map.on("load", () => {
-      // ── Globe atmosphere + stars ──
+      // Globe atmosphere + stars (not in TS types, cast to any)
       (map as any).setFog({
         color: isDark ? "rgb(16, 24, 42)" : "rgb(186, 210, 235)",
         "high-color": isDark ? "rgb(40, 60, 120)" : "rgb(36, 92, 223)",
@@ -295,7 +294,7 @@ export default function TripMap({
       if (!controlsAddedRef.current) {
         controlsAddedRef.current = true;
 
-        // Top-right toolbar container
+        // Top-right toolbar
         const toolbarEl = document.createElement("div");
         toolbarEl.style.cssText = "display:flex;flex-direction:column;gap:8px;";
         toolbarEl.innerHTML = [
@@ -305,30 +304,31 @@ export default function TripMap({
           glassBtnHTML('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L20 7.5V16.5L12 21L4 16.5V7.5L12 3Z"/><path d="M12 12L20 7.5"/><path d="M12 12V21"/><path d="M12 12L4 7.5"/></svg>'),
         ].join("");
 
-        const toolbarCtrl = new maplibregl.Control({ showCompass: false } as any);
-        toolbarCtrl.onAdd = () => {
-          const buttons = toolbarEl.querySelectorAll("button");
-          if (buttons[0]) buttons[0].addEventListener("click", () => {
-            const terrain = map.getTerrain();
-            if (terrain) { map.setTerrain(undefined as any); }
-            else { map.setTerrain({ source: "carto-dem", exaggeration: 1.5 }); }
-          });
-          if (buttons[1]) buttons[1].addEventListener("click", () => {
-            map.easeTo({ bearing: 0, pitch: 0, duration: 800 });
-          });
-          if (buttons[2]) buttons[2].addEventListener("click", () => {
-            navigator.geolocation?.getCurrentPosition(
-              (pos) => map.easeTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 14, duration: 1200 }),
-              () => {},
-              { enableHighAccuracy: true }
-            );
-          });
-          if (buttons[3]) buttons[3].addEventListener("click", () => {
-            map.easeTo({ pitch: map.getPitch() > 30 ? 0 : 60, duration: 800 });
-          });
-          return toolbarEl;
+        const toolbarCtrl: maplibregl.IControl = {
+          onAdd() {
+            const buttons = toolbarEl.querySelectorAll("button");
+            if (buttons[0]) buttons[0].addEventListener("click", () => {
+              const terrain = map.getTerrain();
+              if (terrain) { map.setTerrain(undefined as any); }
+              else { map.setTerrain({ source: "carto-dem", exaggeration: 1.5 }); }
+            });
+            if (buttons[1]) buttons[1].addEventListener("click", () => {
+              map.easeTo({ bearing: 0, pitch: 0, duration: 800 });
+            });
+            if (buttons[2]) buttons[2].addEventListener("click", () => {
+              navigator.geolocation?.getCurrentPosition(
+                (pos) => map.easeTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 14, duration: 1200 }),
+                () => {},
+                { enableHighAccuracy: true }
+              );
+            });
+            if (buttons[3]) buttons[3].addEventListener("click", () => {
+              map.easeTo({ pitch: map.getPitch() > 30 ? 0 : 60, duration: 800 });
+            });
+            return toolbarEl;
+          },
+          onRemove() { toolbarEl.remove(); },
         };
-        toolbarCtrl.onRemove = () => { toolbarEl.remove(); };
         map.addControl(toolbarCtrl, "top-right");
 
         // Bottom-right zoom
@@ -336,14 +336,15 @@ export default function TripMap({
         zoomEl.style.cssText = "display:flex;flex-direction:column;gap:4px;";
         zoomEl.innerHTML = [glassZoomBtnHTML("+"), glassZoomBtnHTML("−")].join("");
 
-        const zoomCtrl = new maplibregl.Control({ showCompass: false } as any);
-        zoomCtrl.onAdd = () => {
-          const buttons = zoomEl.querySelectorAll("button");
-          if (buttons[0]) buttons[0].addEventListener("click", () => map.zoomIn({ duration: 300 }));
-          if (buttons[1]) buttons[1].addEventListener("click", () => map.zoomOut({ duration: 300 }));
-          return zoomEl;
+        const zoomCtrl: maplibregl.IControl = {
+          onAdd() {
+            const buttons = zoomEl.querySelectorAll("button");
+            if (buttons[0]) buttons[0].addEventListener("click", () => map.zoomIn({ duration: 300 }));
+            if (buttons[1]) buttons[1].addEventListener("click", () => map.zoomOut({ duration: 300 }));
+            return zoomEl;
+          },
+          onRemove() { zoomEl.remove(); },
         };
-        zoomCtrl.onRemove = () => { zoomEl.remove(); };
         map.addControl(zoomCtrl, "bottom-right");
       }
 
@@ -381,7 +382,6 @@ export default function TripMap({
         "space-color": isDark ? "rgb(5, 5, 15)" : "rgb(11, 11, 25)",
         "star-intensity": isDark ? 0.8 : 0.6,
       });
-      // Re-add markers + routes after style change
       addMarkersAndRoutes();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -392,7 +392,7 @@ export default function TripMap({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Remove existing markers
+    // Remove existing trip markers
     map.eachLayer((layer) => {
       if (layer instanceof maplibregl.Marker && (layer as any)._isTripMarker) {
         layer.remove();
