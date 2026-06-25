@@ -283,7 +283,7 @@ export default function TripMap({
 
     map.on("load", () => {
       // ── Globe atmosphere + stars ──
-      map.setFog({
+      (map as any).setFog({
         color: isDark ? "rgb(16, 24, 42)" : "rgb(186, 210, 235)",
         "high-color": isDark ? "rgb(40, 60, 120)" : "rgb(36, 92, 223)",
         "horizon-blend": 0.02,
@@ -374,7 +374,7 @@ export default function TripMap({
     if (!map || !map.getStyle()) return;
     map.setStyle(mapStyle);
     map.once("style.load", () => {
-      map.setFog({
+      (map as any).setFog({
         color: isDark ? "rgb(16, 24, 42)" : "rgb(186, 210, 235)",
         "high-color": isDark ? "rgb(40, 60, 120)" : "rgb(36, 92, 223)",
         "horizon-blend": 0.02,
@@ -398,6 +398,8 @@ export default function TripMap({
         layer.remove();
       }
     });
+
+    // Remove existing route layers/sources
     ["route-glow", "route-main", "route-dots"].forEach((id) => {
       if (map.getLayer(id)) map.removeLayer(id);
     });
@@ -598,6 +600,7 @@ export default function TripMap({
       if (step % 3 === 0) map.panTo([lng, lat], { animate: true, duration: 400 });
 
       step++;
+
       if (step >= totalSteps) {
         currentIndex++;
         step = 0;
