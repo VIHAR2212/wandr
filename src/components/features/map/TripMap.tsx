@@ -387,11 +387,9 @@ export default function TripMap({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Remove existing trip markers using ref array
     tripMarkersRef.current.forEach((m) => m.remove());
     tripMarkersRef.current = [];
 
-    // Remove existing route layers/sources
     ["route-glow", "route-main", "route-dots"].forEach((id) => {
       if (map.getLayer(id)) map.removeLayer(id);
     });
@@ -410,13 +408,15 @@ export default function TripMap({
       map.addSource("route-glow-src", { type: "geojson", data: routeGeoJSON });
       map.addLayer({
         id: "route-glow", type: "line", source: "route-glow-src",
-        paint: { "line-color": "#6366F1", "line-width": 8, "line-opacity": 0.15, "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#6366F1", "line-width": 8, "line-opacity": 0.15 },
+        layout: { "line-cap": "round", "line-join": "round" },
       });
 
       map.addSource("route-main-src", { type: "geojson", data: routeGeoJSON });
       map.addLayer({
         id: "route-main", type: "line", source: "route-main-src",
-        paint: { "line-color": "#8B5CF6", "line-width": 3, "line-opacity": 0.7, "line-dasharray": [10, 14], "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#8B5CF6", "line-width": 3, "line-opacity": 0.7, "line-dasharray": [10, 14] },
+        layout: { "line-cap": "round", "line-join": "round" },
       });
 
       const dotFeatures = points.map((p) => ({
@@ -556,7 +556,8 @@ export default function TripMap({
     });
     map.addLayer({
       id: layerId, type: "line", source: sourceId,
-      paint: { "line-color": "#FBBF24", "line-width": 4, "line-opacity": 0.8, "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#FBBF24", "line-width": 4, "line-opacity": 0.8 },
+      layout: { "line-cap": "round", "line-join": "round" },
     });
 
     let currentIndex = 0;
@@ -624,7 +625,7 @@ export default function TripMap({
           isDark ? "bg-black/50 border-white/10 text-white" : "bg-white/90 border-gray-200/60 text-gray-700"
         }`}
       >
-        <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 text-gray-400`}>
+        <p className="text-[10px] font-bold uppercase tracking-wider mb-1.5 text-gray-400">
           Map Legend
         </p>
         <LegendRow emoji="✈️" label="Transport" bg="#3B82F6" />
