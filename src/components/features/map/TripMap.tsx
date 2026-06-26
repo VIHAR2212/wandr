@@ -1,543 +1,568 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-var DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
-var LIGHT_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
-
-var TYPE_COLORS: Record<string, string> = {
-  transport: "#3b82f6",
-  hotel: "#f97316",
-  restaurant: "#22c55e",
-  attraction: "#14b8a6",
-  hidden_gem: "#a855f7",
-  activity: "#ec4899",
-  shopping: "#eab308",
-  default: "#6b7280",
-};
-
-var TYPE_EMOJIS: Record<string, string> = {
-  transport: "🚗",
-  hotel: "🏨",
-  restaurant: "🍽️",
-  attraction: "📍",
-  hidden_gem: "💎",
-  activity: "🎯",
-  shopping: "🛍️",
-  default: "📌",
-};
-
-var LEGEND = [
-  { label: "Transport", key: "transport", color: "#3b82f6", emoji: "🚗" },
-  { label: "Hotels", key: "hotel", color: "#f97316", emoji: "🏨" },
-  { label: "Restaurants", key: "restaurant", color: "#22c55e", emoji: "🍽️" },
-  { label: "Hidden Gems", key: "hidden_gem", color: "#a855f7", emoji: "💎" },
-  { label: "Attractions", key: "attraction", color: "#14b8a6", emoji: "📍" },
-  { label: "Activities", key: "activity", color: "#ec4899", emoji: "🎯" },
-  { label: "Shopping", key: "shopping", color: "#eab308", emoji: "🛍️" },
-];
-
-function extractStops(trip: any): any[] {
-  if (!trip) return [];
-  if (Array.isArray(trip.stops)) return trip.stops;
-  if (Array.isArray(trip.itinerary)) {
-    var out: any[] = [];
-    trip.itinerary.forEach(function (day: any, di: number) {
-      if (Array.isArray(day.stops)) {
-        day.stops.forEach(function (s: any, i: number) {
-          out.push({
-            id: s.id || "s-" + di + "-" + i,
-            day: s.day || di + 1,
-            name: s.name || s.location || s.place || "Unknown",
-            type: s.type || s.category || "default",
-            description: s.description || s.details || "",
-            emoji: s.emoji,
-            coordinates: s.coordinates || s.location_coords,
-            time: s.time,
-            cost: s.cost != null ? s.cost : s.price,
-            rating: s.rating,
-            tips: s.tips,
-          });
-        });
-      }
-    });
-    return out;
-  }
-  return [];
+/* ───────── type helpers (trip: any to avoid GeneratedTrip mismatch) ───────── */
+interface Stop {
+  name?: string;
+  lat?: number;
+  lng?: number;
+  type?: string;
+  day?: number;
+  description?: string;
+  time?: string;
+  duration?: string;
 }
 
-export default function TripMap(props: any) {
-  var trip = props.trip;
-  var isDark = props.isDark !== false;
+interface TripMapProps {
+  trip: any;
+}
 
-  var containerRef = useRef<HTMLDivElement>(null);
-  var mapRef = useRef<any>(null);
-  var mlRef = useRef<any>(null);
-  var markersRef = useRef<any[]>([]);
-  var initDone = useRef(false);
+/* ───────── stop type → color ───────── */
+const TYPE_COLORS: Record<string, string> = {
+  attraction: "#f59e0b",
+  hotel: "#3b82f6",
+  restaurant: "#ef4444",
+  cafe: "#a855f7",
+  shopping: "#ec4899",
+  transport: "#6b7280",
+  activity: "#10b981",
+  default: "#f97316",
+};
 
-  var [mounted, setMounted] = useState(false);
-  var [mapReady, setMapReady] = useState(false);
-  var [terrainOn, setTerrainOn] = useState(false);
-  var [compassDeg, setCompassDeg] = useState(0);
-  var [isFull, setIsFull] = useState(false);
-  var [activeFilter, setActiveFilter] = useState<string | null>(null);
-  var [selectedDay, setSelectedDay] = useState<number | null>(null);
-  var [showGlobe, setShowGlobe] = useState(true);
+function getColor(type: string): string {
+  const t = (type || "").toLowerCase();
+  for (const [key, val] of Object.entries(TYPE_COLORS)) {
+    if (t.includes(key)) return val;
+  }
+  return TYPE_COLORS.default;
+}
 
-  var allStops = extractStops(trip);
-  var withCoords = allStops.filter(function (s: any) {
-    return s.coordinates && s.coordinates.length === 2;
-  });
-  var filtered = withCoords.filter(function (s: any) {
-    var t = (s.type || "").toLowerCase();
-    if (activeFilter && t !== activeFilter && t !== "default") return false;
-    if (selectedDay !== null && s.day !== selectedDay) return false;
+/* ═══════════════════════════════════════════════════════════════════════════ */
+export default function TripMap({ trip }: TripMapProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const initDoneRef = useRef(false);
+
+  const [mounted, setMounted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeDay, setActiveDay] = useState<number | null>(null);
+  const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());
+  const [fullscreen, setFullscreen] = useState(false);
+
+  /* ────── extract stops ────── */
+  const stops: Stop[] = (trip?.itinerary || trip?.stops || [])
+    .flatMap((day: any) => {
+      const items = day?.stops || day?.activities || day?.items || [];
+      return items.map((s: any, i: number) => ({
+        name: s?.name || s?.title || `Stop ${i + 1}`,
+        lat: Number(s?.location?.lat ?? s?.lat ?? s?.coordinates?.[1]),
+        lng: Number(s?.location?.lng ?? s?.lng ?? s?.coordinates?.[0]),
+        type: s?.type || s?.category || "attraction",
+        day: day?.day ?? day?.dayNumber ?? null,
+        description: s?.description || s?.details || "",
+        time: s?.time || s?.startTime || "",
+        duration: s?.duration || "",
+      }));
+    })
+    .filter((s: Stop) => !isNaN(s.lat) && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0);
+
+  const validStops = stops.filter((s) => s.lat != null && s.lng != null);
+
+  /* ────── derived ────── */
+  const days = Array.from(new Set(stops.map((s) => s.day).filter((d): d is number => d != null))).sort();
+  const filteredStops = validStops.filter((s) => {
+    if (activeDay !== null && s.day !== activeDay) return false;
+    if (activeTypes.size > 0 && !activeTypes.has((s.type || "").toLowerCase())) return false;
     return true;
   });
-  var daySet: number[] = [];
-  allStops.forEach(function (s: any) {
-    if (s.day && daySet.indexOf(s.day) === -1) daySet.push(s.day);
-  });
-  daySet.sort();
 
-  function countType(type: string) {
-    return allStops.filter(function (s: any) {
-      return (s.type || "").toLowerCase() === type;
-    }).length;
-  }
+  const allTypes = Array.from(new Set(validStops.map((s) => (s.type || "").toLowerCase())));
 
-  // ─── Draw stops on map ─────────────────────────────────────────────
-  function drawMap(stops: any[]) {
-    var map = mapRef.current;
-    var ml = mlRef.current;
-    if (!map || !ml) return;
-
-    // Remove old layers and sources
-    var srcNames = ["rg", "rm", "rd", "rdots"];
-    var layerNames = ["rgl", "rml", "rdl", "rdotl"];
-    layerNames.forEach(function (lid) {
-      try { if (map.getLayer(lid)) map.removeLayer(lid); } catch (e) { /* ignore */ }
-    });
-    srcNames.forEach(function (sid) {
-      try { if (map.getSource(sid)) map.removeSource(sid); } catch (e) { /* ignore */ }
-    });
-
-    // Route lines
-    if (stops.length >= 2) {
-      var coords = stops.map(function (s: any) { return s.coordinates; });
-      var gj = {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            properties: {},
-            geometry: { type: "LineString", coordinates: coords },
-          },
-        ],
-      };
-      try {
-        map.addSource("rg", { type: "geojson", data: gj });
-        map.addLayer({
-          id: "rgl",
-          type: "line",
-          source: "rg",
-          paint: { "line-color": "#f97316", "line-width": 14, "line-opacity": 0.12, "line-blur": 10 },
-          layout: { "line-cap": "round", "line-join": "round" },
-        });
-        map.addSource("rm", { type: "geojson", data: gj });
-        map.addLayer({
-          id: "rml",
-          type: "line",
-          source: "rm",
-          paint: { "line-color": "#f97316", "line-width": 3.5, "line-opacity": 0.85 },
-          layout: { "line-cap": "round", "line-join": "round" },
-        });
-        map.addSource("rd", { type: "geojson", data: gj });
-        map.addLayer({
-          id: "rdl",
-          type: "line",
-          source: "rd",
-          paint: { "line-color": "#fbbf24", "line-width": 2, "line-opacity": 0.5, "line-dasharray": [0, 4, 3] },
-          layout: { "line-cap": "round", "line-join": "round" },
-        });
-      } catch (e) {
-        console.error("Route error:", e);
-      }
-    }
-
-    // Remove old markers
-    markersRef.current.forEach(function (m: any) {
-      try { m.remove(); } catch (e) { /* ignore */ }
-    });
-    markersRef.current = [];
-
-    // Add new markers
-    stops.forEach(function (stop: any) {
-      try {
-        var stopType = (stop.type || "").toLowerCase();
-        var color = TYPE_COLORS[stopType] || TYPE_COLORS.default;
-        var emoji = stop.emoji || TYPE_EMOJIS[stopType] || "📌";
-        var dayNum = stop.day || 1;
-
-        var el = document.createElement("div");
-        el.style.cssText =
-          "display:flex;align-items:center;justify-content:center;" +
-          "width:36px;height:36px;border-radius:50%;" +
-          "background:" + color + ";" +
-          "border:2.5px solid rgba(255,255,255,0.9);" +
-          "box-shadow:0 3px 14px rgba(0,0,0,0.4);" +
-          "font-size:18px;cursor:pointer;transition:transform 0.2s;z-index:1;";
-        el.textContent = emoji;
-        el.onmouseenter = function () { el.style.transform = "scale(1.2)"; };
-        el.onmouseleave = function () { el.style.transform = "scale(1)"; };
-
-        var descH = stop.description
-          ? '<div style="font-size:12px;color:#444;margin-top:6px;line-height:1.4;">' + stop.description + '</div>'
-          : "";
-        var costH = stop.cost
-          ? '<div style="font-size:12px;color:#16a34a;font-weight:600;">₹' + Number(stop.cost).toLocaleString() + '</div>'
-          : "";
-        var ratH = stop.rating
-          ? '<div style="font-size:12px;color:#eab308;">★ ' + stop.rating + '/5</div>'
-          : "";
-        var html =
-          '<div style="font-family:system-ui,sans-serif;padding:4px 2px;">' +
-          '<div style="font-size:14px;font-weight:700;color:#111;">' + (stop.name || "Stop") + '</div>' +
-          '<div style="font-size:11px;color:#888;margin-top:2px;">' +
-          '<span style="background:' + color + '18;color:' + color + ';padding:1px 6px;border-radius:4px;font-weight:600;">Day ' + dayNum + '</span>' +
-          (stop.time ? ' ⏰ ' + stop.time : '') +
-          (stop.type ? ' · ' + stop.type : '') +
-          '</div>' +
-          descH +
-          '<div style="display:flex;gap:12px;margin-top:6px;">' + costH + ratH + '</div>' +
-          '</div>';
-
-        var popup = new ml.Popup({ offset: 15, closeButton: true, className: "wandr-popup", maxWidth: "260px" }).setHTML(html);
-        var marker = new ml.Marker({ element: el, anchor: "center" })
-          .setLngLat(stop.coordinates)
-          .setPopup(popup)
-          .addTo(map);
-        markersRef.current.push(marker);
-      } catch (e) {
-        console.error("Marker error:", e);
-      }
-    });
-
-    // Fit bounds
-    if (stops.length > 0) {
-      try {
-        var b = new ml.LngLatBounds();
-        stops.forEach(function (s: any) { b.extend(s.coordinates); });
-        map.fitBounds(b, { padding: 70, maxZoom: 13, duration: 1000 });
-      } catch (e) { /* ignore */ }
-    }
-  }
-
-  // ─── Mount guard ──────────────────────────────────────────────────
-  useEffect(function () {
+  /* ────── mounted guard ────── */
+  useEffect(() => {
     setMounted(true);
+    return () => {
+      setMounted(false);
+    };
   }, []);
 
-  // ─── Init map ONCE ────────────────────────────────────────────────
-  useEffect(function () {
-    if (!mounted || !containerRef.current || initDone.current) return;
-    initDone.current = true;
+  /* ────── inject CSS via <link> (SSR safe) ────── */
+  useEffect(() => {
+    if (!mounted) return;
+    const id = "maplibre-css-tripmap";
+    if (document.getElementById(id)) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = "https://unpkg.com/maplibre-gl@5.2.0/dist/maplibre-gl.css";
+    document.head.appendChild(link);
+  }, [mounted]);
 
-    var container = containerRef.current;
-    var rect = container.getBoundingClientRect();
-    if (rect.height < 10) {
-      container.style.height = "500px";
+  /* ────── update sources & layers when filters change ────── */
+  const updateMapLayers = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      const src = map.getSource("stops") as any;
+      if (src) {
+        src.setData({
+          type: "FeatureCollection",
+          features: filteredStops.map((s, i) => ({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [s.lng, s.lat] },
+            properties: {
+              id: i,
+              name: s.name,
+              type: s.type,
+              day: s.day,
+              description: s.description,
+              time: s.time,
+              duration: s.duration,
+              color: getColor(s.type || ""),
+            },
+          })),
+        });
+      }
+      const lineSrc = map.getSource("routes") as any;
+      if (lineSrc) {
+        lineSrc.setData({
+          type: "FeatureCollection",
+          features:
+            filteredStops.length > 1
+              ? filteredStops.slice(0, -1).map((s, i) => ({
+                  type: "Feature",
+                  geometry: {
+                    type: "LineString",
+                    coordinates: [
+                      [s.lng, s.lat],
+                      [filteredStops[i + 1].lng, filteredStops[i + 1].lat],
+                    ],
+                  },
+                  properties: { color: getColor(s.type || "") },
+                }))
+              : [],
+        });
+      }
+      if (filteredStops.length > 0) {
+        const bounds = new (map as any).LngLatBounds();
+        filteredStops.forEach((s) => bounds.extend([s.lng, s.lat]));
+        map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 });
+      }
+    } catch (e) {
+      console.error("Map layer update error:", e);
+    }
+  }, [filteredStops]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (!mapRef.current) return;
+    updateMapLayers();
+  }, [mounted, filteredStops, updateMapLayers]);
+
+  /* ────── init map (once) ────── */
+  useEffect(() => {
+    if (!mounted) return;
+    if (initDoneRef.current) return;
+    if (!containerRef.current) return;
+    if (validStops.length === 0) {
+      setLoading(false);
+      setError("No valid stops with coordinates found.");
+      return;
     }
 
-    // Dynamic import to prevent SSR crash
-    import("maplibre-gl").then(function (mod) {
-      var ml = mod.default;
-      mlRef.current = ml;
+    initDoneRef.current = true;
+    let cancelled = false;
 
-      // Inject CSS
-      if (!document.querySelector('link[href*="maplibre-gl"]')) {
-        var css = document.createElement("link");
-        css.rel = "stylesheet";
-        css.href = "https://unpkg.com/maplibre-gl@5.2.0/dist/maplibre-gl.css";
-        document.head.appendChild(css);
+    /* timeout: force-stop loading after 15s */
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        setLoading(false);
+        setError("Map took too long to load. Check your connection and refresh.");
       }
+    }, 15000);
 
+    (async () => {
       try {
-        var map = new ml.Map({
-          container: container,
-          style: isDark ? DARK_STYLE : LIGHT_STYLE,
-          center: [74.0, 15.0],
+        const maplibregl = await import("maplibre-gl");
+        if (cancelled || !containerRef.current) return;
+
+        const map = new maplibregl.Map({
+          container: containerRef.current,
+          style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+          center: [validStops[0].lng, validStops[0].lat],
           zoom: 2,
-          pitch: 0,
-          bearing: 0,
           attributionControl: false,
         });
-        (map as any).setProjection({ type: "globe" });
-        map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
+
         mapRef.current = map;
 
-        map.on("load", function () {
-          setMapReady(true);
-          drawMap(withCoords);
-        });
-        map.on("zoomend", function () {
-          setShowGlobe(map.getZoom() < 3.5);
-        });
-        map.on("rotateend", function () {
-          setCompassDeg(map.getBearing());
+        /* globe projection — AFTER construction */
+        try {
+          (map as any).setProjection({ type: "globe" });
+        } catch (_) {
+          /* globe not supported — flat map is fine */
+        }
+
+        /* ── always resolve loading state ── */
+        const finishLoading = (errMsg?: string) => {
+          clearTimeout(timeout);
+          if (!cancelled) {
+            setLoading(false);
+            if (errMsg) setError(errMsg);
+          }
+        };
+
+        map.on("load", () => {
+          finishLoading();
+          if (cancelled) return;
+
+          try {
+            /* stops source + layers */
+            map.addSource("stops", {
+              type: "geojson",
+              data: {
+                type: "FeatureCollection",
+                features: validStops.map((s, i) => ({
+                  type: "Feature",
+                  geometry: { type: "Point", coordinates: [s.lng, s.lat] },
+                  properties: {
+                    id: i,
+                    name: s.name,
+                    type: s.type,
+                    day: s.day,
+                    description: s.description,
+                    time: s.time,
+                    duration: s.duration,
+                    color: getColor(s.type || ""),
+                  },
+                })),
+              },
+            });
+
+            /* circle layer */
+            map.addLayer({
+              id: "stops-circle",
+              type: "circle",
+              source: "stops",
+              paint: {
+                "circle-radius": 7,
+                "circle-color": ["get", "color"],
+                "circle-stroke-width": 2,
+                "circle-stroke-color": "#ffffff",
+              },
+            });
+
+            /* symbol layer */
+            map.addLayer({
+              id: "stops-label",
+              type: "symbol",
+              source: "stops",
+              layout: {
+                "text-field": ["get", "name"],
+                "text-size": 12,
+                "text-offset": [0, 1.8],
+                "text-anchor": "top",
+                "text-optional": true,
+              },
+              paint: {
+                "text-color": "#e5e7eb",
+                "text-halo-color": "#000000",
+                "text-halo-width": 1,
+              },
+            });
+
+            /* routes source + layer */
+            map.addSource("routes", {
+              type: "geojson",
+              data: {
+                type: "FeatureCollection",
+                features:
+                  validStops.length > 1
+                    ? validStops.slice(0, -1).map((s, i) => ({
+                        type: "Feature",
+                        geometry: {
+                          type: "LineString",
+                          coordinates: [
+                            [s.lng, s.lat],
+                            [validStops[i + 1].lng, validStops[i + 1].lat],
+                          ],
+                        },
+                        properties: { color: getColor(s.type || "") },
+                      }))
+                    : [],
+              },
+            });
+
+            map.addLayer({
+              id: "routes-line",
+              type: "line",
+              source: "routes",
+              layout: {
+                "line-cap": "round",
+                "line-join": "round",
+              },
+              paint: {
+                "line-color": ["get", "color"],
+                "line-width": 2.5,
+                "line-opacity": 0.8,
+                "line-dasharray": [2, 2],
+              },
+            });
+
+            /* fit bounds */
+            if (validStops.length > 1) {
+              const bounds = new (map as any).LngLatBounds();
+              validStops.forEach((s) => bounds.extend([s.lng, s.lat]));
+              map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1500 });
+            }
+          } catch (layerErr) {
+            console.error("Layer setup error:", layerErr);
+          }
         });
 
-        var ro = new ResizeObserver(function () {
-          if (mapRef.current) mapRef.current.resize();
+        /* catch style/network errors */
+        map.on("error", (e: any) => {
+          console.error("MapLibre error:", e);
+          finishLoading("Failed to load map style. Check your connection.");
         });
-        ro.observe(container);
 
-        (map as any)._ro = ro;
-      } catch (e) {
-        console.error("Map init error:", e);
+        /* popup on click */
+        map.on("click", "stops-circle", (e: any) => {
+          const props = e.features?.[0]?.properties;
+          if (!props) return;
+          const dayLabel = props.day != null ? `Day ${props.day}` : "";
+          const color = props.color || "#f97316";
+          const html = `
+            <div style="color:#111;font-family:system-ui,sans-serif;max-width:260px;">
+              <span style="display:inline-block;background:${color};color:#fff;padding:2px 10px;border-radius:9999px;font-size:12px;font-weight:600;margin-bottom:6px;">${dayLabel}</span>
+              <div style="font-size:15px;font-weight:700;margin-bottom:4px;">${props.name || ""}</div>
+              ${props.type ? `<div style="font-size:12px;color:#666;margin-bottom:4px;">${props.type}</div>` : ""}
+              ${props.time ? `<div style="font-size:12px;color:#888;">${props.time}${props.duration ? ` · ${props.duration}` : ""}</div>` : ""}
+              ${props.description ? `<div style="font-size:12px;color:#555;margin-top:6px;">${props.description}</div>` : ""}
+            </div>`;
+          new (maplibregl as any).Popup({ offset: 14, maxWidth: "280px" })
+            .setLngLat(e.lngLat)
+            .setHTML(html)
+            .addTo(map);
+        });
+
+        map.on("mouseenter", "stops-circle", () => {
+          if (map.getCanvas()) map.getCanvas().style.cursor = "pointer";
+        });
+
+        map.on("mouseleave", "stops-circle", () => {
+          if (map.getCanvas()) map.getCanvas().style.cursor = "";
+        });
+
+        /* add controls */
+        map.addControl(new maplibregl.NavigationControl(), "top-right");
+        map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), "bottom-right");
+      } catch (err) {
+        clearTimeout(timeout);
+        if (!cancelled) {
+          setLoading(false);
+          setError("Failed to initialize map. Please refresh.");
+          console.error("Map init error:", err);
+        }
       }
-    });
+    })();
 
-    return function () {
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
       if (mapRef.current) {
-        var ro = (mapRef.current as any)._ro;
-        if (ro) ro.disconnect();
-        markersRef.current.forEach(function (m: any) {
-          try { m.remove(); } catch (e) { /* ignore */ }
-        });
-        markersRef.current = [];
-        try { mapRef.current.remove(); } catch (e) { /* ignore */ }
+        try {
+          mapRef.current.remove();
+        } catch (_) { /* noop */ }
         mapRef.current = null;
-        mlRef.current = null;
+        initDoneRef.current = false;
       }
-      initDone.current = false;
-      setMapReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted]);
 
-  // ─── Redraw when filter/day changes ───────────────────────────────
-  useEffect(function () {
-    if (!mapReady) return;
-    drawMap(filtered);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, selectedDay, mapReady]);
+  /* ────── toolbar helpers ────── */
+  function handleZoomIn() {
+    if (mapRef.current) mapRef.current.easeTo({ zoom: (mapRef.current.getZoom() || 0) + 1, duration: 350 });
+  }
 
-  // ─── Toolbar handlers ─────────────────────────────────────────────
-  function doZoomIn() {
-    if (mapRef.current) {
-      mapRef.current.easeTo({ zoom: (mapRef.current.getZoom() || 4) + 1.5, duration: 350 });
+  function handleZoomOut() {
+    if (mapRef.current) mapRef.current.easeTo({ zoom: Math.max(1, (mapRef.current.getZoom() || 0) - 1), duration: 350 });
+  }
+
+  function handleResetView() {
+    if (mapRef.current && validStops.length > 0) {
+      const bounds = new (mapRef.current as any).LngLatBounds();
+      validStops.forEach((s) => bounds.extend([s.lng, s.lat]));
+      mapRef.current.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1000 });
     }
   }
 
-  function doZoomOut() {
-    if (mapRef.current) {
-      var z = Math.max(1, (mapRef.current.getZoom() || 4) - 1.5);
-      mapRef.current.easeTo({ zoom: z, duration: 350 });
-    }
-  }
-
-  function doNorth() {
-    if (mapRef.current) {
-      mapRef.current.easeTo({ bearing: 0, duration: 400 });
-    }
-    setCompassDeg(0);
-  }
-
-  function do3D() {
-    if (mapRef.current) {
-      var p = mapRef.current.getPitch();
-      mapRef.current.easeTo({ pitch: p > 10 ? 0 : 60, duration: 700 });
-    }
-  }
-
-  function doLocate() {
-    if (!navigator.geolocation || !mapRef.current) return;
-    navigator.geolocation.getCurrentPosition(
-      function (pos) {
-        var lng = pos.coords.longitude;
-        var lat = pos.coords.latitude;
-        mapRef.current.flyTo({ center: [lng, lat], zoom: 14, duration: 1200 });
-      },
-      function () { /* ignore */ }
-    );
-  }
-
-  function doReset() {
-    setActiveFilter(null);
-    setSelectedDay(null);
-    drawMap(withCoords);
-    if (mapRef.current) {
-      mapRef.current.easeTo({ pitch: 0, bearing: 0, duration: 600 });
-    }
-    setCompassDeg(0);
-  }
-
-  function doFull() {
-    setIsFull(function (p) { return !p; });
-    setTimeout(function () {
-      if (mapRef.current) mapRef.current.resize();
-    }, 150);
-  }
-
-  function doTerrain() {
+  function handle3DToggle() {
     if (!mapRef.current) return;
-    setTerrainOn(function (prev) {
-      var next = !prev;
-      try {
-        if (next) {
-          mapRef.current.addSource("tsrc", {
-            type: "raster-dem",
-            url: "https://demotiles.maplibre.org/terrain-tiles.json",
-            tileSize: 256,
-          });
-          mapRef.current.setTerrain({ source: "tsrc", exaggeration: 1.5 });
-        } else {
-          mapRef.current.setTerrain(null as any);
-          if (mapRef.current.getSource("tsrc")) {
-            mapRef.current.removeSource("tsrc");
-          }
-        }
-      } catch (e) {
-        console.error("Terrain error:", e);
-      }
+    try {
+      const current = mapRef.current.getPitch();
+      mapRef.current.easeTo({ pitch: current > 0 ? 0 : 60, duration: 800 });
+    } catch (_) { /* noop */ }
+  }
+
+  function handleLocate() {
+    if (mapRef.current && validStops.length > 0) {
+      mapRef.current.flyTo({ center: [validStops[0].lng, validStops[0].lat], zoom: 12, duration: 1500 });
+    }
+  }
+
+  function toggleType(type: string) {
+    setActiveTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
       return next;
     });
   }
 
-  // ─── Placeholder before client mount ─────────────────────────────
+  /* ══════════════ RENDER ══════════════ */
   if (!mounted) {
     return (
-      <div className="relative w-full rounded-2xl overflow-hidden bg-gray-900" style={{ height: "560px", minHeight: "420px" }}>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-10 h-10 border-2 border-white/20 border-t-orange-400 rounded-full animate-spin" />
-        </div>
+      <div className="w-full h-full min-h-[500px] flex items-center justify-center bg-gray-900/50 rounded-2xl">
+        <div className="text-gray-500 text-sm">Preparing map...</div>
       </div>
     );
   }
 
-  // ─── Render ────────────────────────────────────────────────────────
   return (
-    <div
-      className={"relative w-full rounded-2xl overflow-hidden transition-all duration-300 " + (isFull ? "fixed inset-4 z-50 rounded-3xl" : "")}
-      style={isFull ? undefined : { height: "560px", minHeight: "420px" }}
-    >
-      <div ref={containerRef} className="absolute inset-0" style={{ width: "100%", height: "100%" }} />
+    <div className={`relative w-full ${fullscreen ? "fixed inset-0 z-50" : "h-full min-h-[500px]"} rounded-2xl overflow-hidden`}>
+      {/* map container */}
+      <div ref={containerRef} className="absolute inset-0" />
 
-      {!mapReady && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-2 border-white/20 border-t-orange-400 rounded-full animate-spin" />
-            <span className="text-white/60 text-sm">Loading map...</span>
-          </div>
+      {/* ── loading spinner ── */}
+      {loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 z-10">
+          <div className="w-10 h-10 border-3 border-white/20 border-t-orange-500 rounded-full animate-spin" />
+          <p className="mt-3 text-sm text-gray-400">Loading map...</p>
         </div>
       )}
 
-      {showGlobe && mapReady && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-1.5 rounded-full backdrop-blur-md bg-black/30 border border-white/15 text-white/70 text-[11px] font-medium pointer-events-none">
-          🌍 ZOOM OUT FOR GLOBE VIEW
-        </div>
-      )}
-
-      {mapReady && (
-        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-3 py-2 rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 text-xs font-medium">
-          <span>📊</span>
-          <span>{withCoords.length} stops</span>
-          <span>·</span>
-          <span>{daySet.length} days</span>
-        </div>
-      )}
-
-      {mapReady && daySet.length > 1 && (
-        <div className="absolute top-14 left-3 z-10 flex flex-wrap gap-1.5 max-w-[200px]">
+      {/* ── error state ── */}
+      {error && !loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90 z-10">
+          <div className="text-red-400 text-lg font-semibold mb-2">Map Error</div>
+          <p className="text-gray-400 text-sm text-center max-w-xs">{error}</p>
           <button
-            onClick={function () { setSelectedDay(null); }}
-            className={"px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer border " + (selectedDay === null ? "bg-orange-500/80 text-white border-orange-400/40" : "bg-black/20 text-white/50 border-white/10")}
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              initDoneRef.current = false;
+              if (mapRef.current) {
+                try { mapRef.current.remove(); } catch (_) { /* noop */ }
+                mapRef.current = null;
+              }
+              setMounted(false);
+              setTimeout(() => setMounted(true), 50);
+            }}
+            className="mt-4 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm rounded-lg transition-colors"
           >
-            All
+            Retry
           </button>
-          {daySet.map(function (d: number) {
-            return (
-              <button
-                key={d}
-                onClick={function () { setSelectedDay(selectedDay === d ? null : d); }}
-                className={"px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer border " + (selectedDay === d ? "bg-orange-500/80 text-white border-orange-400/40" : "bg-black/20 text-white/50 border-white/10")}
-              >
-                D{d}
-              </button>
-            );
-          })}
         </div>
       )}
 
-      {mapReady && (
-        <div className="absolute top-3 right-3 z-10 flex flex-col gap-1.5">
-          <button onClick={doReset} title="Reset" className="w-10 h-10 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-base">
-            🔄
+      {/* ── day filter pills ── */}
+      {days.length > 1 && !loading && (
+        <div className="absolute top-3 left-3 z-20 flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setActiveDay(null)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-all backdrop-blur-md border ${
+              activeDay === null
+                ? "bg-orange-500/90 text-white border-orange-400/40"
+                : "bg-black/30 text-gray-300 border-white/15 hover:bg-white/15"
+            }`}
+          >
+            All Days
           </button>
-          <button onClick={doTerrain} title="Terrain" className="w-10 h-10 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-base">
-            {terrainOn ? "⛰️" : "🏔️"}
-          </button>
-          <button onClick={doNorth} title="North" className="w-10 h-10 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-base">
-            <span style={{ display: "inline-block", transform: "rotate(" + (-compassDeg) + "deg)", transition: "transform 0.3s" }}>🧭</span>
-          </button>
-          <button onClick={doLocate} title="Location" className="w-10 h-10 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-base">
-            📍
-          </button>
-          <button onClick={do3D} title="3D" className="w-10 h-10 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-base">
-            🗼
-          </button>
-          <button onClick={doFull} title="Fullscreen" className="w-10 h-10 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-base">
-            {isFull ? "⛶" : "⤢"}
-          </button>
-          <div className="w-10 h-px bg-white/10 mx-auto" />
-          <button onClick={doZoomIn} title="Zoom In" className="w-8 h-8 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-sm">
+          {days.map((d) => (
+            <button
+              key={d}
+              onClick={() => setActiveDay(activeDay === d ? null : d)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all backdrop-blur-md border ${
+                activeDay === d
+                  ? "bg-orange-500/90 text-white border-orange-400/40"
+                  : "bg-black/30 text-gray-300 border-white/15 hover:bg-white/15"
+              }`}
+            >
+              Day {d}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── type legend (clickable) ── */}
+      {allTypes.length > 1 && !loading && (
+        <div className="absolute bottom-3 left-3 z-20 flex flex-wrap gap-1.5 backdrop-blur-md bg-black/30 rounded-xl p-2 border border-white/10">
+          {allTypes.map((t) => (
+            <button
+              key={t}
+              onClick={() => toggleType(t)}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-all ${
+                activeTypes.has(t) ? "opacity-40 line-through" : "opacity-100"
+              }`}
+            >
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: getColor(t) }} />
+              <span className="text-gray-300 capitalize">{t}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── toolbar (right side) ── */}
+      {!loading && (
+        <div className="absolute top-3 right-3 z-20 flex flex-col gap-1.5">
+          <button
+            onClick={handleZoomIn}
+            className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-lg"
+            title="Zoom in"
+          >
             +
           </button>
-          <button onClick={doZoomOut} title="Zoom Out" className="w-8 h-8 flex items-center justify-center rounded-xl backdrop-blur-md bg-black/30 border border-white/15 text-white/80 hover:bg-white/20 cursor-pointer text-sm">
+          <button
+            onClick={handleZoomOut}
+            className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-lg"
+            title="Zoom out"
+          >
             −
+          </button>
+          <button
+            onClick={handle3DToggle}
+            className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-sm"
+            title="Toggle 3D"
+          >
+            3D
+          </button>
+          <button
+            onClick={handleLocate}
+            className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors"
+            title="Go to first stop"
+          >
+            📍
+          </button>
+          <button
+            onClick={handleResetView}
+            className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-sm"
+            title="Fit all stops"
+          >
+            ⊡
+          </button>
+          <button
+            onClick={() => setFullscreen(!fullscreen)}
+            className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-sm"
+            title="Toggle fullscreen"
+          >
+            {fullscreen ? "✕" : "⛶"}
           </button>
         </div>
       )}
-
-      {mapReady && (
-        <div className="absolute bottom-3 left-3 z-10 p-3 rounded-2xl backdrop-blur-md bg-black/30 border border-white/15">
-          <div className="text-white/90 text-[10px] font-bold mb-2 tracking-widest uppercase">
-            Map Legend
-          </div>
-          <div className="space-y-1">
-            {LEGEND.filter(function (l) { return countType(l.key) > 0; }).map(function (item) {
-              return (
-                <button
-                  key={item.key}
-                  onClick={function () { setActiveFilter(activeFilter === item.key ? null : item.key); }}
-                  className={"flex items-center gap-2 w-full text-left px-1.5 py-1 rounded-lg transition cursor-pointer " + (activeFilter === item.key ? "bg-white/10" : "hover:bg-white/5")}
-                >
-                  <div
-                    className="w-2.5 h-2.5 rounded-full"
-                    style={{ backgroundColor: item.color, opacity: activeFilter && activeFilter !== item.key ? 0.3 : 1 }}
-                  />
-                  <span className="text-[11px] text-white/70">{item.emoji} {item.label}</span>
-                  <span className="ml-auto text-[10px] text-white/30">{countType(item.key)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <style
-        dangerouslySetInnerHTML={{
-          __html:
-            "@keyframes pulse-ring{0%{transform:scale(1);opacity:1}100%{transform:scale(2.5);opacity:0}}" +
-            ".wandr-popup .maplibregl-popup-content{border-radius:14px!important;padding:12px 16px!important;box-shadow:0 12px 40px rgba(0,0,0,0.3)!important;background:rgba(255,255,255,0.97)!important}" +
-            ".wandr-popup .maplibregl-popup-close-button{font-size:18px!important;color:#999!important;right:6px!important;top:6px!important}" +
-            ".wandr-popup .maplibregl-popup-tip{display:none}",
-        }}
-      />
     </div>
   );
 }
