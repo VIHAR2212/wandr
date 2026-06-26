@@ -1,5 +1,5 @@
 'use client';
-
+// pranay nearly fuxked this up//
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 const GLOBE_TRIPS = [
