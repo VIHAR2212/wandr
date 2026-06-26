@@ -2,6 +2,7 @@
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { ArrowRight, Globe, MapPin, Star, TrendingUp, Users, Play } from 'lucide-react';
+import LuckyGlobe from '@/components/features/landing/LuckyGlobe';
 
 const stats = [
   { label: 'Trips Planned', value: '2.4M+', icon: Globe },
