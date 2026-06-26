@@ -227,7 +227,7 @@ export default function TripMap(props: any) {
 
   // ─── Toolbar ───────────────────────────────────────────────────────
   function doZoomIn() { mapRef.current && mapRef.current.easeTo({ zoom: (mapRef.current.getZoom() || 4) + 1.5, duration: 350 }); }
-  function doZoomOut() { mapRef.current && mapRef.current.easeTo({ zoom: Math.max(1, (mapRef.current.getZoom() || 4) - 1.5, duration: 350 }); }); }
+  function doZoomOut() { mapRef.current && mapRef.current.easeTo({ zoom: Math.max(1, (mapRef.current.getZoom() || 4) - 1.5), duration: 350 }); }); }
   function doNorth() { mapRef.current && mapRef.current.easeTo({ bearing: 0, duration: 400 }); setCompassDeg(0); }
   function do3D() { mapRef.current && mapRef.current.easeTo({ pitch: mapRef.current.getPitch() > 10 ? 0 : 60, duration: 700 }); }
   function doLocate() {
