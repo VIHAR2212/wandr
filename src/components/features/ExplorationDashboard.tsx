@@ -7,7 +7,7 @@ import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
 
 const SocialCards = dynamic(() => import('@/components/features/SocialCards'), { ssr: false });
 
-// ─── Types ────────────────────────────────────────────────
+// Types
 interface SequenceItem {
   category: 'transport' | 'hotel' | 'activity';
   title: string;
@@ -33,7 +33,7 @@ interface EditorialTrip {
   highlights?: string[];
 }
 
-// ─── Destination Data (11 trips) ──────────────────────────
+// Destination Data (11 trips)
 const EDITORIAL_TRIPS: EditorialTrip[] = [
   {
     id: "kerala-backwaters",
@@ -299,7 +299,7 @@ const EDITORIAL_TRIPS: EditorialTrip[] = [
   }
 ];
 
-// ─── Component ────────────────────────────────────────────
+// Component
 export default function ExplorationDashboard() {
   const [activeTrip, setActiveTrip] = useState<EditorialTrip | null>(null);
 
@@ -370,7 +370,7 @@ export default function ExplorationDashboard() {
   );
 }
 
-// ─── Integrated Trip Detail View ──────────────────────────
+// Integrated Trip Detail View
 function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
   const availableFlights = (COMMUNITY_ROUTE_DB as any)[activeTrip.routeKey] || [];
   const primaryFlight = availableFlights[0];
@@ -453,7 +453,10 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
                   </span>
                 </div>
               ))}
-            {activeTrip.activities && activeTrip.activities.length > 0 && (
+            </div>
+          )}
+
+          {activeTrip.activities && activeTrip.activities.length > 0 && (
             <div className="space-y-4 border-b border-neutral-800/40 pb-4">
               <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase flex items-center gap-2">
                 <Calendar className="w-3 h-3" /> Activities
@@ -479,8 +482,8 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
               {activeTrip.highlights.map((h, i) => (
                 <span
                   key={i}
-                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full" 
-                  >
+                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full"
+                >
                   {h}
                 </span>
               ))}
@@ -496,5 +499,5 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
         </div>
       </div>
     </div>
-  );  
+  );
 }
