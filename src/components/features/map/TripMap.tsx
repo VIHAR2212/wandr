@@ -66,7 +66,7 @@ export default function TripMap({ trip }: TripMapProps) {
         duration: s?.duration || "",
       }));
     })
-    .filter((s: Stop) => !isNaN(s.lat) && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0);
+    .filter((s: Stop) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng)) && s.lat !== 0 && s.lng !== 0);
 
   const validStops = stops.filter((s) => s.lat != null && s.lng != null);
 
