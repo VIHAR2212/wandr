@@ -91,7 +91,7 @@ function detectTransportMode(title: string): string {
   return 'Car';
 }
 
-/* ─── Build raw stops (no coords / isInterCity yet) ───── */
+/* ─── Build raw stops ──────────────────────────────────── */
 function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterCity'>[] {
   const stops: Omit<ItineraryStop, 'lat' | 'lng' | 'isInterCity'>[] = [];
   const days = trip?.days || [];
@@ -132,7 +132,7 @@ function buildRawStops(trip: any): Omit<ItineraryStop, 'lat' | 'lng' | 'isInterC
   return stops;
 }
 
-/* ─── Marker element factories (MapLibre) ──────────────── */
+/* ─── Marker element factories ─────────────────────────── */
 function makeUserEl(): HTMLElement {
   const el = document.createElement('div');
   el.innerHTML = `<div style="position:relative;width:46px;height:46px;">
@@ -182,7 +182,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
   useEffect(() => { stopsRef.current = stops; }, [stops]);
 
-  /* ─── Geocode all stops + distance-based isInterCity ── */
+  /* ─── Geocode all stops ──────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
     const raw = buildRawStops(trip);
@@ -236,7 +236,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     return () => { cancelled = true; };
   }, [trip, originLat, originLng]);
 
-  /* ─── Init MapLibre map ─────────────────────────────── */
+  /* ─── Init Map ───────────────────────────────────────── */
   useEffect(() => {
     if (stops.length === 0 || phase !== 'geocoding') return;
 
@@ -256,25 +256,16 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         attributionControl: false,
       });
 
-      (map as any).setProjection({ type: 'globe' });
+      try { (map as any).setProjection({ type: 'globe' }); } catch {}
 
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
       map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: true }), 'bottom-right');
 
       map.on('load', () => {
-        (map as any).setFog({
-          color: 'rgb(16, 24, 42)',
-          'high-color': 'rgb(40, 60, 120)',
-          'horizon-blend': 0.02,
-          'space-color': 'rgb(5, 5, 15)',
-          'star-intensity': 0.8,
-        });
-
         const allCoords: [number, number][] = [];
         const validStops = stops.filter(s => !(s.lat === 0 && s.lng === 0));
 
-        // Stop markers
-        validStops.forEach((stop, idx) => {
+        validStops.forEach((stop) => {
           const coord: [number, number] = [stop.lng, stop.lat];
           allCoords.push(coord);
 
@@ -284,10 +275,9 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           if (stop.type === 'hiddenGem') dotColor = '#A855F7';
           if (stop.isHomeStop) dotColor = '#EF4444';
 
-          const visited = idx < 1;
-          const sz = visited ? 12 : 8;
+          const sz = 8;
           const dotEl = document.createElement('div');
-          dotEl.innerHTML = `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 ${visited ? '8px' : '4px'} ${dotColor}80;transition:all .3s;"></div>`;
+          dotEl.innerHTML = `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 4px ${dotColor}80;transition:all .3s;"></div>`;
 
           const marker = new maplibregl.Marker({ element: dotEl })
             .setLngLat(coord)
@@ -297,7 +287,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           stopMarkersRef.current.push(marker);
         });
 
-        // Route lines
         if (allCoords.length > 1) {
           const routeGeo: any = { type: 'Feature', geometry: { type: 'LineString', coordinates: allCoords }, properties: {} };
 
@@ -320,13 +309,11 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           map.fitBounds(bounds, { padding: 50, maxZoom: 14 });
         }
 
-        // User marker
         const firstCoord: [number, number] = allCoords[0] || [72.877, 19.076];
         userMarkerRef.current = new maplibregl.Marker({ element: makeUserEl() })
           .setLngLat(firstCoord)
           .addTo(map);
 
-        // Trail line
         trailCoords.current = [firstCoord];
         map.addSource('tracking-trail', {
           type: 'geojson',
@@ -477,7 +464,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col"
     >
-      {/* ── Header ── */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-orange-500/20 bg-black/80">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg shadow-orange-500/20">
@@ -493,7 +479,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         </button>
       </div>
 
-      {/* ── Map ── */}
       <div className="flex-1 relative">
         {phase === 'geocoding' && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80">
@@ -551,7 +536,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         </div>
       </div>
 
-      {/* ── Bottom panel ── */}
       <div className="border-t border-orange-500/20 bg-black/90 backdrop-blur-xl">
         <AnimatePresence mode="wait">
 
