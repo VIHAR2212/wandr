@@ -42,6 +42,8 @@ function getColor(type: string): string {
 export default function TripMap({ trip }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  // Store the maplibregl module so LngLatBounds / Popup are available outside the init closure
+  const mlRef = useRef<any>(null);
   const initDoneRef = useRef(false);
 
   const [mounted, setMounted] = useState(false);
@@ -66,19 +68,36 @@ export default function TripMap({ trip }: TripMapProps) {
         duration: s?.duration || "",
       }));
     })
-    .filter((s: Stop) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng)) && s.lat !== 0 && s.lng !== 0);
+    .filter(
+      (s: Stop) =>
+        !isNaN(Number(s.lat)) &&
+        !isNaN(Number(s.lng)) &&
+        s.lat !== 0 &&
+        s.lng !== 0
+    );
 
   const validStops = stops.filter((s) => s.lat != null && s.lng != null);
 
   /* ────── derived ────── */
-  const days = Array.from(new Set(stops.map((s) => s.day).filter((d): d is number => d != null))).sort();
+  const days = Array.from(
+    new Set(
+      stops.map((s) => s.day).filter((d): d is number => d != null)
+    )
+  ).sort();
+
   const filteredStops = validStops.filter((s) => {
     if (activeDay !== null && s.day !== activeDay) return false;
-    if (activeTypes.size > 0 && !activeTypes.has((s.type || "").toLowerCase())) return false;
+    if (
+      activeTypes.size > 0 &&
+      !activeTypes.has((s.type || "").toLowerCase())
+    )
+      return false;
     return true;
   });
 
-  const allTypes = Array.from(new Set(validStops.map((s) => (s.type || "").toLowerCase())));
+  const allTypes = Array.from(
+    new Set(validStops.map((s) => (s.type || "").toLowerCase()))
+  );
 
   /* ────── mounted guard ────── */
   useEffect(() => {
@@ -103,15 +122,22 @@ export default function TripMap({ trip }: TripMapProps) {
   /* ────── update sources & layers when filters change ────── */
   const updateMapLayers = useCallback(() => {
     const map = mapRef.current;
-    if (!map) return;
+    const ml = mlRef.current;
+    if (!map || !ml) return;
     try {
+      /* ── stops source ── */
       const src = map.getSource("stops") as any;
       if (src) {
         src.setData({
           type: "FeatureCollection",
           features: filteredStops.map((s, i) => ({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [s.lng, s.lat] },
+            type: "Feature" as const,
+            geometry: {
+              type: "Point" as const,
+              // FIX: wrap in Number() and assert as [number, number] so
+              // GeoJSON Position = number[] is satisfied
+              coordinates: [Number(s.lng), Number(s.lat)] as [number, number],
+            },
             properties: {
               id: i,
               name: s.name,
@@ -125,6 +151,8 @@ export default function TripMap({ trip }: TripMapProps) {
           })),
         });
       }
+
+      /* ── routes source ── */
       const lineSrc = map.getSource("routes") as any;
       if (lineSrc) {
         lineSrc.setData({
@@ -132,12 +160,15 @@ export default function TripMap({ trip }: TripMapProps) {
           features:
             filteredStops.length > 1
               ? filteredStops.slice(0, -1).map((s, i) => ({
-                  type: "Feature",
+                  type: "Feature" as const,
                   geometry: {
-                    type: "LineString",
+                    type: "LineString" as const,
                     coordinates: [
-                      [s.lng, s.lat],
-                      [filteredStops[i + 1].lng, filteredStops[i + 1].lat],
+                      [Number(s.lng), Number(s.lat)] as [number, number],
+                      [
+                        Number(filteredStops[i + 1].lng),
+                        Number(filteredStops[i + 1].lat),
+                      ] as [number, number],
                     ],
                   },
                   properties: { color: getColor(s.type || "") },
@@ -145,9 +176,15 @@ export default function TripMap({ trip }: TripMapProps) {
               : [],
         });
       }
+
+      /* ── refit bounds ── */
       if (filteredStops.length > 0) {
-        const bounds = new (map as any).LngLatBounds();
-        filteredStops.forEach((s) => bounds.extend([s.lng, s.lat]));
+        // FIX: use ml.LngLatBounds (the module ref), NOT new (map as any).LngLatBounds
+        const bounds = new ml.LngLatBounds();
+        filteredStops.forEach((s) =>
+          // FIX: Number() wrap for bounds.extend
+          bounds.extend([Number(s.lng), Number(s.lat)])
+        );
         map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 });
       }
     } catch (e) {
@@ -179,7 +216,9 @@ export default function TripMap({ trip }: TripMapProps) {
     const timeout = setTimeout(() => {
       if (!cancelled) {
         setLoading(false);
-        setError("Map took too long to load. Check your connection and refresh.");
+        setError(
+          "Map took too long to load. Check your connection and refresh."
+        );
       }
     }, 15000);
 
@@ -188,9 +227,14 @@ export default function TripMap({ trip }: TripMapProps) {
         const maplibregl = await import("maplibre-gl");
         if (cancelled || !containerRef.current) return;
 
+        // Store module reference so helpers outside this closure can use LngLatBounds / Popup
+        mlRef.current = maplibregl;
+
         const map = new maplibregl.Map({
           container: containerRef.current,
-          style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+          style:
+            "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+          // FIX: Number() wrap — validStops[0].lat/lng are number | undefined
           center: [Number(validStops[0].lng), Number(validStops[0].lat)],
           zoom: 2,
           attributionControl: false,
@@ -198,11 +242,11 @@ export default function TripMap({ trip }: TripMapProps) {
 
         mapRef.current = map;
 
-        /* globe projection — AFTER construction */
+        /* globe projection — call AFTER constructor, NOT inside options */
         try {
           (map as any).setProjection({ type: "globe" });
         } catch (_) {
-          /* globe not supported — flat map is fine */
+          /* globe not supported in this build — flat map is fine */
         }
 
         /* ── always resolve loading state ── */
@@ -219,14 +263,21 @@ export default function TripMap({ trip }: TripMapProps) {
           if (cancelled) return;
 
           try {
-            /* stops source + layers */
+            /* ── stops source ── */
             map.addSource("stops", {
               type: "geojson",
               data: {
                 type: "FeatureCollection",
                 features: validStops.map((s, i) => ({
-                  type: "Feature",
-                  geometry: { type: "Point", coordinates: [s.lng, s.lat] },
+                  type: "Feature" as const,
+                  geometry: {
+                    type: "Point" as const,
+                    // FIX: Number() + tuple assertion
+                    coordinates: [Number(s.lng), Number(s.lat)] as [
+                      number,
+                      number
+                    ],
+                  },
                   properties: {
                     id: i,
                     name: s.name,
@@ -254,7 +305,7 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
-            /* symbol layer */
+            /* symbol / label layer */
             map.addLayer({
               id: "stops-label",
               type: "symbol",
@@ -273,7 +324,7 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
-            /* routes source + layer */
+            /* ── routes source ── */
             map.addSource("routes", {
               type: "geojson",
               data: {
@@ -281,12 +332,15 @@ export default function TripMap({ trip }: TripMapProps) {
                 features:
                   validStops.length > 1
                     ? validStops.slice(0, -1).map((s, i) => ({
-                        type: "Feature",
+                        type: "Feature" as const,
                         geometry: {
-                          type: "LineString",
+                          type: "LineString" as const,
                           coordinates: [
-                            [s.lng, s.lat],
-                            [validStops[i + 1].lng, validStops[i + 1].lat],
+                            [Number(s.lng), Number(s.lat)] as [number, number],
+                            [
+                              Number(validStops[i + 1].lng),
+                              Number(validStops[i + 1].lat),
+                            ] as [number, number],
                           ],
                         },
                         properties: { color: getColor(s.type || "") },
@@ -295,6 +349,8 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
+            /* routes line layer
+               CRITICAL: line-cap and line-join go in LAYOUT, not paint */
             map.addLayer({
               id: "routes-line",
               type: "line",
@@ -311,18 +367,25 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
-            /* fit bounds */
+            /* fit to all stops */
             if (validStops.length > 1) {
-              const bounds = new (map as any).LngLatBounds();
-              validStops.forEach((s) => bounds.extend([s.lng, s.lat]));
-              map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1500 });
+              // FIX: use maplibregl.LngLatBounds (module), not (map as any).LngLatBounds
+              const bounds = new maplibregl.LngLatBounds();
+              validStops.forEach((s) =>
+                bounds.extend([Number(s.lng), Number(s.lat)])
+              );
+              map.fitBounds(bounds, {
+                padding: 60,
+                maxZoom: 14,
+                duration: 1500,
+              });
             }
           } catch (layerErr) {
             console.error("Layer setup error:", layerErr);
           }
         });
 
-        /* catch style/network errors */
+        /* catch style / network errors */
         map.on("error", (e: any) => {
           console.error("MapLibre error:", e);
           finishLoading("Failed to load map style. Check your connection.");
@@ -342,7 +405,8 @@ export default function TripMap({ trip }: TripMapProps) {
               ${props.time ? `<div style="font-size:12px;color:#888;">${props.time}${props.duration ? ` · ${props.duration}` : ""}</div>` : ""}
               ${props.description ? `<div style="font-size:12px;color:#555;margin-top:6px;">${props.description}</div>` : ""}
             </div>`;
-          new (maplibregl as any).Popup({ offset: 14, maxWidth: "280px" })
+          // FIX: use mlRef (the stored module) for Popup — maplibregl not in scope here
+          new (mlRef.current as any).Popup({ offset: 14, maxWidth: "280px" })
             .setLngLat(e.lngLat)
             .setHTML(html)
             .addTo(map);
@@ -356,9 +420,15 @@ export default function TripMap({ trip }: TripMapProps) {
           if (map.getCanvas()) map.getCanvas().style.cursor = "";
         });
 
-        /* add controls */
+        /* built-in controls */
         map.addControl(new maplibregl.NavigationControl(), "top-right");
-        map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), "bottom-right");
+        map.addControl(
+          new maplibregl.GeolocateControl({
+            positionOptions: { enableHighAccuracy: true },
+            trackUserLocation: true,
+          }),
+          "bottom-right"
+        );
       } catch (err) {
         clearTimeout(timeout);
         if (!cancelled) {
@@ -375,7 +445,9 @@ export default function TripMap({ trip }: TripMapProps) {
       if (mapRef.current) {
         try {
           mapRef.current.remove();
-        } catch (_) { /* noop */ }
+        } catch (_) {
+          /* noop */
+        }
         mapRef.current = null;
         initDoneRef.current = false;
       }
@@ -385,18 +457,36 @@ export default function TripMap({ trip }: TripMapProps) {
 
   /* ────── toolbar helpers ────── */
   function handleZoomIn() {
-    if (mapRef.current) mapRef.current.easeTo({ zoom: (mapRef.current.getZoom() || 0) + 1, duration: 350 });
+    if (mapRef.current) {
+      mapRef.current.easeTo({
+        zoom: (mapRef.current.getZoom() || 0) + 1,
+        duration: 350,
+      });
+    }
   }
 
   function handleZoomOut() {
-    if (mapRef.current) mapRef.current.easeTo({ zoom: Math.max(1, (mapRef.current.getZoom() || 0) - 1), duration: 350 });
+    if (mapRef.current) {
+      mapRef.current.easeTo({
+        zoom: Math.max(1, (mapRef.current.getZoom() || 0) - 1),
+        duration: 350,
+      });
+    }
   }
 
   function handleResetView() {
-    if (mapRef.current && validStops.length > 0) {
-      const bounds = new (mapRef.current as any).LngLatBounds();
-      validStops.forEach((s) => bounds.extend([s.lng, s.lat]));
-      mapRef.current.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1000 });
+    const map = mapRef.current;
+    const ml = mlRef.current;
+    if (!map || !ml || validStops.length === 0) return;
+    try {
+      // FIX: use ml.LngLatBounds (module ref), not (map as any).LngLatBounds
+      const bounds = new ml.LngLatBounds();
+      validStops.forEach((s) =>
+        bounds.extend([Number(s.lng), Number(s.lat)])
+      );
+      map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1000 });
+    } catch (_) {
+      /* noop */
     }
   }
 
@@ -405,12 +495,19 @@ export default function TripMap({ trip }: TripMapProps) {
     try {
       const current = mapRef.current.getPitch();
       mapRef.current.easeTo({ pitch: current > 0 ? 0 : 60, duration: 800 });
-    } catch (_) { /* noop */ }
+    } catch (_) {
+      /* noop */
+    }
   }
 
   function handleLocate() {
     if (mapRef.current && validStops.length > 0) {
-      mapRef.current.flyTo({ center: [validStops[0].lng, validStops[0].lat], zoom: 12, duration: 1500 });
+      mapRef.current.flyTo({
+        // FIX: Number() wrap — lat/lng are number | undefined
+        center: [Number(validStops[0].lng), Number(validStops[0].lat)],
+        zoom: 12,
+        duration: 1500,
+      });
     }
   }
 
@@ -433,14 +530,18 @@ export default function TripMap({ trip }: TripMapProps) {
   }
 
   return (
-    <div className={`relative w-full ${fullscreen ? "fixed inset-0 z-50" : "h-full min-h-[500px]"} rounded-2xl overflow-hidden`}>
-      {/* map container */}
+    <div
+      className={`relative w-full ${
+        fullscreen ? "fixed inset-0 z-50" : "h-full min-h-[500px]"
+      } rounded-2xl overflow-hidden`}
+    >
+      {/* map canvas */}
       <div ref={containerRef} className="absolute inset-0" />
 
       {/* ── loading spinner ── */}
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 z-10">
-          <div className="w-10 h-10 border-3 border-white/20 border-t-orange-500 rounded-full animate-spin" />
+          <div className="w-10 h-10 border-[3px] border-white/20 border-t-orange-500 rounded-full animate-spin" />
           <p className="mt-3 text-sm text-gray-400">Loading map...</p>
         </div>
       )}
@@ -448,7 +549,9 @@ export default function TripMap({ trip }: TripMapProps) {
       {/* ── error state ── */}
       {error && !loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90 z-10">
-          <div className="text-red-400 text-lg font-semibold mb-2">Map Error</div>
+          <div className="text-red-400 text-lg font-semibold mb-2">
+            Map Error
+          </div>
           <p className="text-gray-400 text-sm text-center max-w-xs">{error}</p>
           <button
             onClick={() => {
@@ -456,9 +559,14 @@ export default function TripMap({ trip }: TripMapProps) {
               setLoading(true);
               initDoneRef.current = false;
               if (mapRef.current) {
-                try { mapRef.current.remove(); } catch (_) { /* noop */ }
+                try {
+                  mapRef.current.remove();
+                } catch (_) {
+                  /* noop */
+                }
                 mapRef.current = null;
               }
+              mlRef.current = null;
               setMounted(false);
               setTimeout(() => setMounted(true), 50);
             }}
@@ -509,7 +617,10 @@ export default function TripMap({ trip }: TripMapProps) {
                 activeTypes.has(t) ? "opacity-40 line-through" : "opacity-100"
               }`}
             >
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: getColor(t) }} />
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: getColor(t) }}
+              />
               <span className="text-gray-300 capitalize">{t}</span>
             </button>
           ))}
