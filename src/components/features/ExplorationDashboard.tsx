@@ -479,7 +479,8 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
               {activeTrip.highlights.map((h, i) => (
                 <span
                   key={i}
-                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full" >
+                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full" 
+                  >
                   {h}
                 </span>
               ))}
