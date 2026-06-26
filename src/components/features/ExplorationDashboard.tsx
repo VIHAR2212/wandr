@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Share2, ArrowRight, MapPin, Calendar, Clock, Plane, Hotel as HotelIcon } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
