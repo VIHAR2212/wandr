@@ -5,11 +5,12 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-interface TripStop {
-  id: string;
-  day: number;
-  name: string;
-  type: string;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TripStop = {
+  id?: string;
+  day?: number;
+  name?: string;
+  type?: string;
   description?: string;
   emoji?: string;
   coordinates?: [number, number];
@@ -17,23 +18,13 @@ interface TripStop {
   cost?: number;
   rating?: number;
   tips?: string;
-}
+  [key: string]: any;
+};
 
-interface TripData {
-  id: string;
-  title: string;
-  stops: TripStop[];
-  transport?: {
-    type: string;
-    from: string;
-    to: string;
-    duration?: string;
-    coordinates?: { start: [number, number]; end: [number, number] };
-  }[];
-}
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface TripMapProps {
-  trip: TripData;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  trip: any;
   isDark?: boolean;
 }
 
@@ -86,6 +77,38 @@ function GlassButton({
   );
 }
 
+// ─── Helper: extract stops from any trip shape ───────────────────────────────
+function extractStops(trip: any): TripStop[] {
+  if (!trip) return [];
+  // Direct stops array
+  if (Array.isArray(trip.stops)) return trip.stops;
+  // Nested in itinerary
+  if (Array.isArray(trip.itinerary)) {
+    const result: TripStop[] = [];
+    trip.itinerary.forEach((day: any, dayIdx: number) => {
+      if (Array.isArray(day.stops)) {
+        day.stops.forEach((s: any, i: number) => {
+          result.push({
+            id: s.id || `stop-${dayIdx}-${i}`,
+            day: s.day || dayIdx + 1,
+            name: s.name || s.location || s.place || "Unknown",
+            type: s.type || s.category || "default",
+            description: s.description || s.details,
+            emoji: s.emoji,
+            coordinates: s.coordinates || s.location_coords,
+            time: s.time,
+            cost: s.cost || s.price,
+            rating: s.rating,
+            tips: s.tips,
+          });
+        });
+      }
+    });
+    return result;
+  }
+  return [];
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function TripMap({ trip, isDark = true }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -95,7 +118,8 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
   const [terrainEnabled, setTerrainEnabled] = useState(false);
   const [compassDeg, setCompassDeg] = useState(0);
 
-  const stopsWithCoords = (trip.stops || []).filter(
+  const allStops = extractStops(trip);
+  const stopsWithCoords = allStops.filter(
     (s) => s.coordinates && s.coordinates.length === 2
   );
 
@@ -124,7 +148,6 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
   useEffect(() => {
     if (!mapContainer.current) return;
 
-    // Force explicit dimensions on the container
     const container = mapContainer.current;
     const rect = container.getBoundingClientRect();
     if (rect.height < 10) {
@@ -144,13 +167,11 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
     // Globe projection — must be AFTER map creation
     (map as any).setProjection({ type: "globe" });
 
-    // Add attribution in bottom-right
     map.addControl(
       new maplibregl.AttributionControl({ compact: true }),
       "bottom-right"
     );
 
-    // Track errors
     map.on("error", (e: any) => {
       console.error("MapLibre error:", e.error || e);
     });
@@ -162,10 +183,9 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
     map.on("load", () => {
       console.log("MapLibre map loaded");
 
-      // ── Add route lines ────────────────────────────────────────────
       const routeGeoJSON = buildRouteGeoJSON();
       if (routeGeoJSON) {
-        // Glow line (thick, transparent)
+        // Glow line
         map.addSource("route-glow", {
           type: "geojson",
           data: routeGeoJSON,
@@ -206,7 +226,7 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
           },
         });
 
-        // Dashed animation line
+        // Dashed line
         map.addSource("route-dash", {
           type: "geojson",
           data: routeGeoJSON,
@@ -227,7 +247,7 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
           },
         });
 
-        // Dot markers along route
+        // Dots
         if (stopsWithCoords.length > 1) {
           const dotFeatures = stopsWithCoords.map((stop, i) => ({
             type: "Feature" as const,
@@ -259,10 +279,9 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
       tripMarkersRef.current.forEach((m) => m.remove());
       tripMarkersRef.current = [];
 
-      stopsWithCoords.forEach((stop, idx) => {
+      stopsWithCoords.forEach((stop) => {
         const color = TYPE_COLORS[stop.type?.toLowerCase()] || TYPE_COLORS.default;
-        const emoji =
-          stop.emoji || TYPE_EMOJIS[stop.type?.toLowerCase()] || "📍";
+        const emoji = stop.emoji || TYPE_EMOJIS[stop.type?.toLowerCase()] || "📍";
 
         const el = document.createElement("div");
         el.style.cssText = `
@@ -283,12 +302,12 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
           maxWidth: "260px",
         }).setHTML(`
           <div style="font-family:system-ui,sans-serif;padding:4px 0;">
-            <div style="font-size:14px;font-weight:700;color:#111;">${stop.name}</div>
+            <div style="font-size:14px;font-weight:700;color:#111;">${stop.name || "Stop"}</div>
             <div style="font-size:11px;color:#666;margin-top:2px;">
-              Day ${stop.day} ${stop.time ? "• " + stop.time : ""} ${stop.type ? "• " + stop.type : ""}
+              Day ${stop.day || 1} ${stop.time ? "• " + stop.time : ""} ${stop.type ? "• " + stop.type : ""}
             </div>
             ${stop.description ? `<div style="font-size:12px;color:#444;margin-top:6px;line-height:1.4;">${stop.description}</div>` : ""}
-            ${stop.cost ? `<div style="font-size:12px;color:#f97316;margin-top:4px;font-weight:600;">₹${stop.cost.toLocaleString()}</div>` : ""}
+            ${stop.cost ? `<div style="font-size:12px;color:#f97316;margin-top:4px;font-weight:600;">₹${Number(stop.cost).toLocaleString()}</div>` : ""}
             ${stop.rating ? `<div style="font-size:12px;color:#eab308;margin-top:2px;">★ ${stop.rating}/5</div>` : ""}
           </div>
         `);
@@ -301,7 +320,7 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
         tripMarkersRef.current.push(marker);
       });
 
-      // ── Fit bounds to show all stops ───────────────────────────────
+      // ── Fit bounds ─────────────────────────────────────────────────
       if (stopsWithCoords.length > 0) {
         const bounds = new maplibregl.LngLatBounds();
         stopsWithCoords.forEach((s) =>
@@ -310,12 +329,10 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
         map.fitBounds(bounds, { padding: { top: 60, bottom: 60, left: 60, right: 60 }, maxZoom: 12, duration: 1500 });
       }
 
-      // ── Zoom-based globe badge ─────────────────────────────────────
       map.on("zoomend", () => {
         setShowGlobeBadge(map.getZoom() < 3.5);
       });
 
-      // ── Bearing-based compass ──────────────────────────────────────
       map.on("rotateend", () => {
         setCompassDeg(map.getBearing());
       });
@@ -323,11 +340,8 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
 
     mapRef.current = map;
 
-    // ResizeObserver to handle container size changes
     const resizeObserver = new ResizeObserver(() => {
-      if (mapRef.current) {
-        mapRef.current.resize();
-      }
+      if (mapRef.current) mapRef.current.resize();
     });
     resizeObserver.observe(container);
 
@@ -338,7 +352,7 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
       map.remove();
       mapRef.current = null;
     };
-  }, [trip, isDark, buildRouteGeoJSON]);
+  }, [trip, isDark, buildRouteGeoJSON, stopsWithCoords]);
 
   // ─── Toolbar Actions ───────────────────────────────────────────────────
   const handleResetNorth = () => {
@@ -362,8 +376,6 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
       (pos) => {
         const { longitude, latitude } = pos.coords;
         mapRef.current!.flyTo({ center: [longitude, latitude], zoom: 13, duration: 1500 });
-
-        // Pulsing user location marker
         const pulseEl = document.createElement("div");
         pulseEl.style.cssText = `
           width: 20px; height: 20px; border-radius: 50%;
@@ -382,10 +394,7 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
   const handle3DTilt = () => {
     if (!mapRef.current) return;
     const currentPitch = mapRef.current.getPitch();
-    mapRef.current.easeTo({
-      pitch: currentPitch > 10 ? 0 : 60,
-      duration: 800,
-    });
+    mapRef.current.easeTo({ pitch: currentPitch > 10 ? 0 : 60, duration: 800 });
   };
 
   const handleTerrain = () => {
@@ -415,21 +424,18 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
   // ─── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="relative w-full" style={{ height: "520px", minHeight: "400px" }}>
-      {/* Map container — MUST have explicit dimensions */}
       <div
         ref={mapContainer}
         className="absolute inset-0 rounded-2xl overflow-hidden"
         style={{ width: "100%", height: "100%" }}
       />
 
-      {/* Globe badge */}
       {showGlobeBadge && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-1.5 rounded-full backdrop-blur-md bg-black/30 border border-white/15 text-white/70 text-xs font-medium pointer-events-none">
           🌍 ZOOM OUT FOR GLOBE VIEW
         </div>
       )}
 
-      {/* Right toolbar */}
       <div className="absolute top-3 right-3 z-10 flex flex-col gap-2">
         <GlassButton onClick={handleTerrain} title="Toggle Terrain">
           {terrainEnabled ? "⛰️" : "🏔️"}
@@ -457,7 +463,6 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
         </GlassButton>
       </div>
 
-      {/* Map legend */}
       <div className="absolute bottom-3 left-3 z-10 p-3 rounded-2xl backdrop-blur-md bg-black/30 border border-white/15">
         <div className="text-white/90 text-xs font-semibold mb-2 tracking-wide uppercase">
           MAP LEGEND
@@ -481,7 +486,6 @@ export default function TripMap({ trip, isDark = true }: TripMapProps) {
         </div>
       </div>
 
-      {/* Pulse animation keyframes */}
       <style jsx global>{`
         @keyframes pulse-ring {
           0% { transform: scale(1); opacity: 1; }
