@@ -335,6 +335,8 @@ export default function ExplorationDashboard() {
           alt: trip.title,
           overlay: (
             <div
+              key={trip.id}
+              id={trip.id}
               className="pointer-events-auto cursor-pointer"
               onClick={() => setActiveTrip(trip)}
             >
@@ -451,10 +453,7 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
                   </span>
                 </div>
               ))}
-            </div>
-          )}
-
-          {activeTrip.activities && activeTrip.activities.length > 0 && (
+            {activeTrip.activities && activeTrip.activities.length > 0 && (
             <div className="space-y-4 border-b border-neutral-800/40 pb-4">
               <span className="text-[10px] tracking-widest font-mono text-amber-500 uppercase flex items-center gap-2">
                 <Calendar className="w-3 h-3" /> Activities
@@ -480,8 +479,7 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
               {activeTrip.highlights.map((h, i) => (
                 <span
                   key={i}
-                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full"
-                >
+                  className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/50 px-2.5 py-1 rounded-full" >
                   {h}
                 </span>
               ))}
@@ -497,5 +495,5 @@ function IntegratedTripView({ activeTrip }: { activeTrip: EditorialTrip }) {
         </div>
       </div>
     </div>
-  );
+  );  
 }
