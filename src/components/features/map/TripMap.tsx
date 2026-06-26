@@ -276,19 +276,11 @@ export default function TripMap({
       attributionControl: false,
     });
 
-    (map as any).setProjection({ type: "globe" });
+    try { (map as any).setProjection({ type: "globe" }); } catch {}
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
     map.on("load", () => {
-      (map as any).setFog({
-        color: isDark ? "rgb(16, 24, 42)" : "rgb(186, 210, 235)",
-        "high-color": isDark ? "rgb(40, 60, 120)" : "rgb(36, 92, 223)",
-        "horizon-blend": 0.02,
-        "space-color": isDark ? "rgb(5, 5, 15)" : "rgb(11, 11, 25)",
-        "star-intensity": isDark ? 0.8 : 0.6,
-      });
-
       if (!controlsAddedRef.current) {
         controlsAddedRef.current = true;
 
@@ -370,13 +362,6 @@ export default function TripMap({
     if (!map || !map.getStyle()) return;
     map.setStyle(mapStyle);
     map.once("style.load", () => {
-      (map as any).setFog({
-        color: isDark ? "rgb(16, 24, 42)" : "rgb(186, 210, 235)",
-        "high-color": isDark ? "rgb(40, 60, 120)" : "rgb(36, 92, 223)",
-        "horizon-blend": 0.02,
-        "space-color": isDark ? "rgb(5, 5, 15)" : "rgb(11, 11, 25)",
-        "star-intensity": isDark ? 0.8 : 0.6,
-      });
       addMarkersAndRoutes();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -397,7 +382,6 @@ export default function TripMap({
       if (map.getSource(id)) map.removeSource(id);
     });
 
-    // ── Route lines ──
     if (routeCoords.length > 1) {
       const routeGeoJSON: any = {
         type: "Feature",
@@ -437,7 +421,6 @@ export default function TripMap({
       });
     }
 
-    // ── Activity Markers ──
     activityPoints.forEach((p) => {
       const isTransport = p.type === "transport";
       const emoji = isTransport ? getTransportEmoji(p.name) : "📍";
@@ -451,7 +434,6 @@ export default function TripMap({
       tripMarkersRef.current.push(marker);
     });
 
-    // ── Hotel Markers ──
     hotelPoints.forEach((p) => {
       const el = document.createElement("div");
       el.innerHTML = pinHTML("🏨", "#F97316");
@@ -462,7 +444,6 @@ export default function TripMap({
       tripMarkersRef.current.push(marker);
     });
 
-    // ── Restaurant Markers ──
     restaurantPoints.forEach((p) => {
       const el = document.createElement("div");
       el.innerHTML = pinHTML("🍽️", "#22C55E");
@@ -473,7 +454,6 @@ export default function TripMap({
       tripMarkersRef.current.push(marker);
     });
 
-    // ── Hidden Gem Markers ──
     gemPoints.forEach((p) => {
       const el = document.createElement("div");
       el.innerHTML = pinHTML("✨", "#A855F7");
@@ -665,7 +645,6 @@ export default function TripMap({
   );
 }
 
-// ─── Legend Row ───────────────────────────────────────────────
 function LegendRow({ emoji, label, bg }: { emoji: string; label: string; bg: string }) {
   return (
     <div className="flex items-center gap-2.5">
