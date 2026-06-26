@@ -282,14 +282,7 @@ export default function LuckyGlobe() {
     spinRafRef.current = requestAnimationFrame(spinFrame);
   }, []);
 
-  // Derive centreLng from posX for SVG projection
-  const centreLng = posXToCentreLng(posX);
-
-  const homeP = project(HOME.lat, HOME.lng, centreLng);
-  const destP = trip ? project(trip.lat, trip.lng, centreLng) : null;
-  const arc = trip ? buildArcPath(HOME.lat, HOME.lng, trip.lat, trip.lng, centreLng) : '';
-  const ARC_DASH = 800;
-  const arcOffset = ARC_DASH * (1 - arcProgress);
+  // (markers removed — globe spins clean)
 
   return (
     <>
@@ -325,25 +318,6 @@ export default function LuckyGlobe() {
           <p className="text-xs text-neutral-500 mt-0.5">Tap the button · watch the globe spin</p>
         </div>
 
-        {/* Route banner */}
-        <div style={{ height: 28 }} className="flex items-center justify-center">
-          {trip && arcProgress > 0.88 && (
-            <div
-              className="flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-mono font-semibold tracking-widest"
-              style={{
-                background: 'rgba(245,158,11,0.10)',
-                border: '1px solid rgba(245,158,11,0.28)',
-                color: '#fbbf24',
-                opacity: Math.min(1, (arcProgress - 0.88) / 0.12),
-              }}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-              BOM → {trip.region}
-              <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
-            </div>
-          )}
-        </div>
-
         {/* Globe */}
         <div className="relative" style={{ width: 250, height: 250 }}>
 
@@ -362,81 +336,6 @@ export default function LuckyGlobe() {
               `,
             }}
           />
-
-          {/* SVG overlay — markers in sync because same posX drives both */}
-          <svg
-            style={{ position: 'absolute', top: -40, left: -40, overflow: 'visible', pointerEvents: 'none' }}
-            width={330} height={330}
-            viewBox="-40 -40 330 330"
-          >
-            <defs>
-              <filter id="lg-glow" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="2.5" result="b" />
-                <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-              </filter>
-              <clipPath id="lg-clip"><circle cx={CX} cy={CY} r={GLOBE_R} /></clipPath>
-            </defs>
-
-            {/* Arc */}
-            {trip && arc && (
-              <path d={arc} fill="none" stroke="#f59e0b" strokeWidth={1.8}
-                    strokeDasharray={ARC_DASH} strokeDashoffset={arcOffset}
-                    strokeLinecap="round" filter="url(#lg-glow)"
-                    clipPath="url(#lg-clip)" opacity={0.95} />
-            )}
-
-            {/* HOME dot */}
-            {homeP.visible && (
-              <g filter="url(#lg-glow)" clipPath="url(#lg-clip)">
-                <circle cx={homeP.x} cy={homeP.y} r={4} fill="#f59e0b" />
-                <circle cx={homeP.x} cy={homeP.y} r={7} fill="none"
-                        stroke="#f59e0b" strokeWidth={1} opacity={0.4} />
-              </g>
-            )}
-
-            {/* HOME label */}
-            {homeP.visible && (
-              <g>
-                <rect x={homeP.x + 9} y={homeP.y - 11} width={58} height={18}
-                      rx={4} fill="rgba(10,10,10,0.88)"
-                      stroke="rgba(245,158,11,0.4)" strokeWidth={0.6} />
-                <text x={homeP.x + 38} y={homeP.y + 3}
-                      textAnchor="middle" fontSize={8} fill="#f59e0b"
-                      fontFamily="ui-monospace,monospace" fontWeight="700" letterSpacing="1.2">
-                  MUMBAI
-                </text>
-              </g>
-            )}
-
-            {/* DEST dot + ping */}
-            {trip && destP && destP.visible && arcProgress > 0.75 && (
-              <g clipPath="url(#lg-clip)"
-                 style={{ opacity: Math.min(1, (arcProgress - 0.75) / 0.2) }}>
-                <g filter="url(#lg-glow)">
-                  <circle cx={destP.x} cy={destP.y} r={5} fill="#fff" />
-                  <circle cx={destP.x} cy={destP.y} r={9} fill="none"
-                          stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
-                </g>
-                <circle cx={destP.x} cy={destP.y} r={14} fill="none"
-                        stroke="rgba(255,255,255,0.25)" strokeWidth={1}
-                        style={{ animation: 'lg-ping 1.3s ease-out infinite' }} />
-              </g>
-            )}
-
-            {/* DEST label */}
-            {trip && destP && destP.visible && arcProgress > 0.82 && (
-              <g style={{ opacity: Math.min(1, (arcProgress - 0.82) / 0.15) }}>
-                <rect x={destP.x - 50} y={destP.y - 30} width={100} height={18}
-                      rx={4} fill="rgba(10,10,10,0.88)"
-                      stroke="rgba(255,255,255,0.22)" strokeWidth={0.6} />
-                <text x={destP.x} y={destP.y - 16}
-                      textAnchor="middle" fontSize={8} fill="#ffffff"
-                      fontFamily="ui-monospace,monospace" fontWeight="700" letterSpacing="1.2">
-                  {trip.title.slice(0, 14).toUpperCase()}
-                </text>
-              </g>
-            )}
-          </svg>
 
           {/* Spin ring */}
           {spinning && (
@@ -511,7 +410,7 @@ export default function LuckyGlobe() {
                 ))}
               </div>
               <div className="flex gap-2">
-                <a href="/explore"
+                <a href={`/explore#${trip.id}`}
                    className="flex-1 py-2.5 rounded-xl text-xs font-bold text-black text-center hover:opacity-90 transition-opacity"
                    style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
                   View Full Itinerary →
