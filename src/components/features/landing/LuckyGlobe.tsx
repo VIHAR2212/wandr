@@ -410,7 +410,7 @@ export default function LuckyGlobe() {
                 ))}
               </div>
               <div className="flex gap-2">
-                <a href={`/explore#${trip.id}`}
+               <a href={`/explore?trip=${trip.id}`}
                    className="flex-1 py-2.5 rounded-xl text-xs font-bold text-black text-center hover:opacity-90 transition-opacity"
                    style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
                   View Full Itinerary →
