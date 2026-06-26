@@ -302,7 +302,15 @@ const EDITORIAL_TRIPS: EditorialTrip[] = [
 // Component
 export default function ExplorationDashboard() {
   const [activeTrip, setActiveTrip] = useState<EditorialTrip | null>(null);
-
+// Auto-open trip from query param (e.g. from LuckyGlobe)
+useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const tripId = params.get('trip');
+  if (tripId) {
+    const found = EDITORIAL_TRIPS.find(t => t.id === tripId);
+    if (found) setActiveTrip(found);
+  }
+}, []);
   if (activeTrip) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 px-4 py-8">
