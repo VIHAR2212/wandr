@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 
-// ─── All 11 trips from ExplorationDashboard ───────────────────────────────────
 const GLOBE_TRIPS = [
   {
     id: 'kerala-backwaters',
@@ -116,10 +115,8 @@ const GLOBE_TRIPS = [
   },
 ];
 
-// Mumbai origin
 const HOME = { label: 'Mumbai', lat: 19.076, lng: 72.8777 };
 
-// Deterministic sequence
 let _seq = 0;
 function nextTrip() {
   const t = GLOBE_TRIPS[_seq % GLOBE_TRIPS.length];
@@ -127,152 +124,151 @@ function nextTrip() {
   return t;
 }
 
-// ─── Globe projection helpers ─────────────────────────────────────────────────
-// The texture scrolls at `scrollX` pixels (0–400 = one full rotation).
-// We convert that to a longitude offset so SVG markers stay in sync.
-// The texture is 400px wide = 360°, so 1px = 0.9°
-const TEX_WIDTH = 400; // px, matches backgroundSize / animation keyframe
-const GLOBE_R = 125;   // radius of rendered globe (matches w-[250px] / 2)
+// ─── Calibration ─────────────────────────────────────────────────────────────
+// The texture jpeg is equirectangular starting at lng -180 on the left edge.
+// When backgroundPositionX = P, the left edge of the texture is P pixels
+// to the LEFT of the globe's left edge — meaning the globe shows a window
+// starting at texture offset P. Centre of that window = P + TEX_WIDTH/2.
+// Centre longitude = -180 + ((P + TEX_WIDTH/2) / TEX_WIDTH) * 360
+//                 = -180 + (P/TEX_WIDTH)*360 + 180
+//                 = (P / TEX_WIDTH) * 360   mapped to -180..180
+
+const TEX_WIDTH = 400;
+const GLOBE_R = 125;
 const CX = 125;
 const CY = 125;
+const PX_PER_MS = TEX_WIDTH / 30000; // full rotation in 30s
 
-function scrollToLng(scrollX: number): number {
-  // scrollX 0 = texture left edge at left → centre longitude = 180° (Pacific)
-  // As scroll increases, the map moves left → centre moves east
-  return ((scrollX / TEX_WIDTH) * 360 + 180) % 360;
+function posXToCentreLng(posX: number): number {
+  const raw = ((posX % TEX_WIDTH) + TEX_WIDTH) % TEX_WIDTH;
+  const lng = (raw / TEX_WIDTH) * 360 - 180;
+  return lng; // -180..180
 }
 
-// Project lat/lng → SVG x,y given the current centre longitude
+function lngToPosX(lng: number): number {
+  // inverse of posXToCentreLng
+  return (((lng + 180) / 360) * TEX_WIDTH + TEX_WIDTH) % TEX_WIDTH;
+}
+
+// Start with India centred (Mumbai lng ≈ 73)
+const INDIA_START = lngToPosX(73);
+
+// ─── Projection ───────────────────────────────────────────────────────────────
 function project(lat: number, lng: number, centreLng: number) {
-  // Relative longitude from centre
   let dLng = lng - centreLng;
-  // Normalise to -180..180
   while (dLng > 180) dLng -= 360;
   while (dLng < -180) dLng += 360;
-
-  // Simple orthographic-ish projection (good enough, matches visual)
   const lngRad = (dLng * Math.PI) / 180;
   const latRad = (lat * Math.PI) / 180;
-
   const x = CX + GLOBE_R * Math.cos(latRad) * Math.sin(lngRad);
   const y = CY - GLOBE_R * Math.sin(latRad);
-  // z > 0 means facing us
   const z = Math.cos(latRad) * Math.cos(lngRad);
   return { x, y, z, visible: z > 0.05 };
 }
 
-// Great-circle arc as SVG path
-function arcPath(
+function buildArcPath(
   lat1: number, lng1: number,
   lat2: number, lng2: number,
   centreLng: number,
   steps = 80
 ): string {
-  const r = (d: number) => (d * Math.PI) / 180;
-  const φ1 = r(lat1), λ1 = r(lng1);
-  const φ2 = r(lat2), λ2 = r(lng2);
-  const cosD = Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
+  const toR = (d: number) => (d * Math.PI) / 180;
+  const φ1 = toR(lat1), λ1 = toR(lng1);
+  const φ2 = toR(lat2), λ2 = toR(lng2);
+  const cosD = Math.sin(φ1)*Math.sin(φ2) + Math.cos(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
   const d = Math.acos(Math.max(-1, Math.min(1, cosD)));
   if (d < 0.001) return '';
-
   let path = '';
   let wasVis = false;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    const A = Math.sin((1 - t) * d) / Math.sin(d);
-    const B = Math.sin(t * d) / Math.sin(d);
-    const x3 = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
-    const y3 = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
-    const z3 = A * Math.sin(φ1) + B * Math.sin(φ2);
-    const lat = (Math.atan2(z3, Math.sqrt(x3 * x3 + y3 * y3)) * 180) / Math.PI;
-    const lng = (Math.atan2(y3, x3) * 180) / Math.PI;
+    const A = Math.sin((1-t)*d) / Math.sin(d);
+    const B = Math.sin(t*d) / Math.sin(d);
+    const x3 = A*Math.cos(φ1)*Math.cos(λ1) + B*Math.cos(φ2)*Math.cos(λ2);
+    const y3 = A*Math.cos(φ1)*Math.sin(λ1) + B*Math.cos(φ2)*Math.sin(λ2);
+    const z3 = A*Math.sin(φ1) + B*Math.sin(φ2);
+    const lat = (Math.atan2(z3, Math.sqrt(x3*x3+y3*y3))*180)/Math.PI;
+    const lng = (Math.atan2(y3,x3)*180)/Math.PI;
     const p = project(lat, lng, centreLng);
     if (p.visible) {
-      path += wasVis
-        ? ` L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`
-        : ` M ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+      path += wasVis ? ` L ${p.x.toFixed(1)} ${p.y.toFixed(1)}` : ` M ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
       wasVis = true;
-    } else {
-      wasVis = false;
-    }
+    } else { wasVis = false; }
   }
   return path;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function LuckyGlobe() {
-  // Track the CSS animation scroll position ourselves so we can sync SVG markers
-  const [scrollX, setScrollX] = useState(0);      // 0–400, mirrors CSS anim
-  const [paused, setPaused] = useState(false);    // pause auto-rotate during spin
+  // posX drives backgroundPositionX directly — single source of truth
+  const posXRef = useRef(INDIA_START);
+  const [posX, setPosX] = useState(INDIA_START);
   const [trip, setTrip] = useState<(typeof GLOBE_TRIPS)[0] | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [arcProgress, setArcProgress] = useState(0);
   const [showCard, setShowCard] = useState(false);
 
-  const rafRef = useRef<number | null>(null);
-  const autoRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number | null>(null);
-  const pausedAtRef = useRef(0); // scrollX value when paused
+  const autoRafRef = useRef<number | null>(null);
+  const spinRafRef = useRef<number | null>(null);
+  const isSpinning = useRef(false);
 
-  // ── Auto-rotate: increment scrollX at same speed as CSS (400px / 30s)
-  const PX_PER_MS = TEX_WIDTH / 30000; // 400px / 30000ms
-
+  // ── Auto-rotate via rAF — 100% JS, no CSS animation
   useEffect(() => {
-    if (paused) return;
-    let lastT: number | null = null;
-    const tick = (t: number) => {
-      if (lastT !== null) {
-        const dt = t - lastT;
-        setScrollX(s => (s + PX_PER_MS * dt) % TEX_WIDTH);
+    let last: number | null = null;
+    const tick = (now: number) => {
+      if (!isSpinning.current) {
+        const dt = last !== null ? now - last : 0;
+        posXRef.current = (posXRef.current + PX_PER_MS * dt) % TEX_WIDTH;
+        setPosX(posXRef.current);
       }
-      lastT = t;
-      autoRef.current = requestAnimationFrame(tick);
+      last = now;
+      autoRafRef.current = requestAnimationFrame(tick);
     };
-    autoRef.current = requestAnimationFrame(tick);
-    return () => { if (autoRef.current) cancelAnimationFrame(autoRef.current); };
-  }, [paused]);
+    autoRafRef.current = requestAnimationFrame(tick);
+    return () => { if (autoRafRef.current) cancelAnimationFrame(autoRafRef.current); };
+  }, []);
 
   const handleLucky = useCallback(() => {
-    if (spinning) return;
+    if (isSpinning.current) return;
     setShowCard(false);
     setArcProgress(0);
     setTrip(null);
+    isSpinning.current = true;
     setSpinning(true);
-    setPaused(true);
 
     const next = nextTrip();
 
-    // We want the destination centred on the globe.
-    // Centre lng = scrollToLng(scrollX). We want centre lng = next.lng.
-    // So target scrollX where scrollToLng(targetScrollX) = next.lng
-    // scrollToLng(s) = (s/400*360 + 180) % 360 = next.lng
-    // s = ((next.lng - 180) / 360) * 400
-    const rawTarget = ((next.lng - 180) / 360) * TEX_WIDTH;
-    const normTarget = ((rawTarget % TEX_WIDTH) + TEX_WIDTH) % TEX_WIDTH;
+    // Target posX that centres destination
+    const targetPosX = lngToPosX(next.lng);
+    const cur = posXRef.current;
 
-    // Current pos
-    const cur = scrollX;
-    // Spin 2 full rotations + land on target
-    let delta = normTarget - cur;
+    // Always spin forward (increase posX), add 2 full rotations for drama
+    let delta = targetPosX - (cur % TEX_WIDTH);
     if (delta < 0) delta += TEX_WIDTH;
-    const endScroll = cur + TEX_WIDTH * 2 + delta;
+    const totalSpin = TEX_WIDTH * 2 + delta;
+    const endPosX = cur + totalSpin;
 
     const dur = 1800;
     const t0 = performance.now();
 
     const spinFrame = (now: number) => {
       const t = Math.min((now - t0) / dur, 1);
-      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-      setScrollX((cur + (endScroll - cur) * ease) % TEX_WIDTH);
+      // Cubic ease-in-out
+      const ease = t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+      const current = cur + (endPosX - cur) * ease;
+      posXRef.current = current % TEX_WIDTH;
+      setPosX(posXRef.current);
+
       if (t < 1) {
-        rafRef.current = requestAnimationFrame(spinFrame);
+        spinRafRef.current = requestAnimationFrame(spinFrame);
       } else {
-        setScrollX(normTarget);
+        posXRef.current = targetPosX;
+        setPosX(targetPosX);
+        isSpinning.current = false;
         setSpinning(false);
-        setPaused(false); // resume auto-rotate from new position
         setTrip(next);
 
-        // Draw arc
+        // Animate arc draw
         const a0 = performance.now();
         const arcFrame = (n: number) => {
           const at = Math.min((n - a0) / 1000, 1);
@@ -283,30 +279,21 @@ export default function LuckyGlobe() {
         requestAnimationFrame(arcFrame);
       }
     };
-    rafRef.current = requestAnimationFrame(spinFrame);
-  }, [spinning, scrollX]);
+    spinRafRef.current = requestAnimationFrame(spinFrame);
+  }, []);
 
-  // Derived: current centre longitude from scrollX
-  const centreLng = scrollToLng(scrollX);
+  // Derive centreLng from posX for SVG projection
+  const centreLng = posXToCentreLng(posX);
 
-  // CSS background-position-x mirrors our scrollX
-  // (The original anim does `background-position: 0 0 → 400px 0`)
-  const bgPosX = scrollX;
-
-  // Marker projections
   const homeP = project(HOME.lat, HOME.lng, centreLng);
   const destP = trip ? project(trip.lat, trip.lng, centreLng) : null;
-  const arc = trip ? arcPath(HOME.lat, HOME.lng, trip.lat, trip.lng, centreLng) : '';
+  const arc = trip ? buildArcPath(HOME.lat, HOME.lng, trip.lat, trip.lng, centreLng) : '';
   const ARC_DASH = 800;
   const arcOffset = ARC_DASH * (1 - arcProgress);
 
   return (
     <>
       <style>{`
-        @keyframes lg-earthRotate {
-          0%   { background-position: 0 0; }
-          100% { background-position: ${TEX_WIDTH}px 0; }
-        }
         @keyframes lg-ping {
           0%   { transform: scale(1);   opacity: .7; }
           100% { transform: scale(2.4); opacity: 0;  }
@@ -322,10 +309,8 @@ export default function LuckyGlobe() {
         .lg-globe {
           background-image: url('https://pub-940ccf6255b54fa799a9b01050e6c227.r2.dev/globe.jpeg');
           background-size: ${TEX_WIDTH}px auto;
+          background-repeat: repeat-x;
           background-position-y: center;
-        }
-        .lg-globe-auto {
-          animation: lg-earthRotate 30s linear infinite;
         }
       `}</style>
 
@@ -340,14 +325,33 @@ export default function LuckyGlobe() {
           <p className="text-xs text-neutral-500 mt-0.5">Tap the button · watch the globe spin</p>
         </div>
 
-        {/* Globe wrapper */}
+        {/* Route banner */}
+        <div style={{ height: 28 }} className="flex items-center justify-center">
+          {trip && arcProgress > 0.88 && (
+            <div
+              className="flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-mono font-semibold tracking-widest"
+              style={{
+                background: 'rgba(245,158,11,0.10)',
+                border: '1px solid rgba(245,158,11,0.28)',
+                color: '#fbbf24',
+                opacity: Math.min(1, (arcProgress - 0.88) / 0.12),
+              }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+              BOM → {trip.region}
+              <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
+            </div>
+          )}
+        </div>
+
+        {/* Globe */}
         <div className="relative" style={{ width: 250, height: 250 }}>
 
-          {/* The actual texture globe */}
+          {/* Texture globe — driven purely by backgroundPositionX from JS */}
           <div
-            className={`lg-globe w-[250px] h-[250px] rounded-full overflow-hidden ${paused || spinning ? '' : 'lg-globe-auto'}`}
+            className="lg-globe w-[250px] h-[250px] rounded-full overflow-hidden"
             style={{
-              backgroundPositionX: (paused || spinning) ? `${bgPosX}px` : undefined,
+              backgroundPositionX: `${posX}px`,
               boxShadow: `
                 0 0 20px rgba(255,255,255,0.15),
                 -5px 0 8px #c3f4ff inset,
@@ -359,37 +363,26 @@ export default function LuckyGlobe() {
             }}
           />
 
-          {/* SVG overlay — same dimensions, absolutely positioned */}
+          {/* SVG overlay — markers in sync because same posX drives both */}
           <svg
-            className="absolute inset-0 pointer-events-none"
-            width={250} height={250}
-            viewBox="0 0 250 250"
+            style={{ position: 'absolute', top: -40, left: -40, overflow: 'visible', pointerEvents: 'none' }}
+            width={330} height={330}
+            viewBox="-40 -40 330 330"
           >
             <defs>
-              <filter id="lg-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <filter id="lg-glow" x="-50%" y="-50%" width="200%" height="200%">
                 <feGaussianBlur stdDeviation="2.5" result="b" />
                 <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-              </filter>
-              <filter id="lg-label-shadow">
-                <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.6" />
               </filter>
               <clipPath id="lg-clip"><circle cx={CX} cy={CY} r={GLOBE_R} /></clipPath>
             </defs>
 
             {/* Arc */}
             {trip && arc && (
-              <path
-                d={arc}
-                fill="none"
-                stroke="#f59e0b"
-                strokeWidth={1.6}
-                strokeDasharray={ARC_DASH}
-                strokeDashoffset={arcOffset}
-                strokeLinecap="round"
-                filter="url(#lg-glow)"
-                clipPath="url(#lg-clip)"
-                opacity={0.95}
-              />
+              <path d={arc} fill="none" stroke="#f59e0b" strokeWidth={1.8}
+                    strokeDasharray={ARC_DASH} strokeDashoffset={arcOffset}
+                    strokeLinecap="round" filter="url(#lg-glow)"
+                    clipPath="url(#lg-clip)" opacity={0.95} />
             )}
 
             {/* HOME dot */}
@@ -401,21 +394,21 @@ export default function LuckyGlobe() {
               </g>
             )}
 
-            {/* HOME label — COBE-style dark chip */}
+            {/* HOME label */}
             {homeP.visible && (
-              <g clipPath="url(#lg-clip)" filter="url(#lg-label-shadow)">
-                <rect x={homeP.x + 8} y={homeP.y - 10} width={54} height={18}
-                      rx={4} fill="rgba(15,15,15,0.82)"
-                      stroke="rgba(245,158,11,0.35)" strokeWidth={0.5} />
-                <text x={homeP.x + 35} y={homeP.y + 4}
-                      textAnchor="middle" fontSize={7.5} fill="#f59e0b"
-                      fontFamily="ui-monospace,monospace" fontWeight="700" letterSpacing="1">
+              <g>
+                <rect x={homeP.x + 9} y={homeP.y - 11} width={58} height={18}
+                      rx={4} fill="rgba(10,10,10,0.88)"
+                      stroke="rgba(245,158,11,0.4)" strokeWidth={0.6} />
+                <text x={homeP.x + 38} y={homeP.y + 3}
+                      textAnchor="middle" fontSize={8} fill="#f59e0b"
+                      fontFamily="ui-monospace,monospace" fontWeight="700" letterSpacing="1.2">
                   MUMBAI
                 </text>
               </g>
             )}
 
-            {/* DESTINATION dot + ping */}
+            {/* DEST dot + ping */}
             {trip && destP && destP.visible && arcProgress > 0.75 && (
               <g clipPath="url(#lg-clip)"
                  style={{ opacity: Math.min(1, (arcProgress - 0.75) / 0.2) }}>
@@ -424,52 +417,32 @@ export default function LuckyGlobe() {
                   <circle cx={destP.x} cy={destP.y} r={9} fill="none"
                           stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
                 </g>
-                {/* Ping ring */}
                 <circle cx={destP.x} cy={destP.y} r={14} fill="none"
-                        stroke="rgba(255,255,255,0.3)" strokeWidth={1}
+                        stroke="rgba(255,255,255,0.25)" strokeWidth={1}
                         style={{ animation: 'lg-ping 1.3s ease-out infinite' }} />
               </g>
             )}
 
-            {/* DESTINATION label */}
+            {/* DEST label */}
             {trip && destP && destP.visible && arcProgress > 0.82 && (
-              <g clipPath="url(#lg-clip)" filter="url(#lg-label-shadow)"
-                 style={{ opacity: Math.min(1, (arcProgress - 0.82) / 0.15) }}>
-                <rect x={destP.x - 48} y={destP.y - 28} width={96} height={18}
-                      rx={4} fill="rgba(15,15,15,0.85)"
-                      stroke="rgba(255,255,255,0.2)" strokeWidth={0.5} />
-                <text x={destP.x} y={destP.y - 14}
-                      textAnchor="middle" fontSize={7.5} fill="#ffffff"
-                      fontFamily="ui-monospace,monospace" fontWeight="700" letterSpacing="1">
-                  {trip.title.slice(0, 15).toUpperCase()}
-                </text>
-              </g>
-            )}
-
-            {/* Route label — floats above the globe like COBE */}
-            {trip && arcProgress > 0.9 && (
-              <g style={{ opacity: Math.min(1, (arcProgress - 0.9) / 0.1) }}>
-                <rect x={CX - 66} y={8} width={132} height={20}
-                      rx={5} fill="rgba(245,158,11,0.12)"
-                      stroke="rgba(245,158,11,0.35)" strokeWidth={0.5} />
-                <text x={CX} y={22}
-                      textAnchor="middle" fontSize={8} fill="#fbbf24"
-                      fontFamily="ui-monospace,monospace" letterSpacing="1.5" fontWeight="600">
-                  BOM → {trip.region}
+              <g style={{ opacity: Math.min(1, (arcProgress - 0.82) / 0.15) }}>
+                <rect x={destP.x - 50} y={destP.y - 30} width={100} height={18}
+                      rx={4} fill="rgba(10,10,10,0.88)"
+                      stroke="rgba(255,255,255,0.22)" strokeWidth={0.6} />
+                <text x={destP.x} y={destP.y - 16}
+                      textAnchor="middle" fontSize={8} fill="#ffffff"
+                      fontFamily="ui-monospace,monospace" fontWeight="700" letterSpacing="1.2">
+                  {trip.title.slice(0, 14).toUpperCase()}
                 </text>
               </g>
             )}
           </svg>
 
-          {/* Spinning ring overlay */}
+          {/* Spin ring */}
           {spinning && (
-            <div
-              className="absolute inset-0 rounded-full pointer-events-none"
-              style={{
-                border: '1.5px solid rgba(245,158,11,0.3)',
-                animation: 'lg-spin-ring 0.85s linear infinite',
-              }}
-            />
+            <div className="absolute inset-0 rounded-full pointer-events-none"
+                 style={{ border: '1.5px solid rgba(245,158,11,0.3)',
+                          animation: 'lg-spin-ring 0.85s linear infinite' }} />
           )}
         </div>
 
@@ -479,42 +452,34 @@ export default function LuckyGlobe() {
           disabled={spinning}
           className="flex items-center gap-2.5 px-8 py-3 rounded-full text-sm font-bold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{
-            background: spinning
-              ? 'rgba(245,158,11,0.1)'
-              : 'linear-gradient(135deg,#f59e0b,#d97706)',
+            background: spinning ? 'rgba(245,158,11,0.1)' : 'linear-gradient(135deg,#f59e0b,#d97706)',
             color: spinning ? '#f59e0b' : '#000',
-            boxShadow: spinning
-              ? 'none'
-              : '0 0 28px rgba(245,158,11,0.3), 0 4px 14px rgba(0,0,0,0.4)',
+            boxShadow: spinning ? 'none' : '0 0 28px rgba(245,158,11,0.3), 0 4px 14px rgba(0,0,0,0.4)',
           }}
         >
           {spinning ? (
             <>
               <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity={0.25} />
-                <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" opacity={0.75} />
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity={0.25}/>
+                <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" opacity={0.75}/>
               </svg>
               Spinning the globe…
             </>
           ) : (
-            <> <span>🎲</span> I'm Feeling Lucky </>
+            <><span>🎲</span> I'm Feeling Lucky</>
           )}
         </button>
 
-        {/* Destination card */}
+        {/* Trip card */}
         {showCard && trip && (
-          <div
-            className="w-full max-w-sm rounded-2xl overflow-hidden"
-            style={{
-              background: 'linear-gradient(160deg,rgba(28,18,16,0.97) 0%,rgba(12,12,12,0.95) 100%)',
-              border: '1px solid rgba(245,158,11,0.15)',
-              animation: 'lg-card-up 0.35s cubic-bezier(0.16,1,0.3,1)',
-            }}
-          >
-            {/* Hero image */}
+          <div className="w-full max-w-sm rounded-2xl overflow-hidden"
+               style={{
+                 background: 'linear-gradient(160deg,rgba(28,18,16,0.97) 0%,rgba(12,12,12,0.95) 100%)',
+                 border: '1px solid rgba(245,158,11,0.15)',
+                 animation: 'lg-card-up 0.35s cubic-bezier(0.16,1,0.3,1)',
+               }}>
             <div className="relative h-36 overflow-hidden">
-              <img src={trip.imgUrl} alt={trip.title}
-                   className="w-full h-full object-cover" />
+              <img src={trip.imgUrl} alt={trip.title} className="w-full h-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
               <div className="absolute bottom-3 left-4 right-4">
                 <span className="text-[9px] font-mono font-bold tracking-widest text-amber-400/80 uppercase block mb-0.5">
@@ -526,8 +491,6 @@ export default function LuckyGlobe() {
                 <p className="text-[10px] text-white/50 mt-0.5">{trip.description}</p>
               </div>
             </div>
-
-            {/* Details */}
             <div className="px-4 pt-3 pb-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -540,29 +503,22 @@ export default function LuckyGlobe() {
                   Best: {trip.bestSeason}
                 </span>
               </div>
-
               <div className="flex flex-wrap gap-1.5">
                 {trip.highlights.map(h => (
-                  <span key={h}
-                        className="text-[9px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/60 px-2 py-0.5 rounded-full">
+                  <span key={h} className="text-[9px] font-mono uppercase tracking-wider text-neutral-400 bg-neutral-800/60 px-2 py-0.5 rounded-full">
                     {h}
                   </span>
                 ))}
               </div>
-
               <div className="flex gap-2">
-                <a
-                  href="/explore"
-                  className="flex-1 py-2.5 rounded-xl text-xs font-bold text-black text-center hover:opacity-90 transition-opacity"
-                  style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}
-                >
+                <a href="/explore"
+                   className="flex-1 py-2.5 rounded-xl text-xs font-bold text-black text-center hover:opacity-90 transition-opacity"
+                   style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)' }}>
                   View Full Itinerary →
                 </a>
-                <button
-                  onClick={handleLucky}
-                  className="px-4 py-2.5 rounded-xl text-sm text-neutral-400 hover:text-white transition-colors"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}
-                >
+                <button onClick={handleLucky}
+                        className="px-4 py-2.5 rounded-xl text-sm text-neutral-400 hover:text-white transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}>
                   🎲
                 </button>
               </div>
