@@ -191,7 +191,7 @@ export default function TripMap({ trip }: TripMapProps) {
         const map = new maplibregl.Map({
           container: containerRef.current,
           style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-          center: [validStops[0].lng, validStops[0].lat],
+          center: [Number(validStops[0].lng), Number(validStops[0].lat)],
           zoom: 2,
           attributionControl: false,
         });
