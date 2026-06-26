@@ -203,89 +203,10 @@ export function HeroSection() {
         </div>
       </div>
 
-      {/* Demo Trip Preview Section */}
-      <div id="demo" className="w-full max-w-7xl mx-auto px-6 pb-20">
-        <motion.div
-          initial={{ opacity: 0, y: 32 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="glass-card p-8 rounded-3xl"
-        >
-          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-            <div>
-              <div className="text-caption text-primary mb-2">Live Demo Trip</div>
-              <h2 className="text-display text-2xl font-bold text-foreground">{DEMO_TRIP.destination}</h2>
-              <p className="text-muted-foreground text-sm mt-1">
-                {DEMO_TRIP.duration} · {DEMO_TRIP.travelers} Travelers · Budget: {DEMO_TRIP.budget} · {DEMO_TRIP.dailyCost}
-              </p>
-            </div>
-            <Link href="/plan" className="btn-premium">
-              Plan Your Own <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-
-          <div className="grid sm:grid-cols-3 gap-6">
-            <div>
-              <div className="text-sm font-semibold text-foreground mb-3">📍 Day Highlights</div>
-              <div className="space-y-2">
-                {DEMO_TRIP.highlights.map((h, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs flex-shrink-0">{i + 1}</span>
-                    {h}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-foreground mb-3">🏨 Hotels Recommended</div>
-              <div className="space-y-2">
-                {DEMO_TRIP.hotels.map((h, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span className="text-primary">★</span>{h}
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <div className="text-sm font-semibold text-foreground mb-3">🚌 Transport</div>
-                <div className="text-sm text-muted-foreground">{DEMO_TRIP.transport}</div>
-              </div>
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-foreground mb-3">💰 Budget Breakdown</div>
-              <div className="space-y-2">
-                {[
-                  { label: 'Transport', amount: '₹4,800', pct: 14 },
-                  { label: 'Hotels', amount: '₹14,000', pct: 40 },
-                  { label: 'Food', amount: '₹8,000', pct: 23 },
-                  { label: 'Activities', amount: '₹6,000', pct: 17 },
-                  { label: 'Misc', amount: '₹2,200', pct: 6 },
-                ].map(({ label, amount, pct }) => (
-                  <div key={label}>
-                    <div className="flex justify-between text-xs mb-0.5">
-                      <span className="text-muted-foreground">{label}</span>
-                      <span className="text-foreground font-medium">{amount}</span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full bg-primary/70 rounded-full" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-border flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <TrendingUp className="w-4 h-4 text-forest-500" />
-              <span>AI planned this in <strong className="text-foreground">23 seconds</strong> · Budget used: <strong className="text-primary">100%</strong> — no waste</span>
-            </div>
-            <Link href="/auth/register" className="text-sm text-primary font-medium hover:underline">
-              Create free account to plan your trip →
-            </Link>
-          </div>
-        </motion.div>
-      </div>
+{/* Lucky Globe Section */}
+<div id="demo" className="w-full max-w-7xl mx-auto px-6 pb-20 flex justify-center">
+  <LuckyGlobe />
+</div>
     </section>
   );
 }
