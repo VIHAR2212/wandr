@@ -96,7 +96,7 @@ export function HowItWorks() {
               {/* YouTube Embed */}
               <iframe
                 className="absolute inset-0 w-full h-full"
-                src="https://www.youtube.com/embed/DWtOsvD1EVc?rel=0&modestbranding=1&color=white"
+                src="https://www.youtube.com/embed/J8JMPB6tUOs?rel=0&modestbranding=1&color=white"
                 title="Wandr AI Demo"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
