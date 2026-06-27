@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/db";
+import { generateAIJson } from "@/lib/ai";
 
 // Re-implements Twilio's request validation using only Node's built-in
 // crypto module — no `twilio` npm package required.
@@ -102,6 +103,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // --- Phase 4: check if there's an in-progress conversational session ---
+    const session = await prisma.whatsapp_sessions.findFirst({ where: { phone } });
+
+    if (session && session.step !== "DONE") {
+      return await handleSessionStep(session, body, user.id);
+    }
+
     // --- Command: "send itinerary" ---
     if (lowerBody.includes("send itinerary") || lowerBody.includes("my itinerary")) {
       const trip = await prisma.trip.findFirst({
@@ -118,17 +126,29 @@ export async function POST(req: NextRequest) {
       return twiml(summary);
     }
 
-    // --- Command: "plan a trip to X" ---
+    // --- Command: "plan a trip to X" — starts a new Phase 4 session ---
     const planMatch = lowerBody.match(/plan a trip to (.+)/i);
     if (planMatch) {
-      const destination = planMatch[1].trim();
-      return twiml(
-        `Got it — planning a trip to ${capitalize(
-          destination
-        )}! 🌍\nHow many days are you thinking?`
-      );
-      // NOTE: this is where Phase 4's session state will pick up —
-      // for now we just acknowledge; no session is persisted yet.
+      const destination = capitalize(planMatch[1].trim());
+
+      await prisma.whatsapp_sessions.upsert({
+        where: { phone },
+        create: {
+          phone,
+          step: "AWAITING_ORIGIN",
+          destination,
+        },
+        update: {
+          step: "AWAITING_ORIGIN",
+          destination,
+          days: null,
+          budget: null,
+          tripId: null,
+          updatedAt: new Date(),
+        },
+      });
+
+      return twiml(`Got it — planning a trip to ${destination}! 🌍\nWhere are you traveling from?`);
     }
 
     // --- Default / unrecognized message ---
@@ -163,7 +183,206 @@ function formatItinerarySummary(trip: {
   return msg.trim();
 }
 
-// Twilio also sends a GET sometimes when verifying the endpoint manually.
+// ---------------------------------------------------------------
+// Phase 4 — conversational session handling
+// ---------------------------------------------------------------
+
+interface WhatsAppSession {
+  id: string;
+  phone: string;
+  step: string;
+  origin: string | null;
+  destination: string | null;
+  days: number | null;
+  budget: number | null;
+  tripId: string | null;
+}
+
+async function handleSessionStep(
+  session: WhatsAppSession,
+  body: string,
+  userId: string
+): Promise<NextResponse> {
+  const trimmed = body.trim();
+
+  switch (session.step) {
+    case "AWAITING_ORIGIN": {
+      const origin = capitalize(trimmed);
+      if (!origin) {
+        return twiml("Please tell me which city you're traveling from.");
+      }
+      await prisma.whatsapp_sessions.update({
+        where: { phone: session.phone },
+        data: { step: "AWAITING_DAYS", origin, updatedAt: new Date() },
+      });
+      return twiml(`Traveling from ${origin} — got it!\nHow many days are you thinking?`);
+    }
+
+    case "AWAITING_DAYS": {
+      const days = parseInt(trimmed, 10);
+      if (isNaN(days) || days < 1 || days > 30) {
+        return twiml("Please reply with just a number of days (e.g. \"4\").");
+      }
+      await prisma.whatsapp_sessions.update({
+        where: { phone: session.phone },
+        data: { step: "AWAITING_BUDGET", days, updatedAt: new Date() },
+      });
+      return twiml(`${days} days in ${session.destination} — got it! 💰\nWhat's your total budget? (just the number, e.g. 15000)`);
+    }
+
+    case "AWAITING_BUDGET": {
+      // Strip common currency symbols/commas so "₹15,000" or "15000" both work
+      const cleaned = trimmed.replace(/[^0-9.]/g, "");
+      const budget = parseFloat(cleaned);
+      if (isNaN(budget) || budget <= 0) {
+        return twiml("Please reply with just the budget number (e.g. \"15000\").");
+      }
+
+      // We have everything we need — build the trip now.
+      await prisma.whatsapp_sessions.update({
+        where: { phone: session.phone },
+        data: { step: "GENERATING", budget, updatedAt: new Date() },
+      });
+
+      try {
+        const trip = await createTripFromSession(
+          userId,
+          session.origin as string,
+          session.destination as string,
+          session.days as number,
+          budget
+        );
+
+        await prisma.whatsapp_sessions.update({
+          where: { phone: session.phone },
+          data: { step: "DONE", tripId: trip.id, updatedAt: new Date() },
+        });
+
+        const summary = formatItinerarySummary(trip);
+        return twiml(`✅ Your trip is ready!\n\n${summary}`);
+      } catch (err) {
+        console.error("WhatsApp trip generation error:", err);
+        // Reset the session so the user can try again rather than getting stuck.
+        await prisma.whatsapp_sessions.update({
+          where: { phone: session.phone },
+          data: { step: "DONE", updatedAt: new Date() },
+        });
+        return twiml(
+          "Sorry, I couldn't generate that trip just now. Try \"plan a trip to <destination>\" again in a moment."
+        );
+      }
+    }
+
+    default:
+      // Unknown/stale step — clear it so the user isn't stuck in limbo.
+      await prisma.whatsapp_sessions.update({
+        where: { phone: session.phone },
+        data: { step: "DONE", updatedAt: new Date() },
+      });
+      return twiml("Let's start over — try \"plan a trip to <destination>\".");
+  }
+}
+
+// Mirrors the core of src/app/api/ai/generate-trip/route.ts, minus the
+// NextAuth session requirement (we already have userId from the phone
+// lookup) and minus the Nominatim geocoding step (skipped for WhatsApp —
+// it only affects the map tab, not the itinerary text).
+//
+// ⚠️ GUESSED FIELDS — not confirmed against schema.prisma, unlike Trip/
+// TripDay above which WERE confirmed via screenshot. If trip creation
+// throws a Prisma validation error, check these first:
+//   - TripPurpose enum: assumed "CULTURAL" is a valid value (it appeared
+//     in the VALID_PURPOSES array in generate-trip/route.ts, so this is
+//     fairly safe, but the *enum* in schema.prisma wasn't directly viewed).
+//   - Activity model fields below (time, title, description, location,
+//     cost, type, lat, lng) are guessed from how generate-trip/route.ts
+//     USES activities, not from Activity's actual model block in
+//     schema.prisma — field names or required/optional status may differ.
+async function createTripFromSession(
+  userId: string,
+  origin: string,
+  destination: string,
+  days: number,
+  budget: number
+) {
+  const currency = "INR";
+  const travelers = 1;
+
+  const systemPrompt =
+    "Expert travel planner. Return ONLY valid JSON, no markdown. Costs in INR.";
+  const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
+Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type":"sightseeing"}]}]}`;
+
+  const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
+  const raw = result.data;
+
+  if (!raw) throw new Error("AI returned empty response");
+
+  const rawDays = (raw.itinerary ?? []) as Array<Record<string, unknown>>;
+
+  const startDate = new Date();
+  const endDate = new Date(startDate.getTime() + days * 86400000);
+
+  // Create the Trip first, then its TripDay/Activity children — Trip.days
+  // is a relation (TripDay[]), not a writable Json field, so it can't be
+  // passed inline to trip.create().
+  const newTrip = await prisma.trip.create({
+    data: {
+      userId,
+      title: String(raw.title ?? `Trip to ${destination}`),
+      origin,
+      destination,
+      startDate,
+      endDate,
+      duration: days,
+      travelers,
+      // GUESSED: "CULTURAL" assumed valid per VALID_PURPOSES seen in
+      // generate-trip/route.ts. Confirm against the real TripPurpose enum
+      // if this throws.
+      purpose: "CULTURAL",
+      budget,
+      currency,
+    },
+  });
+
+  for (let i = 0; i < rawDays.length; i++) {
+    const d = rawDays[i];
+    const activities = (d.activities ?? []) as Array<Record<string, unknown>>;
+
+    await prisma.tripDay.create({
+      data: {
+        tripId: newTrip.id,
+        dayNumber: (d.day as number) ?? i + 1,
+        date: new Date(startDate.getTime() + i * 86400000),
+        theme: (d.theme as string) ?? `Day ${i + 1}`,
+        summary: (d.summary as string) ?? "",
+        activities: {
+          create: activities.map((a) => ({
+            time: (a.time as string) ?? "",
+            title: (a.title as string) ?? "",
+            description: (a.description as string) ?? "",
+            location: (a.location as string) ?? "",
+            cost: Number(a.cost) || 0,
+            type: (a.type as string) ?? "sightseeing",
+          })),
+        },
+      },
+    });
+  }
+
+  // Re-fetch with relations populated for the WhatsApp summary message.
+  const fullTrip = await prisma.trip.findUnique({
+    where: { id: newTrip.id },
+    include: {
+      days: { include: { activities: true }, orderBy: { dayNumber: "asc" } },
+    },
+  });
+
+  return fullTrip as NonNullable<typeof fullTrip>;
+}
+
+
 export async function GET() {
   return new NextResponse("Wandr WhatsApp webhook is live.", { status: 200 });
-}
+  }
+      
