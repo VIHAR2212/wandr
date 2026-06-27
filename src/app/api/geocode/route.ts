@@ -29,7 +29,7 @@ function sleep(ms: number) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { queries, destination } = await req.json() as {
+    const { queries, destination } = (await req.json()) as {
       queries: string[];
       destination?: string;
     };
