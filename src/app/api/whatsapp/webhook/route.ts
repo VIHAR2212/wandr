@@ -1,7 +1,7 @@
 // src/app/api/whatsapp/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import db from "@/lib/db";
+import prisma from "@/lib/db";
 
 // Re-implements Twilio's request validation using only Node's built-in
 // crypto module — no `twilio` npm package required.
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // --- 3. Find the user by phone number ---
-    const user = await db.user.findFirst({ where: { phone } });
+    const user = await prisma.user.findFirst({ where: { phone } });
 
     if (!user) {
       return twiml(
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     // --- Command: "send itinerary" ---
     if (lowerBody.includes("send itinerary") || lowerBody.includes("my itinerary")) {
-      const trip = await db.trip.findFirst({
+      const trip = await prisma.trip.findFirst({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
         include: { days: { include: { activities: true }, orderBy: { dayNumber: "asc" } } },
