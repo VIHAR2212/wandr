@@ -18,6 +18,10 @@ interface TripMapProps {
   trip: any; // MUST stay `any` — GeneratedTrip lacks id/stops + no index sig
 }
 
+// Free tile servers — no API key, no rate limits, work on Vercel
+const MAP_STYLE_DARK  = "https://tiles.openfreemap.org/styles/dark";
+const MAP_STYLE_LIGHT = "https://tiles.openfreemap.org/styles/liberty";
+
 const TYPE_COLORS: Record<string, string> = {
   attraction:  "#f59e0b",
   hotel:       "#3b82f6",
@@ -188,6 +192,7 @@ export default function TripMap({ trip }: TripMapProps) {
   const stopsForInitRef = useRef<Stop[]>([]);
 
   const [mounted,     setMounted]     = useState(false);
+  const [isDark,      setIsDark]      = useState(true); // default dark until detected
   const [loading,     setLoading]     = useState(true);
   const [geoStatus,   setGeoStatus]   = useState<string | null>(null);
   const [error,       setError]       = useState<string | null>(null);
@@ -199,7 +204,29 @@ export default function TripMap({ trip }: TripMapProps) {
   /* ── Mounted guard ── */
   useEffect(() => {
     setMounted(true);
-    return () => setMounted(false);
+
+    // Detect dark mode — check both next-themes class and system preference
+    const checkDark = () => {
+      const htmlDark = document.documentElement.classList.contains("dark");
+      const sysDark  = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      setIsDark(htmlDark || sysDark);
+    };
+
+    checkDark();
+
+    // Watch for theme changes (next-themes toggles .dark on <html>)
+    const observer = new MutationObserver(checkDark);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
+    // Also watch system preference
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", checkDark);
+
+    return () => {
+      setMounted(false);
+      observer.disconnect();
+      mq.removeEventListener("change", checkDark);
+    };
   }, []);
 
   /* ── Inject MapLibre CSS (SSR safe) ── */
@@ -429,7 +456,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
         const map = new maplibregl.Map({
           container: containerRef.current,
-          style:     "https://tiles.openfreemap.org/styles/liberty",
+          style:     isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT,
           center:    [Number(initStops[0].lng), Number(initStops[0].lat)] as [number, number],
           zoom:      2,
           attributionControl: false,
@@ -489,8 +516,8 @@ export default function TripMap({ trip }: TripMapProps) {
                 "text-optional": true,
               },
               paint: {
-                "text-color":      "#1a1a2e",
-                "text-halo-color": "#ffffff",
+                "text-color":      isDark ? "#e5e7eb" : "#1a1a2e",
+                "text-halo-color": isDark ? "#000000" : "#ffffff",
                 "text-halo-width": 1.5,
               },
             });
@@ -593,7 +620,7 @@ export default function TripMap({ trip }: TripMapProps) {
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, stopsReady, geoStatus]);
+  }, [mounted, stopsReady, geoStatus, isDark]);
 
   /* ── Toolbar helpers ── */
   function handleZoomIn() {
@@ -660,7 +687,7 @@ export default function TripMap({ trip }: TripMapProps) {
     <div
       className={`relative w-full ${
         fullscreen ? "fixed inset-0 z-50" : "h-[560px]"
-      } rounded-2xl overflow-hidden bg-gray-100`}
+      } rounded-2xl overflow-hidden ${isDark ? "bg-gray-900" : "bg-gray-100"}`}
     >
       {/* MapLibre canvas */}
       <div ref={containerRef} className="absolute inset-0" />
