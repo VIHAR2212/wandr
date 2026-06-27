@@ -2,7 +2,7 @@
 generator client {
   provider = "prisma-client-js"
 }
-
+// fml
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
