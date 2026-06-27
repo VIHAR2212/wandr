@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import TripMap from '@/components/features/map/TripMap';
 import { TripChat } from '@/components/features/chat/TripChat';
+import SendToWhatsAppButton from "@/components/trip/SendToWhatsAppButton";
 import { TrackingOverlay } from '@/components/features/tracking/TrackingOverlay';
 import LiquidLoading from '@/components/features/itinerary/LiquidLoading';
 import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safetyScoreColor, safetyScoreLabel } from '@/lib/utils';
@@ -689,6 +690,13 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 <Download className="w-4 h-4" />
                 Download PDF
               </button>
+              <button
+  onClick={() => window.open(`https://wa.me/14155238886?text=${encodeURIComponent("send itinerary")}`, "_blank")}
+  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#25D366]/30 bg-[#25D366]/5 text-[#25D366] text-sm font-medium"
+>
+  <MessageCircle className="w-4 h-4" />
+  Send to WhatsApp
+</button>
             </div>
           </div>
 
