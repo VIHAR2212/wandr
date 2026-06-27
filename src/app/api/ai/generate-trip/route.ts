@@ -3,7 +3,7 @@ import { generateAIJson } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 
-export const runtime = 'nodejs';
+export const runtime    = 'nodejs';
 export const maxDuration = 10;
 
 const VALID_PURPOSES = [
@@ -13,25 +13,25 @@ const VALID_PURPOSES = [
 ] as const;
 
 const PURPOSE_LABEL: Record<string, string> = {
-  ADVENTURE: 'adventure and thrill-seeking',
-  DEVOTIONAL: 'religious/devotional visits and spiritual experiences',
-  HIKING: 'trekking and nature hiking',
-  HONEYMOON: 'romantic honeymoon experiences',
-  FAMILY: 'family-friendly activities suitable for all ages',
-  PHOTOGRAPHY: 'photography — golden hours, landscapes, architecture',
-  BUSINESS: 'business travel with efficient scheduling',
-  FOOD_EXPLORATION: 'food exploration and culinary discovery',
-  WELLNESS: 'wellness, yoga, meditation, and relaxation',
-  CULTURAL: 'cultural immersion, museums, local heritage',
-  SOLO: 'solo travel with safety and social opportunities',
-  BACKPACKING: 'budget backpacking',
+  ADVENTURE:       'adventure and thrill-seeking',
+  DEVOTIONAL:      'religious/devotional visits and spiritual experiences',
+  HIKING:          'trekking and nature hiking',
+  HONEYMOON:       'romantic honeymoon experiences',
+  FAMILY:          'family-friendly activities suitable for all ages',
+  PHOTOGRAPHY:     'photography — golden hours, landscapes, architecture',
+  BUSINESS:        'business travel with efficient scheduling',
+  FOOD_EXPLORATION:'food exploration and culinary discovery',
+  WELLNESS:        'wellness, yoga, meditation, and relaxation',
+  CULTURAL:        'cultural immersion, museums, local heritage',
+  SOLO:            'solo travel with safety and social opportunities',
+  BACKPACKING:     'budget backpacking',
 };
 
 const FOOD_LABEL: Record<string, string> = {
-  VEG: 'strictly vegetarian (no meat, fish, or eggs)',
-  JAIN: 'Jain diet (no root vegetables like onion, garlic, potato)',
-  VEGAN: 'fully vegan (no animal products)',
-  HALAL: 'halal-certified food only',
+  VEG:     'strictly vegetarian (no meat, fish, or eggs)',
+  JAIN:    'Jain diet (no root vegetables like onion, garlic, potato)',
+  VEGAN:   'fully vegan (no animal products)',
+  HALAL:   'halal-certified food only',
   NON_VEG: 'any cuisine including non-vegetarian',
 };
 
@@ -40,6 +40,98 @@ function safePurpose(value: unknown) {
     ? value
     : 'CULTURAL';
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SERVER-SIDE GEOCODING
+   Runs after AI generation, before Prisma save.
+   Nominatim is called from the Node.js server — never blocked by Vercel Edge.
+   Fills in lat/lng on every activity that has lat:0 or lng:0.
+───────────────────────────────────────────────────────────────────────── */
+const geoCache = new Map<string, { lat: number; lng: number } | null>();
+
+async function serverGeocode(
+  query: string
+): Promise<{ lat: number; lng: number } | null> {
+  const key = query.toLowerCase().trim();
+  if (geoCache.has(key)) return geoCache.get(key)!;
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'WandrAI/1.0 (wandr-inky.vercel.app)',
+        'Accept-Language': 'en',
+      },
+    });
+    if (!res.ok) { geoCache.set(key, null); return null; }
+    const data = await res.json();
+    if (!data?.[0])  { geoCache.set(key, null); return null; }
+    const result = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+    geoCache.set(key, result);
+    return result;
+  } catch {
+    geoCache.set(key, null);
+    return null;
+  }
+}
+
+async function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Geocodes every activity/hotel/restaurant in the AI output that has
+ * lat:0 or lng:0 (AI placeholder).
+ * Mutates the days array in-place and returns it.
+ */
+async function geocodeItinerary(
+  days: any[],
+  destination: string
+): Promise<any[]> {
+  let reqCount = 0;
+
+  for (const day of days) {
+    const activities: any[] = day.activities || day.stops || day.items || [];
+    for (const act of activities) {
+      const hasCoords =
+        Number(act.lat) !== 0  && Number(act.lng) !== 0 &&
+        !isNaN(Number(act.lat)) && !isNaN(Number(act.lng));
+
+      if (!hasCoords) {
+        // Build the best possible query:
+        // Use the location string (e.g. "Taj Mahal, Agra") if available,
+        // otherwise fall back to title + destination
+        const locStr = typeof act.location === 'string' ? act.location : '';
+        const query  = locStr
+          ? `${locStr}, ${destination}`
+          : `${act.title || act.name || ''}, ${destination}`;
+
+        if (!query.trim() || query.trim() === `, ${destination}`) continue;
+
+        if (reqCount > 0) await sleep(1100); // Nominatim 1 req/sec
+        reqCount++;
+
+        const geo = await serverGeocode(query);
+        if (geo) {
+          act.lat = geo.lat;
+          act.lng = geo.lng;
+          // Also write to nested location object if present
+          if (act.location && typeof act.location === 'object') {
+            act.location.lat = geo.lat;
+            act.location.lng = geo.lng;
+          }
+          console.log(`[geocode] ✓ ${query} → ${geo.lat}, ${geo.lng}`);
+        } else {
+          console.warn(`[geocode] ✗ Not found: ${query}`);
+        }
+      }
+    }
+  }
+
+  return days;
+}
+
+/* ─────────────────────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest) {
   try {
@@ -62,8 +154,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const startD = new Date(startDate);
-    const endD = new Date(endDate);
+    const startD   = new Date(startDate);
+    const endD     = new Date(endDate);
     const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
     const systemPrompt = `Expert travel planner. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose ?? 'general travel'}. Hotel: ${hotelPreference}.`;
@@ -83,24 +175,24 @@ RULES:
 7. "location" must ALWAYS be a plain string like "Manali, India". NEVER use GeoJSON objects.`;
 
     const result = await generateAIJson(userPrompt, systemPrompt);
-    const trip = result.data as Record<string, unknown>;
+    const trip   = result.data as Record<string, unknown>;
 
     if (!trip) throw new Error('AI returned empty response');
 
-    const totalCost = Number(trip.totalCost ?? 0);
+    const totalCost  = Number(trip.totalCost ?? 0);
     const maxAllowed = flexibleBudget ? budget * 1.10 : budget;
-    if (totalCost > maxAllowed) {
-      trip.totalCost = budget;
-    }
+    if (totalCost > maxAllowed) { trip.totalCost = budget; }
 
     const rawDays = (trip.itinerary ?? trip.days ?? []) as Record<string, unknown>[];
-    const normalisedDays = rawDays.map((d, i) => ({
-      dayNumber: d.dayNumber ?? d.day ?? i + 1,
-      date: d.date ?? '',
-      theme: d.theme ?? '',
-      summary: d.summary ?? '',
-      totalCost: d.totalCost ?? 0,
-      activities: (d.activities as any[] ?? []).map((act: any) => ({
+
+    // ── Normalise day/activity shapes ──
+    let normalisedDays = rawDays.map((d, i) => ({
+      dayNumber:  d.dayNumber ?? d.day ?? i + 1,
+      date:       d.date ?? '',
+      theme:      d.theme ?? '',
+      summary:    d.summary ?? '',
+      totalCost:  d.totalCost ?? 0,
+      activities: ((d.activities as any[]) ?? []).map((act: any) => ({
         ...act,
         location: typeof act.location === 'string'
           ? act.location
@@ -110,70 +202,79 @@ RULES:
       })),
     }));
 
-    const rawGuide = trip.transportGuide as Record<string, unknown> | undefined;
+    /* ── GEOCODE: fill in real lat/lng before saving ──
+       This runs server-side so Nominatim is never blocked.
+       For a 3-day / 12-stop trip, adds ~13s — acceptable at generation time.
+       The map will then render immediately from stored coords, no geocoding needed
+       on the client at all. */
+    console.log('[generate-trip] Starting server-side geocoding...');
+    normalisedDays = await geocodeItinerary(normalisedDays, destination);
+    console.log('[generate-trip] Geocoding complete.');
+
+    const rawGuide       = trip.transportGuide as Record<string, unknown> | undefined;
     const normalisedGuide = rawGuide ? {
-      overview: rawGuide.overview ?? rawGuide.details ?? '',
-      primaryRoute: rawGuide.primaryRoute ?? rawGuide.legs ?? [],
-      totalTransportCost: rawGuide.totalTransportCost ?? 0,
-      tips: rawGuide.tips ?? [],
+      overview:            rawGuide.overview ?? rawGuide.details ?? '',
+      primaryRoute:        rawGuide.primaryRoute ?? rawGuide.legs ?? [],
+      totalTransportCost:  rawGuide.totalTransportCost ?? 0,
+      tips:                rawGuide.tips ?? [],
     } : null;
 
-    const rawBudget = (trip.budget ?? trip.budgetBreakdown ?? {}) as Record<string, unknown>;
+    const rawBudget       = (trip.budget ?? trip.budgetBreakdown ?? {}) as Record<string, unknown>;
     const normalisedBudget = {
-      total: rawBudget.total ?? budget,
-      actualCost: rawBudget.actualCost ?? rawBudget.total ?? budget,
-      transport: rawBudget.transport ?? 0,
+      total:         rawBudget.total ?? budget,
+      actualCost:    rawBudget.actualCost ?? rawBudget.total ?? budget,
+      transport:     rawBudget.transport ?? 0,
       accommodation: rawBudget.accommodation ?? 0,
-      food: rawBudget.food ?? 0,
-      activities: rawBudget.activities ?? 0,
+      food:          rawBudget.food ?? 0,
+      activities:    rawBudget.activities ?? 0,
       miscellaneous: rawBudget.misc ?? rawBudget.miscellaneous ?? 0,
       emergencyFund: rawBudget.emergencyFund ?? 0,
-      perDay: rawBudget.perDay ?? Math.round(Number(budget) / duration),
-      perPerson: rawBudget.perPerson ?? Math.round(Number(budget) / (Number(travelers) || 1)),
-      breakdown: rawBudget.breakdown ?? [],
+      perDay:        rawBudget.perDay ?? Math.round(Number(budget) / duration),
+      perPerson:     rawBudget.perPerson ?? Math.round(Number(budget) / (Number(travelers) || 1)),
+      breakdown:     rawBudget.breakdown ?? [],
     };
 
     const itineraryPayload = {
-      title: trip.title ?? null,
-      summary: trip.summary ?? null,
-      days: normalisedDays,
-      hotels: trip.hotels ?? [],
-      restaurants: trip.restaurants ?? [],
-      hiddenGems: trip.hiddenGems ?? [],
+      title:         trip.title ?? null,
+      summary:       trip.summary ?? null,
+      days:          normalisedDays,   // ← now includes real lat/lng
+      hotels:        trip.hotels ?? [],
+      restaurants:   trip.restaurants ?? [],
+      hiddenGems:    trip.hiddenGems ?? [],
       transportGuide: normalisedGuide,
-      seasonalTips: trip.seasonalTips ?? [],
-      localPhrases: trip.localPhrases ?? [],
+      seasonalTips:  trip.seasonalTips ?? [],
+      localPhrases:  trip.localPhrases ?? [],
       crowdPrediction: trip.crowdPrediction ?? null,
     };
 
     const newTrip = await prisma.trip.create({
       data: {
-        userId: session.user.id,
-        title: String(trip.title ?? `Trip to ${destination}`),
+        userId:        session.user.id,
+        title:         String(trip.title ?? `Trip to ${destination}`),
         origin,
         destination,
-        startDate: startD,
-        endDate: endD,
+        startDate:     startD,
+        endDate:       endD,
         duration,
-        travelers: Number(travelers) || 1,
-        purpose: safePurpose(purpose) as any,
-        budget: Number(budget),
+        travelers:     Number(travelers) || 1,
+        purpose:       safePurpose(purpose) as any,
+        budget:        Number(budget),
         currency,
-        foodPref: foodPreference,
-        hotelPref: hotelPreference,
+        foodPref:      foodPreference,
+        hotelPref:     hotelPreference,
         transportPref: transportPreferences ?? [],
-        itinerary: itineraryPayload,
+        itinerary:     itineraryPayload,
         budgetBreakdown: normalisedBudget,
-        packingList: trip.packingList ?? undefined,
-        weatherInfo: trip.weatherForecast ?? trip.weatherInfo ?? undefined,
-        safetyInfo: trip.safety ?? trip.safetyInfo ?? undefined,
-        status: 'PLANNING',
+        packingList:   trip.packingList ?? undefined,
+        weatherInfo:   trip.weatherForecast ?? trip.weatherInfo ?? undefined,
+        safetyInfo:    trip.safety ?? trip.safetyInfo ?? undefined,
+        status:        'PLANNING',
       },
     });
 
     return NextResponse.json({
-      success: true,
-      tripId: newTrip.id,
+      success:    true,
+      tripId:     newTrip.id,
       aiProvider: result.provider,
     });
   } catch (error: unknown) {
