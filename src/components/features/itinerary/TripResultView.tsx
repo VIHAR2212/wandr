@@ -870,7 +870,11 @@ export function TripResultView({ tripId }: { tripId: string }) {
           )}
 
           {/* MAP */}
-          {activeTab === 'map' && <TripMap trip={trip} />}
+          {activeTab === 'map' && (
+            <div className="relative w-full h-[600px] min-h-[500px]">
+              <TripMap trip={trip} />
+            </div>
+          )}
 
           {/* BUDGET */}
           {activeTab === 'budget' && trip.budget && (() => {
