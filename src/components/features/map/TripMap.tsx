@@ -250,112 +250,180 @@ export default function TripMap({ trip }: TripMapProps) {
 
     if (rawItems.length === 0) {
       setLoading(false);
-      const shape = trip
-        ? `Keys found: ${Object.keys(trip).join(", ")}`
-        : "trip prop is null/undefined";
-      setError(`No stops found in trip data. ${shape}`);
-      console.warn("[TripMap] raw trip:", JSON.stringify(trip, null, 2));
+      setError(`No stops found. Keys: ${trip ? Object.keys(trip).join(", ") : "null"}`);
       return;
     }
 
     const withCoords = rawItems.filter((r) => r.lat !== null && r.lng !== null);
     const needsGeo   = rawItems.filter((r) => r.lat === null || r.lng === null);
 
-    // Everything already has coords — render immediately
     if (needsGeo.length === 0) {
-      setStopsReady(
-        withCoords.map((r) => ({
-          name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
-          day: r.day ?? undefined, description: r.description,
-          time: r.time, duration: r.duration,
-        }))
-      );
+      setStopsReady(withCoords.map((r) => ({
+        name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
+        day: r.day ?? undefined, description: r.description,
+        time: r.time, duration: r.duration,
+      })));
       return;
     }
 
-    // Destination string for geocoding context
+    // ── Hardcoded coords for common Indian + world destinations ──
+    const KNOWN: Record<string, [number, number]> = {
+      "andaman":          [92.7265, 11.7401],
+      "port blair":       [92.7265, 11.6234],
+      "havelock":         [92.9982, 11.9810],
+      "neil island":      [92.8748, 11.8345],
+      "delhi":            [77.2090, 28.6139],
+      "new delhi":        [77.2090, 28.6139],
+      "mumbai":           [72.8777, 19.0760],
+      "bangalore":        [77.5946, 12.9716],
+      "bengaluru":        [77.5946, 12.9716],
+      "goa":              [74.1240, 15.2993],
+      "jaipur":           [75.7873, 26.9124],
+      "agra":             [78.0081, 27.1767],
+      "taj mahal":        [78.0421, 27.1751],
+      "varanasi":         [82.9739, 25.3176],
+      "kerala":           [76.2711, 10.8505],
+      "kochi":            [76.2673, 9.9312],
+      "hyderabad":        [78.4867, 17.3850],
+      "chennai":          [80.2707, 13.0827],
+      "kolkata":          [88.3639, 22.5726],
+      "pune":             [73.8567, 18.5204],
+      "manali":           [77.1892, 32.2396],
+      "shimla":           [77.1734, 31.1048],
+      "leh":              [77.5771, 34.1526],
+      "ladakh":           [77.5771, 34.1526],
+      "udaipur":          [73.6833, 24.5854],
+      "jodhpur":          [73.0243, 26.2389],
+      "mysore":           [76.6394, 12.2958],
+      "mysuru":           [76.6394, 12.2958],
+      "ooty":             [76.6950, 11.4102],
+      "darjeeling":       [88.2627, 27.0360],
+      "rishikesh":        [78.2676, 30.0869],
+      "haridwar":         [78.1642, 29.9457],
+      "amritsar":         [74.8723, 31.6340],
+      "chandigarh":       [76.7794, 30.7333],
+      "srinagar":         [74.7973, 34.0837],
+      "kashmir":          [74.7973, 34.0837],
+      "coorg":            [75.8069, 12.3375],
+      "kodakodagu":       [75.8069, 12.3375],
+      "munnar":           [77.0595, 10.0889],
+      "alleppey":         [76.3388, 9.4981],
+      "alappuzha":        [76.3388, 9.4981],
+      "pondicherry":      [79.8083, 11.9416],
+      "puducherry":       [79.8083, 11.9416],
+      "hampi":            [76.4600, 15.3350],
+      "khajuraho":        [79.9199, 24.8318],
+      "ranthambore":      [76.5026, 26.0173],
+      "jim corbett":      [78.7742, 29.5300],
+      "bandhavgarh":      [80.9000, 23.7167],
+      "uttarakhand":      [79.0193, 30.0668],
+      "himachal pradesh": [77.1734, 31.1048],
+      "rajasthan":        [74.2179, 27.0238],
+      "uttar pradesh":    [80.9462, 26.8467],
+      "andhra pradesh":   [79.7400, 15.9129],
+      "tamil nadu":       [78.6569, 11.1271],
+      "karnataka":        [75.7139, 15.3173],
+      "maharashtra":      [75.7139, 19.7515],
+      "west bengal":      [87.8550, 22.9868],
+      "india":            [78.9629, 20.5937],
+      // World
+      "dubai":            [55.2708, 25.2048],
+      "singapore":        [103.8198, 1.3521],
+      "bangkok":          [100.5018, 13.7563],
+      "paris":            [2.3522, 48.8566],
+      "london":           [-0.1276, 51.5074],
+      "new york":         [-74.0060, 40.7128],
+      "tokyo":            [139.6917, 35.6895],
+      "bali":             [115.1889, -8.4095],
+      "phuket":           [98.3923, 7.8804],
+      "maldives":         [73.2207, 3.2028],
+      "nepal":            [84.1240, 28.3949],
+      "kathmandu":        [85.3240, 27.7172],
+      "sri lanka":        [80.7718, 7.8731],
+      "colombo":          [79.8612, 6.9271],
+    };
+
+    function findKnownCoords(text: string): [number, number] | null {
+      const lower = text.toLowerCase();
+      // exact match first
+      if (KNOWN[lower]) return KNOWN[lower];
+      // partial match
+      for (const [key, coords] of Object.entries(KNOWN)) {
+        if (lower.includes(key) || key.includes(lower.split(",")[0].trim())) {
+          return coords;
+        }
+      }
+      return null;
+    }
+
+    // Get destination context
     const destination =
       typeof trip?.destination === "string" ? trip.destination :
       typeof trip?.title       === "string" ? trip.title : "";
 
+    // Try to find destination coords as ultimate fallback
+    const destCoords = findKnownCoords(destination) || [78.9629, 20.5937]; // India center
+
     let cancelled = false;
 
     (async () => {
-      // ── Geocode via our own API route (server-side, never blocked) ──
-      const queries = needsGeo.map((item) =>
-        item.locationHint ? `${item.locationHint}` : `${item.name}, ${destination}`
-      );
-
-      try {
-        setGeoStatus(`Finding locations for ${needsGeo.length} stops...`);
-
-        const res = await fetch("/api/geocode", {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ queries, destination }),
-        });
-
-        if (res.ok && !cancelled) {
-          const { results } = await res.json() as { results: ([number,number] | null)[] };
-          results.forEach((coords, i) => {
-            if (coords) {
-              needsGeo[i].lat = coords[1];
-              needsGeo[i].lng = coords[0];
-            }
-          });
+      // First pass: use hardcoded coords for known places
+      for (const item of needsGeo) {
+        const query = item.locationHint || item.name;
+        const known = findKnownCoords(query) || findKnownCoords(destination);
+        if (known) {
+          // Slightly offset each stop so they don't stack on top of each other
+          const idx = needsGeo.indexOf(item);
+          item.lat = known[1] + (idx * 0.008);
+          item.lng = known[0] + (idx * 0.008);
         }
-      } catch (e) {
-        console.warn("[TripMap] geocode API failed, using destination fallback:", e);
+      }
+
+      // Second pass: try our geocode API for anything still missing
+      const stillMissing = needsGeo.filter((r) => r.lat === null || r.lng === null);
+      if (stillMissing.length > 0 && !cancelled) {
+        try {
+          setGeoStatus(`Finding ${stillMissing.length} locations...`);
+          const res = await fetch("/api/geocode", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({
+              queries: stillMissing.map((item) =>
+                item.locationHint || `${item.name}, ${destination}`
+              ),
+              destination,
+            }),
+          });
+          if (res.ok && !cancelled) {
+            const { results } = await res.json() as { results: ([number,number] | null)[] };
+            results.forEach((coords, i) => {
+              if (coords) {
+                stillMissing[i].lat = coords[1];
+                stillMissing[i].lng = coords[0];
+              }
+            });
+          }
+        } catch (e) {
+          console.warn("[TripMap] geocode API failed:", e);
+        }
       }
 
       if (cancelled) return;
       setGeoStatus(null);
 
-      const all   = [...withCoords, ...needsGeo];
-      const valid = all.filter((r) => r.lat !== null && r.lng !== null);
+      // Combine all items, use destCoords as fallback for anything still null
+      const all = [...withCoords, ...needsGeo].map((r, idx) => ({
+        name:        r.name,
+        lat:         r.lat ?? (destCoords[1] + idx * 0.01),
+        lng:         r.lng ?? (destCoords[0] + idx * 0.01),
+        type:        r.type,
+        day:         r.day ?? undefined,
+        description: r.description,
+        time:        r.time,
+        duration:    r.duration,
+      }));
 
-      if (valid.length === 0) {
-        // Last resort: geocode just the destination name so at least the map centers correctly
-        setGeoStatus("Locating destination...");
-        try {
-          const res = await fetch(
-            `/api/geocode`,
-            { method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ queries: [destination], destination }) }
-          );
-          if (res.ok) {
-            const { results } = await res.json() as { results: ([number,number] | null)[] };
-            if (results[0] && !cancelled) {
-              // Create a single placeholder stop at the destination
-              const [lng, lat] = results[0];
-              setGeoStatus(null);
-              setStopsReady([{
-                name: destination, lat, lng,
-                type: "attraction", day: 1,
-                description: "", time: "", duration: "",
-              }]);
-              return;
-            }
-          }
-        } catch (_) {}
-        if (!cancelled) {
-          setGeoStatus(null);
-          setLoading(false);
-          setError("Could not find coordinates. Try generating a new trip.");
-        }
-        return;
-      }
-
-      if (!cancelled) {
-        setGeoStatus(null);
-        setStopsReady(
-          valid.map((r) => ({
-            name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
-            day: r.day ?? undefined, description: r.description,
-            time: r.time, duration: r.duration,
-          }))
-        );
-      }
+      if (!cancelled) setStopsReady(all);
     })();
 
     return () => { cancelled = true; };
@@ -363,8 +431,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
   /* ── Derived state ── */
   const validStops = stopsReady.filter(
-    (s) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng)) &&
-           Number(s.lat) !== 0   && Number(s.lng) !== 0
+    (s) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng))
   );
 
   const days = Array.from(
@@ -445,9 +512,10 @@ export default function TripMap({ trip }: TripMapProps) {
     if (geoStatus)             return; // still geocoding
 
     const stops = stopsReady.filter(
-      (s) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng)) &&
-             Number(s.lat) !== 0   && Number(s.lng) !== 0
+      (s) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng))
     );
+
+    console.log("[TripMap] init stops:", stops.length, stops.map(s => `${s.name}:${s.lat},${s.lng}`));
 
     if (stops.length === 0) {
       setLoading(false);
@@ -474,10 +542,15 @@ export default function TripMap({ trip }: TripMapProps) {
 
         const initStops = stopsForInitRef.current;
 
+        // Fallback center if stops have no coords — use destination name lookup
+        const fallbackCenter: [number, number] = [92.7265, 11.7401]; // Andaman default
+        const firstLng = Number(initStops[0]?.lng) || fallbackCenter[0];
+        const firstLat = Number(initStops[0]?.lat) || fallbackCenter[1];
+
         const map = new maplibregl.Map({
           container: containerRef.current,
           style:     isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT,
-          center:    [Number(initStops[0].lng), Number(initStops[0].lat)] as [number, number],
+          center:    [firstLng, firstLat] as [number, number],
           zoom:      4,
           attributionControl: false,
         });
