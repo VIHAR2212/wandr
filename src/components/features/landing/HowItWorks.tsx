@@ -93,69 +93,14 @@ export function HowItWorks() {
           <div className="relative w-full max-w-4xl mx-auto">
             {/* 16:9 Aspect Ratio Container */}
             <div className="relative w-full aspect-video rounded-2xl sm:rounded-3xl overflow-hidden border border-border/50 shadow-2xl shadow-primary/5">
-              {/* Video Placeholder Background */}
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-                {/* Animated gradient orbs */}
-                <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-blue-500/20 rounded-full blur-3xl animate-pulse" />
-                <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-orange-500/10 rounded-full blur-2xl animate-pulse" style={{ animationDelay: '2s' }} />
-              </div>
-
-              {/* Grid pattern overlay */}
-              <div
-                className="absolute inset-0 opacity-[0.03]"
-                style={{
-                  backgroundImage: 'linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px)',
-                  backgroundSize: '40px 40px',
-                }}
+              {/* YouTube Embed */}
+              <iframe
+                className="absolute inset-0 w-full h-full"
+                src="https://www.youtube.com/embed/DWtOsvD1EVc?rel=0&modestbranding=1&color=white"
+                title="Wandr AI Demo"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
               />
-
-              {/* ===== VIDEO PLACEHOLDER — Replace src with your real video URL ===== */}
-              {/*
-                TO ADD YOUR REAL VIDEO:
-                Option A: YouTube/Vimeo embed
-                Replace the entire <div className="absolute inset-0 ..."> below
-                with:
-                  <iframe
-                    className="absolute inset-0 w-full h-full"
-                    src="https://www.youtube.com/embed/YOUR_VIDEO_ID?rel=0&modestbranding=1"
-                    title="Wandr Demo"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-
-                Option B: Self-hosted video
-                Replace with:
-                  <video
-                    className="absolute inset-0 w-full h-full object-cover"
-                    controls
-                    poster="/thumbnail.jpg"
-                  >
-                    <source src="/demo.mp4" type="video/mp4" />
-                  </video>
-              */}
-              <video
-                className="absolute inset-0 w-full h-full object-cover"
-                controls
-                preload="metadata"
-                poster=""
-                aria-label="Wandr AI demo video showing how to plan a trip"
-              >
-                {/* <source src="/videos/wandr-demo.mp4" type="video/mp4" /> */}
-                {/* Add your video source above and uncomment */}
-              </video>
-
-              {/* Play button overlay (shows when video has no source) */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <div className="w-20 h-20 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center mb-4">
-                  <Play className="w-8 h-8 text-white ml-1" fill="white" />
-                </div>
-                <p className="text-white/70 text-sm font-medium">Demo Video Coming Soon</p>
-                <p className="text-white/40 text-xs mt-1">16:9 · Wandr AI Trip Planner</p>
-              </div>
-
-              {/* Bottom gradient fade */}
-              <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
             </div>
 
             {/* Glow effect behind video */}
