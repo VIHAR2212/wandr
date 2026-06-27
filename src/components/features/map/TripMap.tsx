@@ -459,14 +459,14 @@ export default function TripMap({ trip }: TripMapProps) {
           container: containerRef.current,
           style:     isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT,
           center:    [Number(initStops[0].lng), Number(initStops[0].lat)] as [number, number],
-          zoom:      2,
+          zoom:      4,
           attributionControl: false,
         });
 
         mapRef.current = map;
 
-        // Globe projection AFTER constructor (never inside options)
-        try { (map as any).setProjection({ type: "globe" }); } catch (_) {}
+        // Globe projection disabled — conflicts with Stadia Maps tile loading
+        // try { (map as any).setProjection({ type: "globe" }); } catch (_) {}
 
         const finishLoading = (errMsg?: string) => {
           clearTimeout(timeout);
