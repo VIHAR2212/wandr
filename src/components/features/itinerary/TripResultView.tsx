@@ -871,7 +871,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
 
           {/* MAP */}
           {activeTab === 'map' && (
-            <div className="relative w-full h-[600px] min-h-[500px]">
+            <div className="w-full" style={{ height: '560px' }}>
               <TripMap trip={trip} />
             </div>
           )}
