@@ -188,7 +188,7 @@ function formatItinerarySummary(trip: {
 // ---------------------------------------------------------------
 
 interface WhatsAppSession {
-  id: string;
+  id: number;
   phone: string;
   step: string;
   origin: string | null;
@@ -384,5 +384,4 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
 
 export async function GET() {
   return new NextResponse("Wandr WhatsApp webhook is live.", { status: 200 });
-  }
-      
+}
