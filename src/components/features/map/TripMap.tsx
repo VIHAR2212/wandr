@@ -429,7 +429,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
         const map = new maplibregl.Map({
           container: containerRef.current,
-          style:     "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+          style:     "https://tiles.openfreemap.org/styles/liberty",
           center:    [Number(initStops[0].lng), Number(initStops[0].lat)] as [number, number],
           zoom:      2,
           attributionControl: false,
@@ -489,9 +489,9 @@ export default function TripMap({ trip }: TripMapProps) {
                 "text-optional": true,
               },
               paint: {
-                "text-color":      "#e5e7eb",
-                "text-halo-color": "#000000",
-                "text-halo-width": 1,
+                "text-color":      "#1a1a2e",
+                "text-halo-color": "#ffffff",
+                "text-halo-width": 1.5,
               },
             });
 
@@ -660,7 +660,7 @@ export default function TripMap({ trip }: TripMapProps) {
     <div
       className={`relative w-full ${
         fullscreen ? "fixed inset-0 z-50" : "h-[560px]"
-      } rounded-2xl overflow-hidden bg-gray-900`}
+      } rounded-2xl overflow-hidden bg-gray-100`}
     >
       {/* MapLibre canvas */}
       <div ref={containerRef} className="absolute inset-0" />
