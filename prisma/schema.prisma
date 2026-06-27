@@ -166,7 +166,7 @@ model TripDay {
 
 model whatsapp_sessions {
   id          Int      @id @default(autoincrement())
-  phone       String
+  phone       String   @unique
   step        String   @default("AWAITING_DESTINATION")
   origin      String?
   destination String?
