@@ -57,7 +57,6 @@ async function geocodePlace(
 ): Promise<[number, number] | null> {
   const query = (context ? `${name}, ${context}` : name).toLowerCase().trim();
   if (geoCache.has(query)) return geoCache.get(query) || null;
-
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
@@ -79,7 +78,6 @@ async function geocodePlace(
 /* ─────────────────────────────────────────────────────────────
    extractRawItems — pulls ALL stop-like items from any trip shape,
    INCLUDING those missing coordinates (so we can geocode them).
-   Returns items with their resolved coords + original name.
 ───────────────────────────────────────────────────────────── */
 interface RawItem {
   name: string;
@@ -171,6 +169,7 @@ export default function TripMap({ trip }: TripMapProps) {
   const mapRef = useRef<any>(null);
   const mlRef = useRef<any>(null);
   const initDoneRef = useRef(false);
+  const stopsForInitRef = useRef<Stop[]>([]);
 
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -196,23 +195,20 @@ export default function TripMap({ trip }: TripMapProps) {
     const needsGeo = rawItems.filter((r) => r.lat === null || r.lng === null);
 
     if (needsGeo.length === 0) {
-      /* All stops already have coords — map immediately */
-      setStopsReady(
-        rawItems.map((r) => ({
-          name: r.name,
-          lat: r.lat!,
-          lng: r.lng!,
-          type: r.type,
-          day: r.day ?? undefined,
-          description: r.description,
-          time: r.time,
-          duration: r.duration,
-        }))
-      );
+      const ready = rawItems.map((r) => ({
+        name: r.name,
+        lat: r.lat!,
+        lng: r.lng!,
+        type: r.type,
+        day: r.day ?? undefined,
+        description: r.description,
+        time: r.time,
+        duration: r.duration,
+      }));
+      setStopsReady(ready);
       return;
     }
 
-    /* Geocode stops that are missing coords */
     const context = typeof trip?.destination === "string" ? trip.destination : "";
     let cancelled = false;
 
@@ -234,7 +230,7 @@ export default function TripMap({ trip }: TripMapProps) {
         const withCoords = rawItems.filter((r) => r.lat !== null && r.lng !== null);
         if (withCoords.length === 0) {
           setLoading(false);
-          setError("Could not find coordinates for any stops. The place names may not be recognized.");
+          setError("Could not find coordinates for any stops.");
           return;
         }
         setStopsReady(
@@ -360,21 +356,26 @@ export default function TripMap({ trip }: TripMapProps) {
     updateMapLayers();
   }, [mounted, filteredStops, updateMapLayers]);
 
-  /* ── Step 3: Init map (runs after geocoding finishes) ── */
+  /* ── Step 3: Init map ONCE when stops are ready and geocoding is done ── */
   useEffect(() => {
     if (!mounted) return;
     if (initDoneRef.current) return;
     if (!containerRef.current) return;
-    /* Wait until geocoding is done and stops are available */
     if (stopsReady.length === 0) return;
     if (geoStatus) return;
 
-    if (validStops.length === 0) {
+    const stops = stopsReady.filter(
+      (s) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng)) && Number(s.lat) !== 0 && Number(s.lng) !== 0
+    );
+
+    if (stops.length === 0) {
       setLoading(false);
       setError("No valid stops with coordinates found after geocoding.");
       return;
     }
 
+    /* Store in ref so we don't need validStops in deps */
+    stopsForInitRef.current = stops;
     initDoneRef.current = true;
     let cancelled = false;
 
@@ -391,10 +392,11 @@ export default function TripMap({ trip }: TripMapProps) {
         if (cancelled || !containerRef.current) return;
         mlRef.current = maplibregl;
 
+        const initStops = stopsForInitRef.current;
         const map = new maplibregl.Map({
           container: containerRef.current,
           style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-          center: [Number(validStops[0].lng), Number(validStops[0].lat)] as [number, number],
+          center: [Number(initStops[0].lng), Number(initStops[0].lat)] as [number, number],
           zoom: 2,
           attributionControl: false,
         });
@@ -424,7 +426,7 @@ export default function TripMap({ trip }: TripMapProps) {
               type: "geojson",
               data: {
                 type: "FeatureCollection",
-                features: validStops.map((s, i) => ({
+                features: initStops.map((s, i) => ({
                   type: "Feature" as const,
                   geometry: {
                     type: "Point" as const,
@@ -479,14 +481,14 @@ export default function TripMap({ trip }: TripMapProps) {
               data: {
                 type: "FeatureCollection",
                 features:
-                  validStops.length > 1
-                    ? validStops.slice(0, -1).map((s, i) => ({
+                  initStops.length > 1
+                    ? initStops.slice(0, -1).map((s, i) => ({
                         type: "Feature" as const,
                         geometry: {
                           type: "LineString" as const,
                           coordinates: [
                             [Number(s.lng), Number(s.lat)] as [number, number],
-                            [Number(validStops[i + 1].lng), Number(validStops[i + 1].lat)] as [number, number],
+                            [Number(initStops[i + 1].lng), Number(initStops[i + 1].lat)] as [number, number],
                           ],
                         },
                         properties: { color: getColor(s.type || "") },
@@ -511,9 +513,9 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
-            if (validStops.length > 1) {
+            if (initStops.length > 1) {
               const bounds = new maplibregl.LngLatBounds();
-              validStops.forEach((s) => bounds.extend([Number(s.lng), Number(s.lat)]));
+              initStops.forEach((s) => bounds.extend([Number(s.lng), Number(s.lat)]));
               map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1500 });
             }
           } catch (layerErr) {
@@ -573,18 +575,9 @@ export default function TripMap({ trip }: TripMapProps) {
     return () => {
       cancelled = true;
       clearTimeout(timeout);
-      if (mapRef.current) {
-        try {
-          mapRef.current.remove();
-        } catch (_) {
-          /* noop */
-        }
-        mapRef.current = null;
-        initDoneRef.current = false;
-      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, stopsReady, geoStatus, validStops]);
+  }, [mounted, stopsReady, geoStatus]);
 
   /* ── Toolbar helpers ── */
   function handleZoomIn() {
@@ -602,10 +595,10 @@ export default function TripMap({ trip }: TripMapProps) {
   function handleResetView() {
     const map = mapRef.current;
     const ml = mlRef.current;
-    if (!map || !ml || validStops.length === 0) return;
+    if (!map || !ml || filteredStops.length === 0) return;
     try {
       const bounds = new ml.LngLatBounds();
-      validStops.forEach((s) => bounds.extend([Number(s.lng), Number(s.lat)]));
+      filteredStops.forEach((s) => bounds.extend([Number(s.lng), Number(s.lat)]));
       map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1000 });
     } catch (_) {
       /* noop */
@@ -623,9 +616,9 @@ export default function TripMap({ trip }: TripMapProps) {
   }
 
   function handleLocate() {
-    if (!mapRef.current || validStops.length === 0) return;
+    if (!mapRef.current || filteredStops.length === 0) return;
     mapRef.current.flyTo({
-      center: [Number(validStops[0].lng), Number(validStops[0].lat)] as [number, number],
+      center: [Number(filteredStops[0].lng), Number(filteredStops[0].lat)] as [number, number],
       zoom: 12,
       duration: 1500,
     });
@@ -653,7 +646,6 @@ export default function TripMap({ trip }: TripMapProps) {
     <div className={`relative w-full ${fullscreen ? "fixed inset-0 z-50" : "h-full min-h-[500px]"} rounded-2xl overflow-hidden`}>
       <div ref={containerRef} className="absolute inset-0" />
 
-      {/* geocoding progress */}
       {geoStatus && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 z-10">
           <div className="w-10 h-10 border-[3px] border-white/20 border-t-orange-500 rounded-full animate-spin" />
@@ -661,7 +653,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* loading spinner */}
       {loading && !geoStatus && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 z-10">
           <div className="w-10 h-10 border-[3px] border-white/20 border-t-orange-500 rounded-full animate-spin" />
@@ -669,7 +660,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* error state */}
       {error && !loading && !geoStatus && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90 z-10 px-6">
           <div className="text-red-400 text-lg font-semibold mb-2">Map Error</div>
@@ -684,6 +674,7 @@ export default function TripMap({ trip }: TripMapProps) {
                 mapRef.current = null;
               }
               mlRef.current = null;
+              stopsForInitRef.current = [];
               setStopsReady([]);
               setMounted(false);
               setTimeout(() => setMounted(true), 50);
@@ -695,7 +686,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* day filter pills */}
       {days.length > 1 && !loading && !geoStatus && (
         <div className="absolute top-3 left-3 z-20 flex flex-wrap gap-1.5">
           <button
@@ -716,7 +706,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* type legend */}
       {allTypes.length > 1 && !loading && !geoStatus && (
         <div className="absolute bottom-3 left-3 z-20 flex flex-wrap gap-1.5 backdrop-blur-md bg-black/30 rounded-xl p-2 border border-white/10">
           {allTypes.map((t) => (
@@ -732,7 +721,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* toolbar */}
       {!loading && !geoStatus && (
         <div className="absolute top-3 right-3 z-20 flex flex-col gap-1.5">
           <button onClick={handleZoomIn} className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-lg" title="Zoom in">+</button>
