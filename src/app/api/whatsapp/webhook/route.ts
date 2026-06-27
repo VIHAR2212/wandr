@@ -1,7 +1,7 @@
 // src/app/api/whatsapp/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { db } from "@/lib/db";
+import db from "@/lib/db";
 
 // Re-implements Twilio's request validation using only Node's built-in
 // crypto module — no `twilio` npm package required.
