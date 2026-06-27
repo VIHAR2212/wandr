@@ -267,7 +267,7 @@ export default function TripMap({ trip }: TripMapProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [stopsVersion, setStopsVersion] = useState(0);
 
-  // Inject inline CSS once — avoids unpkg CDN race condition
+  // Inject inline CSS once — covers all maplibre-gl versions
   useEffect(() => {
     const id = "maplibre-css-inline";
     if (document.getElementById(id)) return;
@@ -560,11 +560,9 @@ export default function TripMap({ trip }: TripMapProps) {
 
     (async () => {
       try {
-        // Use v4.7.1 — stable, no globe API changes, no raster tile breaking changes
-        const maplibregl = await import(
-          // @ts-ignore — dynamic version string
-          "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
-        ).catch(() => import("maplibre-gl")); // fallback to whatever is installed
+        const mlModule = await import("maplibre-gl");
+        // Handle both ESM default export and CJS module.exports shapes
+        const maplibregl = (mlModule as any).default ?? mlModule;
 
         if (destroyed || !containerRef.current) {
           clearTimeout(timeout);
