@@ -164,6 +164,19 @@ model TripDay {
   @@map("trip_days")
 }
 
+model whatsapp_sessions {
+  id          Int      @id @default(autoincrement())
+  phone       String
+  step        String   @default("AWAITING_DESTINATION")
+  origin      String?
+  destination String?
+  days        Int?
+  budget      Float?
+  tripId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model Activity {
   id          String       @id @default(cuid())
   tripDayId   String
