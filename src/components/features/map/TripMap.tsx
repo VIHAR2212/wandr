@@ -429,7 +429,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
         const map = new maplibregl.Map({
           container: containerRef.current,
-          style:     "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+          style:     "https://demotiles.maplibre.org/style.json",
           center:    [Number(initStops[0].lng), Number(initStops[0].lat)] as [number, number],
           zoom:      2,
           attributionControl: false,
