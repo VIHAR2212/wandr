@@ -258,82 +258,101 @@ export default function TripMap({ trip }: TripMapProps) {
       return;
     }
 
-    // Items WITH valid coords (non-zero, non-NaN)
-    const withCoords   = rawItems.filter((r) => r.lat !== null && r.lng !== null);
-    // Items WITHOUT valid coords — need geocoding
-    const needsGeo     = rawItems.filter((r) => r.lat === null || r.lng === null);
+    const withCoords = rawItems.filter((r) => r.lat !== null && r.lng !== null);
+    const needsGeo   = rawItems.filter((r) => r.lat === null || r.lng === null);
 
-    // If everything already has coords, skip geocoding entirely
+    // Everything already has coords — render immediately
     if (needsGeo.length === 0) {
       setStopsReady(
         withCoords.map((r) => ({
-          name:        r.name,
-          lat:         r.lat!,
-          lng:         r.lng!,
-          type:        r.type,
-          day:         r.day ?? undefined,
-          description: r.description,
-          time:        r.time,
-          duration:    r.duration,
+          name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
+          day: r.day ?? undefined, description: r.description,
+          time: r.time, duration: r.duration,
         }))
       );
       return;
     }
 
-    // Build destination context for Nominatim queries
-    const context =
-      typeof trip?.destination === "string"
-        ? trip.destination
-        : typeof trip?.title === "string"
-        ? trip.title
-        : "";
+    // Destination string for geocoding context
+    const destination =
+      typeof trip?.destination === "string" ? trip.destination :
+      typeof trip?.title       === "string" ? trip.title : "";
 
     let cancelled = false;
 
     (async () => {
-      for (let i = 0; i < needsGeo.length; i++) {
-        if (cancelled) return;
-        const item = needsGeo[i];
+      // ── Geocode via our own API route (server-side, never blocked) ──
+      const queries = needsGeo.map((item) =>
+        item.locationHint ? `${item.locationHint}` : `${item.name}, ${destination}`
+      );
 
-        // Use "Activity Title, Location String" as query — much more accurate than title alone
-        // e.g. "Visit Taj Mahal, Agra, India" instead of just "Visit Taj Mahal"
-        const queryName =
-          item.locationHint
-            ? `${item.locationHint}` // "Taj Mahal, Agra" is already descriptive
-            : item.name;
+      try {
+        setGeoStatus(`Finding locations for ${needsGeo.length} stops...`);
 
-        setGeoStatus(`Finding location ${i + 1}/${needsGeo.length}: ${queryName}`);
+        const res = await fetch("/api/geocode", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ queries, destination }),
+        });
 
-        const coords = await geocodePlace(queryName, context || undefined);
-        if (coords && !cancelled) {
-          item.lat = coords[1]; // lat
-          item.lng = coords[0]; // lng
+        if (res.ok && !cancelled) {
+          const { results } = await res.json() as { results: ([number,number] | null)[] };
+          results.forEach((coords, i) => {
+            if (coords) {
+              needsGeo[i].lat = coords[1];
+              needsGeo[i].lng = coords[0];
+            }
+          });
         }
+      } catch (e) {
+        console.warn("[TripMap] geocode API failed, using destination fallback:", e);
+      }
 
-        if (i < needsGeo.length - 1) await sleep(1100); // Nominatim rate limit
+      if (cancelled) return;
+      setGeoStatus(null);
+
+      const all   = [...withCoords, ...needsGeo];
+      const valid = all.filter((r) => r.lat !== null && r.lng !== null);
+
+      if (valid.length === 0) {
+        // Last resort: geocode just the destination name so at least the map centers correctly
+        setGeoStatus("Locating destination...");
+        try {
+          const res = await fetch(
+            `/api/geocode`,
+            { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ queries: [destination], destination }) }
+          );
+          if (res.ok) {
+            const { results } = await res.json() as { results: ([number,number] | null)[] };
+            if (results[0] && !cancelled) {
+              // Create a single placeholder stop at the destination
+              const [lng, lat] = results[0];
+              setGeoStatus(null);
+              setStopsReady([{
+                name: destination, lat, lng,
+                type: "attraction", day: 1,
+                description: "", time: "", duration: "",
+              }]);
+              return;
+            }
+          }
+        } catch (_) {}
+        if (!cancelled) {
+          setGeoStatus(null);
+          setLoading(false);
+          setError("Could not find coordinates. Try generating a new trip.");
+        }
+        return;
       }
 
       if (!cancelled) {
         setGeoStatus(null);
-        const all = [...withCoords, ...needsGeo];
-        const valid = all.filter((r) => r.lat !== null && r.lng !== null);
-
-        if (valid.length === 0) {
-          setLoading(false);
-          setError("Could not find coordinates for any stops. Check your internet connection.");
-          return;
-        }
-
         setStopsReady(
           valid.map((r) => ({
-            name:        r.name,
-            lat:         r.lat!,
-            lng:         r.lng!,
-            type:        r.type,
-            day:         r.day ?? undefined,
-            description: r.description,
-            time:        r.time,
-            duration:    r.duration,
+            name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
+            day: r.day ?? undefined, description: r.description,
+            time: r.time, duration: r.duration,
           }))
         );
       }
