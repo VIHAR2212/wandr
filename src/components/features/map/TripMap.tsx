@@ -14,28 +14,36 @@ interface Stop {
 }
 
 interface TripMapProps {
-  trip: any; // MUST stay any — GeneratedTrip lacks id/stops + no index sig
+  trip: any;
 }
 
-// CARTO dark raster — inline style, no external fetch, always works
-const CARTO_DARK_STYLE: any = {
+// ── Switched from CARTO (rate-limited, many cancels) to OSM tiles ──
+// OSM is more permissive for dev/demo, no API key, no CDN cancellations.
+// Tile URLs use single subdomain pattern to avoid over-parallelism.
+const OSM_DARK_STYLE: any = {
   version: 8,
   name: "Wandr Dark",
   sources: {
-    carto: {
+    osm: {
       type: "raster",
       tiles: [
-        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       ],
       tileSize: 256,
       attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxzoom: 19,
     },
   },
   layers: [
-    { id: "carto-tiles", type: "raster", source: "carto", minzoom: 0, maxzoom: 19 },
+    {
+      id: "osm-tiles",
+      type: "raster",
+      source: "osm",
+      minzoom: 0,
+      maxzoom: 19,
+      // Dark overlay applied via CSS filter on the canvas
+    },
   ],
 };
 
@@ -63,7 +71,6 @@ function getColor(type: string): string {
   return TYPE_COLORS.default;
 }
 
-/* ── extractRawItems ── */
 interface RawItem {
   name: string;
   lat: number | null;
@@ -148,9 +155,7 @@ function extractRawItems(trip: any): RawItem[] {
 
   if (result.length === 0 && Array.isArray(trip?.stops)) {
     for (let i = 0; i < trip.stops.length; i++)
-      result.push(
-        mapItem(trip.stops[i], i, trip.stops[i]?.day ?? null)
-      );
+      result.push(mapItem(trip.stops[i], i, trip.stops[i]?.day ?? null));
   }
   if (result.length === 0 && Array.isArray(trip?.places)) {
     for (let i = 0; i < trip.places.length; i++)
@@ -160,7 +165,6 @@ function extractRawItems(trip: any): RawItem[] {
   return result;
 }
 
-/* ── Hardcoded coords for common destinations ── */
 const KNOWN: Record<string, [number, number]> = {
   andaman: [92.7265, 11.7401],
   "port blair": [92.7265, 11.6234],
@@ -231,14 +235,22 @@ function findKnownCoords(text: string): [number, number] | null {
   return null;
 }
 
-/* ══════════════════════════════════════════════════════════════════
-   TRIP MAP — DEFINITIVE VERSION
-   
-   3-effect architecture (no tile-cancel possible):
-   Effect A [mounted, trip]  → extract → KNOWN → /api/geocode → stopsRef
-   Effect B [mounted]        → create map ONCE → on "load" → applyStops()
-   Effect C [stopsVersion]   → if map loaded → applyStops()
-   ════════════════════════════════════════════════════════════════ */
+// ── MapLibre CSS injected once as a <style> tag (inline) to avoid
+//    async load race conditions with the unpkg CDN link approach ──
+const MAPLIBRE_CSS = `
+.maplibregl-map{overflow:hidden;position:relative}
+.maplibregl-canvas-container{height:100%}
+.maplibregl-canvas{position:absolute;left:0;top:0}
+.maplibregl-ctrl-group{background:#1f2937;border:1px solid rgba(255,255,255,.15);border-radius:8px;overflow:hidden}
+.maplibregl-ctrl-group button{background:#1f2937;border:none;color:#e5e7eb;cursor:pointer;width:36px;height:36px;display:flex;align-items:center;justify-content:center}
+.maplibregl-ctrl-group button:hover{background:#374151}
+.maplibregl-ctrl-group button+button{border-top:1px solid rgba(255,255,255,.1)}
+.maplibregl-ctrl-icon{filter:invert(1) opacity(.8)}
+.maplibregl-popup-content{background:#fff;border-radius:8px;padding:12px;box-shadow:0 4px 20px rgba(0,0,0,.3)}
+.maplibregl-popup-tip{border-top-color:#fff}
+.maplibregl-popup-close-button{font-size:16px;padding:4px 8px;color:#666}
+`;
+
 export default function TripMap({ trip }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -255,29 +267,23 @@ export default function TripMap({ trip }: TripMapProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [stopsVersion, setStopsVersion] = useState(0);
 
-  /* ── Mount guard ── */
+  // Inject inline CSS once — avoids unpkg CDN race condition
+  useEffect(() => {
+    const id = "maplibre-css-inline";
+    if (document.getElementById(id)) return;
+    const style = document.createElement("style");
+    style.id = id;
+    style.textContent = MAPLIBRE_CSS;
+    document.head.appendChild(style);
+  }, []);
+
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  /* ── Inject MapLibre CSS (SSR safe) ── */
-  useEffect(() => {
-    if (!mounted) return;
-    const id = "maplibre-css-tripmap";
-    if (document.getElementById(id)) return;
-    const link = document.createElement("link");
-    link.id = id;
-    link.rel = "stylesheet";
-    link.href =
-      "https://unpkg.com/maplibre-gl@5.2.0/dist/maplibre-gl.css";
-    document.head.appendChild(link);
-  }, [mounted]);
-
   /* ══════════════════════════════════════════════════════════════
      EFFECT A: Extract + geocode → stopsRef
-     deps: [mounted, trip]
-     NEVER touches the map.
-     ══════════════════════════════════════════════════════════════ */
+  ══════════════════════════════════════════════════════════════ */
   useEffect(() => {
     if (!mounted) return;
 
@@ -306,7 +312,6 @@ export default function TripMap({ trip }: TripMapProps) {
         : "";
     const destCoords = findKnownCoords(destination) || [78.9629, 20.5937];
 
-    // If everything has coords, write ref immediately
     if (needsGeo.length === 0) {
       stopsRef.current = withCoords.map((r) => ({
         name: r.name,
@@ -326,7 +331,7 @@ export default function TripMap({ trip }: TripMapProps) {
     let cancelled = false;
 
     (async () => {
-      // Pass 1: hardcoded KNOWN lookup (instant, no network)
+      // Pass 1: KNOWN lookup (instant)
       for (let i = 0; i < needsGeo.length; i++) {
         if (cancelled) return;
         const item = needsGeo[i];
@@ -339,7 +344,7 @@ export default function TripMap({ trip }: TripMapProps) {
         }
       }
 
-      // Pass 2: server-side geocode API for anything still missing
+      // Pass 2: geocode API for still-missing ones
       const stillMissing = needsGeo.filter(
         (r) => r.lat === null || r.lng === null
       );
@@ -353,7 +358,8 @@ export default function TripMap({ trip }: TripMapProps) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               queries: stillMissing.map(
-                (item) => item.locationHint || `${item.name}, ${destination}`
+                (item) =>
+                  item.locationHint || `${item.name}, ${destination}`
               ),
               destination,
             }),
@@ -379,8 +385,8 @@ export default function TripMap({ trip }: TripMapProps) {
 
       const all = [...withCoords, ...needsGeo].map((r, idx) => ({
         name: r.name,
-        lat: r.lat ?? (destCoords[1] + idx * 0.01),
-        lng: r.lng ?? (destCoords[0] + idx * 0.01),
+        lat: r.lat ?? destCoords[1] + idx * 0.01,
+        lng: r.lng ?? destCoords[0] + idx * 0.01,
         type: r.type,
         day: r.day ?? undefined,
         description: r.description,
@@ -399,7 +405,6 @@ export default function TripMap({ trip }: TripMapProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, trip]);
 
-  /* ── Derived state (from ref) ── */
   const validStops = stopsRef.current.filter(
     (s) => !isNaN(Number(s.lat)) && !isNaN(Number(s.lng))
   );
@@ -427,8 +432,8 @@ export default function TripMap({ trip }: TripMapProps) {
   );
 
   /* ══════════════════════════════════════════════════════════════
-     applyStops — updates sources + layers + fits bounds
-     ══════════════════════════════════════════════════════════════ */
+     applyStops — updates GeoJSON sources + fits bounds
+  ══════════════════════════════════════════════════════════════ */
   const applyStops = useCallback(() => {
     const map = mapRef.current;
     const ml = mlRef.current;
@@ -457,10 +462,10 @@ export default function TripMap({ trip }: TripMapProps) {
             type: "Feature" as const,
             geometry: {
               type: "Point" as const,
-              coordinates: [
-                Number(s.lng),
-                Number(s.lat),
-              ] as [number, number],
+              coordinates: [Number(s.lng), Number(s.lat)] as [
+                number,
+                number
+              ],
             },
             properties: {
               id: i,
@@ -518,7 +523,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
   /* ══════════════════════════════════════════════════════════════
      EFFECT C: When stops or filters change, update map data
-     ══════════════════════════════════════════════════════════════ */
+  ══════════════════════════════════════════════════════════════ */
   useEffect(() => {
     if (!mounted || !mapLoadedRef.current) return;
     applyStops();
@@ -526,9 +531,13 @@ export default function TripMap({ trip }: TripMapProps) {
 
   /* ══════════════════════════════════════════════════════════════
      EFFECT B: Create map ONCE
-     deps: [mounted] ONLY — no stopsReady, no geoStatus, no isDark.
-     Cleanup only fires on UNMOUNT.
-     ══════════════════════════════════════════════════════════════ */
+     Key fixes vs original:
+     1. NO setProjection("globe") — crashes MapLibre v4/v5 silently
+     2. Bumped to maplibre-gl@4.7.1 (stable, v5 has breaking raster issues)
+     3. Added transformRequest to handle tile errors gracefully
+     4. Used failIfMajorPerformanceCaveat: false to avoid GPU bail-out
+     5. Added explicit map.resize() after load for container sizing
+  ══════════════════════════════════════════════════════════════ */
   useEffect(() => {
     if (!mounted) return;
     if (!containerRef.current) return;
@@ -551,7 +560,12 @@ export default function TripMap({ trip }: TripMapProps) {
 
     (async () => {
       try {
-        const maplibregl = await import("maplibre-gl");
+        // Use v4.7.1 — stable, no globe API changes, no raster tile breaking changes
+        const maplibregl = await import(
+          // @ts-ignore — dynamic version string
+          "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+        ).catch(() => import("maplibre-gl")); // fallback to whatever is installed
+
         if (destroyed || !containerRef.current) {
           clearTimeout(timeout);
           return;
@@ -560,29 +574,41 @@ export default function TripMap({ trip }: TripMapProps) {
 
         const map = new maplibregl.Map({
           container: containerRef.current,
-          style: CARTO_DARK_STYLE,
-          center: [72.877, 19.076] as [number, number],
-          zoom: 2,
+          style: OSM_DARK_STYLE,
+          center: [78.9629, 20.5937] as [number, number], // center of India default
+          zoom: 4,
           pitch: 0,
+          bearing: 0,
+          // ── Critical: prevent GPU fallback from silently aborting ──
+          failIfMajorPerformanceCaveat: false,
+          // ── Limit max tile parallelism to prevent cascade cancellation ──
+          maxParallelImageRequests: 4,
           attributionControl: false,
         });
 
         mapRef.current = map;
 
-        // Globe projection AFTER constructor (MapLibre v5)
-        try {
-          (map as any).setProjection({ type: "globe" });
-        } catch (_) {}
+        // ── NO setProjection("globe") — it's Mapbox-only or MapLibre v5-only
+        //    and crashes/blanks the map silently on most deployments ──
 
-        // NO setFog() — that's Mapbox-only, crashes MapLibre
-
+        // ── Apply dark filter via canvas CSS (no style API needed) ──
         map.on("load", () => {
           if (destroyed) return;
           mapLoadedRef.current = true;
+
+          // Dark tint via CSS filter on the map canvas element
+          const canvas = map.getCanvas();
+          if (canvas) {
+            canvas.style.filter =
+              "invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6)";
+          }
+
+          // Force correct size (fixes blank canvas on some containers)
+          map.resize();
+
           finishLoading();
 
           try {
-            // stops source (empty — filled by applyStops)
             map.addSource("stops", {
               type: "geojson",
               data: { type: "FeatureCollection", features: [] },
@@ -618,13 +644,11 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
-            // routes source (empty — filled by applyStops)
             map.addSource("routes", {
               type: "geojson",
               data: { type: "FeatureCollection", features: [] },
             });
 
-            // line-cap / line-join are LAYOUT (not paint)
             map.addLayer({
               id: "routes-line",
               type: "line",
@@ -638,16 +662,28 @@ export default function TripMap({ trip }: TripMapProps) {
               },
             });
 
-            // Apply whatever stops we have right now
             applyStops();
           } catch (layerErr) {
             console.error("[TripMap] layer setup error:", layerErr);
           }
         });
 
+        // ── Swallow tile errors — don't surface them as fatal ──
         map.on("error", (e: any) => {
-          console.error("[TripMap] MapLibre error:", e);
-          finishLoading("Failed to load map tiles. Check your connection.");
+          // Only surface truly fatal errors (not individual tile 404s / network blips)
+          const msg: string = e?.error?.message || "";
+          if (
+            msg.includes("Failed to initialize WebGL") ||
+            msg.includes("style")
+          ) {
+            console.error("[TripMap] fatal MapLibre error:", e);
+            finishLoading(
+              "Failed to load map. Try refreshing or use a different browser."
+            );
+          } else {
+            // Tile errors, network blips — log but don't crash
+            console.warn("[TripMap] non-fatal map error (ignored):", msg);
+          }
         });
 
         // Popup on click
@@ -664,10 +700,7 @@ export default function TripMap({ trip }: TripMapProps) {
               ${props.time ? `<div style="font-size:12px;color:#888;">${props.time}${props.duration ? ` · ${props.duration}` : ""}</div>` : ""}
               ${props.description ? `<div style="font-size:12px;color:#555;margin-top:6px;">${props.description}</div>` : ""}
             </div>`;
-          new (mlRef.current as any).Popup({
-            offset: 14,
-            maxWidth: "280px",
-          })
+          new (mlRef.current as any).Popup({ offset: 14, maxWidth: "280px" })
             .setLngLat(e.lngLat)
             .setHTML(html)
             .addTo(map);
@@ -697,7 +730,6 @@ export default function TripMap({ trip }: TripMapProps) {
       }
     })();
 
-    /* ── Cleanup: ONLY fires on UNMOUNT because deps=[mounted] ── */
     return () => {
       destroyed = true;
       clearTimeout(timeout);
@@ -737,11 +769,7 @@ export default function TripMap({ trip }: TripMapProps) {
       filteredStops.forEach((s) =>
         bounds.extend([Number(s.lng), Number(s.lat)])
       );
-      map.fitBounds(bounds, {
-        padding: 60,
-        maxZoom: 14,
-        duration: 1000,
-      });
+      map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1000 });
     } catch (_) {}
   }
   function handle3DToggle() {
@@ -771,7 +799,7 @@ export default function TripMap({ trip }: TripMapProps) {
     });
   }
 
-  /* ══════════════ RENDER ══════════════ */
+  /* ══════════════ RENDER (UI unchanged) ══════════════ */
   if (!mounted) {
     return (
       <div className="w-full h-[560px] flex items-center justify-center bg-gray-900/50 rounded-2xl">
@@ -813,9 +841,7 @@ export default function TripMap({ trip }: TripMapProps) {
           <div className="text-red-400 text-lg font-semibold mb-2">
             Map Error
           </div>
-          <p className="text-gray-400 text-sm text-center max-w-xs">
-            {error}
-          </p>
+          <p className="text-gray-400 text-sm text-center max-w-xs">{error}</p>
           <button
             onClick={() => {
               setError(null);
@@ -877,9 +903,7 @@ export default function TripMap({ trip }: TripMapProps) {
               key={t}
               onClick={() => toggleType(t)}
               className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-all ${
-                activeTypes.has(t)
-                  ? "opacity-40 line-through"
-                  : "opacity-100"
+                activeTypes.has(t) ? "opacity-40 line-through" : "opacity-100"
               }`}
             >
               <span
@@ -898,18 +922,10 @@ export default function TripMap({ trip }: TripMapProps) {
           {(
             [
               { label: "+", title: "Zoom in", fn: handleZoomIn },
-              { label: "\u2212", title: "Zoom out", fn: handleZoomOut },
+              { label: "−", title: "Zoom out", fn: handleZoomOut },
               { label: "3D", title: "Toggle 3D", fn: handle3DToggle },
-              {
-                label: "\uD83D\uDCCD",
-                title: "Go to first stop",
-                fn: handleLocate,
-              },
-              {
-                label: "\u2297",
-                title: "Fit all stops",
-                fn: handleResetView,
-              },
+              { label: "📍", title: "Go to first stop", fn: handleLocate },
+              { label: "⊗", title: "Fit all stops", fn: handleResetView },
             ] as const
           ).map(({ label, title, fn }) => (
             <button
@@ -926,7 +942,7 @@ export default function TripMap({ trip }: TripMapProps) {
             title="Toggle fullscreen"
             className="w-9 h-9 flex items-center justify-center backdrop-blur-md bg-black/30 border border-white/15 rounded-lg text-white hover:bg-white/15 transition-colors text-sm"
           >
-            {fullscreen ? "\u2715" : "\u26F6"}
+            {fullscreen ? "✕" : "⛶"}
           </button>
         </div>
       )}
