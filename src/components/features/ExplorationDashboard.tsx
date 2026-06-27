@@ -33,7 +33,7 @@ interface EditorialTrip {
   highlights?: string[];
 }
 
-// Destination Data (11 trips)
+// Destination Data (19 trips)
 const EDITORIAL_TRIPS: EditorialTrip[] = [
   {
     id: "kerala-backwaters",
@@ -296,6 +296,200 @@ const EDITORIAL_TRIPS: EditorialTrip[] = [
     ],
     bestSeason: "Apr – Oct",
     highlights: ["Rice terraces", "Uluwatu Temple", "Mount Batur"]
+  },
+  {
+    id: "paris-france",
+    number: "12",
+    category: "INTERNATIONAL",
+    region: "FRANCE",
+    title: "Paris, City of Lights",
+    description: "Eiffel Tower, Louvre, croissants at midnight.",
+    price: 95000,
+    days: 7,
+    gradientClass: "from-rose-500/20 via-rose-500/5 to-transparent",
+    routeKey: "DEL-CDG",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/14f152c09184.jpg",
+    hotels: [
+      { category: 'hotel', title: 'Hotel Le Marais Boutique', subtitle: 'Classic Room, 4 nights', price: 32000 },
+      { category: 'hotel', title: 'Mercure Montmartre', subtitle: 'Hill View Room, 2 nights', price: 18000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Eiffel Tower Summit Access', subtitle: 'Skip-the-line, sunset visit', price: 2800 },
+      { category: 'activity', title: 'Louvre Museum Guided Tour', subtitle: 'Mona Lisa & Renaissance art', price: 3500 },
+      { category: 'activity', title: 'Seine River Dinner Cruise', subtitle: '3-course meal, night sail', price: 5200 }
+    ],
+    bestSeason: "Apr – Jun",
+    highlights: ["Eiffel Tower", "Louvre Museum", "Seine cruise"]
+  },
+  {
+    id: "newyork-usa",
+    number: "13",
+    category: "INTERNATIONAL",
+    region: "USA",
+    title: "New York City",
+    description: "Skyscrapers, Broadway, pizza at 2 AM.",
+    price: 110000,
+    days: 8,
+    gradientClass: "from-blue-500/20 via-blue-500/5 to-transparent",
+    routeKey: "",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/2e2f59a5ca74.jpg",
+    hotels: [
+      { category: 'hotel', title: 'The New Yorker Hotel', subtitle: 'Midtown Deluxe, 5 nights', price: 38000 },
+      { category: 'hotel', title: 'Courtyard by Marriott Times Sq', subtitle: 'City View Room, 2 nights', price: 22000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Statue of Liberty & Ellis Island', subtitle: 'Ferry & guided tour', price: 3200 },
+      { category: 'activity', title: 'Broadway Show Ticket', subtitle: 'Premium orchestra seat', price: 8500 },
+      { category: 'activity', title: 'Central Park Bike Tour', subtitle: 'Guided 2-hour ride', price: 2800 }
+    ],
+    bestSeason: "Sep – Nov",
+    highlights: ["Times Square", "Central Park", "Broadway"]
+  },
+  {
+    id: "london-uk",
+    number: "14",
+    category: "INTERNATIONAL",
+    region: "UNITED KINGDOM",
+    title: "London Calling",
+    description: "Big Ben, red buses, afternoon tea, royal vibes.",
+    price: 88000,
+    days: 6,
+    gradientClass: "from-indigo-500/20 via-indigo-500/5 to-transparent",
+    routeKey: "DEL-LHR",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/c1110f2bc083.jpg",
+    hotels: [
+      { category: 'hotel', title: 'The Strand Palace Hotel', subtitle: 'Superior Room, 4 nights', price: 30000 },
+      { category: 'hotel', title: 'citizenM Tower of London', subtitle: 'River View Room, 1 night', price: 9500 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Tower of London & Crown Jewels', subtitle: 'Full experience entry', price: 3800 },
+      { category: 'activity', title: 'London Eye Fast Track', subtitle: 'Sunset flight, 30 min', price: 3200 },
+      { category: 'activity', title: 'Warner Bros Studio Tour', subtitle: 'Harry Potter world, full day', price: 6500 }
+    ],
+    bestSeason: "May – Sep",
+    highlights: ["Tower of London", "London Eye", "Harry Potter Studio"]
+  },
+  {
+    id: "cairo-egypt",
+    number: "15",
+    category: "INTERNATIONAL",
+    region: "EGYPT",
+    title: "Cairo & the Pyramids",
+    description: "Ancient pharaohs, desert gold, eternal mysteries.",
+    price: 72000,
+    days: 6,
+    gradientClass: "from-yellow-600/20 via-yellow-600/5 to-transparent",
+    routeKey: "",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/e018cbc5d48d.jpg",
+    hotels: [
+      { category: 'hotel', title: 'Marriott Mena House Cairo', subtitle: 'Pyramid View Room, 3 nights', price: 22000 },
+      { category: 'hotel', title: 'Sofitel Legend Old Cataract Aswan', subtitle: 'Nile View Suite, 2 nights', price: 18000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Great Pyramids & Sphinx Tour', subtitle: 'Private guided excursion', price: 3500 },
+      { category: 'activity', title: 'Egyptian Museum Private Tour', subtitle: 'Tutankhamun galleries', price: 2800 },
+      { category: 'activity', title: 'Nile River Felucca Cruise', subtitle: 'Traditional sailboat at sunset', price: 1500 }
+    ],
+    bestSeason: "Oct – Apr",
+    highlights: ["Great Pyramids", "Egyptian Museum", "Nile cruise"]
+  },
+  {
+    id: "santorini-greece",
+    number: "16",
+    category: "INTERNATIONAL",
+    region: "GREECE",
+    title: "Santorini Sunsets",
+    description: "Blue domes, caldera views, Aegean romance.",
+    price: 82000,
+    days: 6,
+    gradientClass: "from-blue-400/20 via-blue-400/5 to-transparent",
+    routeKey: "",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/1921f974244f.jpg",
+    hotels: [
+      { category: 'hotel', title: 'Katikies Hotel Oia', subtitle: 'Caldera View Suite, 4 nights', price: 35000 },
+      { category: 'hotel', title: 'Andronis Boutique Hotel', subtitle: 'Pool Cave Room, 1 night', price: 12000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Caldera Sunset Sailing', subtitle: 'Catamaran cruise with dinner', price: 5500 },
+      { category: 'activity', title: 'Wine Tasting Tour', subtitle: '3 volcanic wineries', price: 3200 },
+      { category: 'activity', title: 'Akrotiri Archaeological Site', subtitle: 'Ancient Minoan ruins', price: 1800 }
+    ],
+    bestSeason: "May – Oct",
+    highlights: ["Oia sunset", "Caldera cruise", "Volcanic wineries"]
+  },
+  {
+    id: "machu-picchu-peru",
+    number: "17",
+    category: "INTERNATIONAL",
+    region: "PERU",
+    title: "Machu Picchu",
+    description: "Lost Inca city in the clouds, ancient mystery.",
+    price: 135000,
+    days: 9,
+    gradientClass: "from-emerald-600/20 via-emerald-600/5 to-transparent",
+    routeKey: "",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/66441d79942e.jpg",
+    hotels: [
+      { category: 'hotel', title: 'Belmond Sanctuary Lodge', subtitle: 'Mountain View, 1 night', price: 18000 },
+      { category: 'hotel', title: 'Inkaterra La Casona Cusco', subtitle: 'Colonial Suite, 3 nights', price: 28000 },
+      { category: 'hotel', title: 'Titilaka Lodge Lake Titicaca', subtitle: 'Lake View Room, 2 nights', price: 15000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Machu Picchu Entry & Guide', subtitle: 'Full day, sunrise visit', price: 4500 },
+      { category: 'activity', title: 'Inca Trail Day Hike', subtitle: 'Partial trail experience', price: 5200 },
+      { category: 'activity', title: 'Sacred Valley Tour', subtitle: 'Pisac & Ollantaytambo ruins', price: 3800 }
+    ],
+    bestSeason: "May – Sep",
+    highlights: ["Machu Picchu", "Sacred Valley", "Cusco plazas"]
+  },
+  {
+    id: "iceland-aurora",
+    number: "18",
+    category: "INTERNATIONAL",
+    region: "ICELAND",
+    title: "Iceland Northern Lights",
+    description: "Aurora borealis, glaciers, otherworldly landscapes.",
+    price: 125000,
+    days: 8,
+    gradientClass: "from-violet-500/20 via-violet-500/5 to-transparent",
+    routeKey: "",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/e8b4e3c74d02.jpg",
+    hotels: [
+      { category: 'hotel', title: 'ION Adventure Hotel', subtitle: 'Northern Lights Panorama, 3 nights', price: 30000 },
+      { category: 'hotel', title: 'Hotel Rangá', subtitle: 'Stargazing Room, 2 nights', price: 22000 },
+      { category: 'hotel', title: 'Fosshotel Glacier Lagoon', subtitle: 'Lagoon View, 2 nights', price: 18000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Northern Lights Hunt', subtitle: 'Expert-guided night tour', price: 5500 },
+      { category: 'activity', title: 'Golden Circle Day Tour', subtitle: 'Geysir, Gullfoss, Thingvellir', price: 6200 },
+      { category: 'activity', title: 'Glacier Hiking & Ice Cave', subtitle: 'Vatnajökull glacier walk', price: 8500 }
+    ],
+    bestSeason: "Sep – Mar",
+    highlights: ["Aurora borealis", "Golden Circle", "Glacier hiking"]
+  },
+  {
+    id: "cappadocia-turkey",
+    number: "19",
+    category: "INTERNATIONAL",
+    region: "TURKEY",
+    title: "Cappadocia Dreams",
+    description: "Hot air balloons, fairy chimneys, cave hotels.",
+    price: 68000,
+    days: 6,
+    gradientClass: "from-orange-400/20 via-orange-400/5 to-transparent",
+    routeKey: "DEL-IST",
+    imgUrl: "https://sfile.chatglm.cn/images-ppt/00c20031aa99.jpg",
+    hotels: [
+      { category: 'hotel', title: 'Museum Hotel Cappadocia', subtitle: 'Cave Suite, 3 nights', price: 18000 },
+      { category: 'hotel', title: 'Sultan Cave Suites', subtitle: 'Terrace View Room, 2 nights', price: 10000 }
+    ],
+    activities: [
+      { category: 'activity', title: 'Sunrise Hot Air Balloon', subtitle: '1-hour flight over valleys', price: 8500 },
+      { category: 'activity', title: 'Underground City Tour', subtitle: 'Derinkuyu ancient caves', price: 2200 },
+      { category: 'activity', title: 'Horse Riding in Red Valley', subtitle: 'Guided 2-hour trail ride', price: 3500 }
+    ],
+    bestSeason: "Apr – Oct",
+    highlights: ["Balloon ride", "Cave hotel stay", "Underground cities"]
   }
 ];
 
