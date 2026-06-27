@@ -18,9 +18,10 @@ interface TripMapProps {
   trip: any; // MUST stay `any` — GeneratedTrip lacks id/stops + no index sig
 }
 
-// Free tile servers — no API key, no rate limits, work on Vercel
-const MAP_STYLE_DARK  = "https://tiles.openfreemap.org/styles/dark";
-const MAP_STYLE_LIGHT = "https://tiles.openfreemap.org/styles/liberty";
+// Stadia Maps — free tier, proper sprites + glyphs, no tile cancellations on Vercel
+const STADIA_KEY      = process.env.NEXT_PUBLIC_STADIA_KEY ?? "179f7f04-21e9-4724-9549-a8c717c42294";
+const MAP_STYLE_DARK  = `https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json?api_key=${STADIA_KEY}`;
+const MAP_STYLE_LIGHT = `https://tiles.stadiamaps.com/styles/alidade_smooth.json?api_key=${STADIA_KEY}`;
 
 const TYPE_COLORS: Record<string, string> = {
   attraction:  "#f59e0b",
