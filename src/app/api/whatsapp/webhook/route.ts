@@ -318,7 +318,7 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
       endDate,
       duration: days,
       travelers,
-      purpose: "CULTURAL",
+      purpose: "CULTURAL" as any,
       budget,
       currency,
     },
