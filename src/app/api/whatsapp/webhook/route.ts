@@ -358,7 +358,7 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
             description: (a.description as string) ?? "",
             location: (a.location as string) ?? "",
             cost: Number(a.cost) || 0,
-            type: mapActivityType(a.type),
+            type: mapActivityType(a.type) as any,
             duration: Number(a.duration) || 60,
           })),
         },
