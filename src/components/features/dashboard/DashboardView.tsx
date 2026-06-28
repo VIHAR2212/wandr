@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession } from 'next-auth/react';
 import {
@@ -240,8 +241,11 @@ interface DraggableTripCardProps {
 
 function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTripCardProps) {
   const [isDraggingThis, setIsDraggingThis] = useState(false);
+  const router = useRouter();
+  const didDragRef = useRef(false);
 
   const handleDragStart = (e: React.DragEvent) => {
+    didDragRef.current = true;
     e.dataTransfer.setData('tripId', trip.id);
     e.dataTransfer.effectAllowed = 'move';
     setIsDraggingThis(true);
@@ -251,6 +255,15 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
   const handleDragEnd = () => {
     setIsDraggingThis(false);
     onDragEnd();
+    // Reset after a tick so click handler sees correct value
+    setTimeout(() => { didDragRef.current = false; }, 50);
+  };
+
+  const handleClick = () => {
+    // Only navigate if we didn't just drag
+    if (!didDragRef.current) {
+      router.push(`/trip/${trip.id}`);
+    }
   };
 
   return (
@@ -258,61 +271,58 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: isDraggingThis ? 0.4 : 1, y: 0, scale: isDraggingThis ? 0.97 : 1 }}
       transition={{ duration: 0.35, delay: index * 0.06 }}
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onClick={handleClick}
+      className={cn(
+        'glass-card-hover block p-6 group rounded-3xl cursor-grab active:cursor-grabbing select-none',
+        isDraggingThis && 'opacity-40 scale-95'
+      )}
+      style={{ userSelect: 'none' }}
     >
-      <div
-        draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        className={cn(
-          'cursor-grab active:cursor-grabbing select-none',
-          isDraggingThis && 'pointer-events-none'
-        )}
-      >
-      <Link href={`/trip/${trip.id}`} className="glass-card-hover block p-6 group">
-        {/* Status + Purpose */}
-        <div className="flex items-center justify-between mb-4">
-          <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', STATUS_COLORS[trip.status] ?? STATUS_COLORS.PLANNING)}>
-            {trip.status}
-          </span>
-          <span className="text-xl">{PURPOSE_EMOJI[trip.purpose] ?? '✈️'}</span>
-        </div>
+      {/* Status + Purpose */}
+      <div className="flex items-center justify-between mb-4">
+        <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', STATUS_COLORS[trip.status] ?? STATUS_COLORS.PLANNING)}>
+          {trip.status}
+        </span>
+        <span className="text-xl">{PURPOSE_EMOJI[trip.purpose] ?? '✈️'}</span>
+      </div>
 
-        {/* Route */}
-        <h3 className="font-bold text-foreground text-lg mb-1 group-hover:text-primary transition-colors">
-          {trip.title || `${trip.origin} → ${trip.destination}`}
-        </h3>
-        <div className="flex items-center gap-1.5 text-sm text-muted-foreground mb-4">
-          <MapPin className="w-3.5 h-3.5" />
-          {trip.origin} → {trip.destination}
-        </div>
+      {/* Route */}
+      <h3 className="font-bold text-foreground text-lg mb-1 group-hover:text-primary transition-colors">
+        {trip.title || `${trip.origin} → ${trip.destination}`}
+      </h3>
+      <div className="flex items-center gap-1.5 text-sm text-muted-foreground mb-4">
+        <MapPin className="w-3.5 h-3.5" />
+        {trip.origin} → {trip.destination}
+      </div>
 
-        {/* Details */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div>
-            <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
-              <Calendar className="w-3 h-3" />Dates
-            </div>
-            <div className="text-xs font-medium text-foreground">{formatDate(trip.startDate)}</div>
+      {/* Details */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div>
+          <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
+            <Calendar className="w-3 h-3" />Dates
           </div>
-          <div>
-            <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
-              <Users className="w-3 h-3" />People
-            </div>
-            <div className="text-xs font-medium text-foreground">{trip.travelers}</div>
-          </div>
-          <div>
-            <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
-              <Wallet className="w-3 h-3" />Budget
-            </div>
-            <div className="text-xs font-medium text-foreground">{formatCurrency(trip.budget, trip.currency)}</div>
-          </div>
+          <div className="text-xs font-medium text-foreground">{formatDate(trip.startDate)}</div>
         </div>
+        <div>
+          <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
+            <Users className="w-3 h-3" />People
+          </div>
+          <div className="text-xs font-medium text-foreground">{trip.travelers}</div>
+        </div>
+        <div>
+          <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
+            <Wallet className="w-3 h-3" />Budget
+          </div>
+          <div className="text-xs font-medium text-foreground">{formatCurrency(trip.budget, trip.currency)}</div>
+        </div>
+      </div>
 
-        <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-3">
-          <span>Created {formatDate(trip.createdAt)}</span>
-          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-        </div>
-      </Link>
+      <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-3">
+        <span>Created {formatDate(trip.createdAt)}</span>
+        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
       </div>
     </motion.div>
   );
