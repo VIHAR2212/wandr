@@ -271,16 +271,18 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: isDraggingThis ? 0.4 : 1, y: 0, scale: isDraggingThis ? 0.97 : 1 }}
       transition={{ duration: 0.35, delay: index * 0.06 }}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onClick={handleClick}
-      className={cn(
-        'glass-card-hover block p-6 group rounded-3xl cursor-grab active:cursor-grabbing select-none',
-        isDraggingThis && 'opacity-40 scale-95'
-      )}
-      style={{ userSelect: 'none' }}
     >
+      <div
+        draggable
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onClick={handleClick}
+        className={cn(
+          'glass-card-hover block p-6 group rounded-3xl cursor-grab active:cursor-grabbing select-none',
+          isDraggingThis && 'opacity-40 scale-95'
+        )}
+        style={{ userSelect: 'none' }}
+      >
       {/* Status + Purpose */}
       <div className="flex items-center justify-between mb-4">
         <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', STATUS_COLORS[trip.status] ?? STATUS_COLORS.PLANNING)}>
@@ -323,6 +325,7 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
       <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-3">
         <span>Created {formatDate(trip.createdAt)}</span>
         <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+      </div>
       </div>
     </motion.div>
   );
