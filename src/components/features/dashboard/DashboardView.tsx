@@ -258,14 +258,16 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: isDraggingThis ? 0.4 : 1, y: 0, scale: isDraggingThis ? 0.97 : 1 }}
       transition={{ duration: 0.35, delay: index * 0.06 }}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      className={cn(
-        'cursor-grab active:cursor-grabbing select-none',
-        isDraggingThis && 'pointer-events-none'
-      )}
     >
+      <div
+        draggable
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        className={cn(
+          'cursor-grab active:cursor-grabbing select-none',
+          isDraggingThis && 'pointer-events-none'
+        )}
+      >
       <Link href={`/trip/${trip.id}`} className="glass-card-hover block p-6 group">
         {/* Status + Purpose */}
         <div className="flex items-center justify-between mb-4">
@@ -311,6 +313,7 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
           <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
         </div>
       </Link>
+      </div>
     </motion.div>
   );
 }
