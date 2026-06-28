@@ -283,6 +283,21 @@ async function handleSessionStep(
   }
 }
 
+// Mirrors the core of src/app/api/ai/generate-trip/route.ts, minus the
+// NextAuth session requirement (we already have userId from the phone
+// lookup) and minus the Nominatim geocoding step (skipped for WhatsApp —
+// it only affects the map tab, not the itinerary text).
+//
+// ⚠️ GUESSED FIELDS — not confirmed against schema.prisma, unlike Trip/
+// TripDay above which WERE confirmed via screenshot. If trip creation
+// throws a Prisma validation error, check these first:
+//   - TripPurpose enum: assumed "CULTURAL" is a valid value (it appeared
+//     in the VALID_PURPOSES array in generate-trip/route.ts, so this is
+//     fairly safe, but the *enum* in schema.prisma wasn't directly viewed).
+//   - Activity model fields below (time, title, description, location,
+//     cost, type, lat, lng) are guessed from how generate-trip/route.ts
+//     USES activities, not from Activity's actual model block in
+//     schema.prisma — field names or required/optional status may differ.
 async function createTripFromSession(
   userId: string,
   origin: string,
@@ -296,7 +311,7 @@ async function createTripFromSession(
   const systemPrompt =
     "Expert travel planner. Return ONLY valid JSON, no markdown. Costs in INR.";
   const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
-Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type":"sightseeing","duration":60}]}]}`;
+Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"duration":60,"type":"sightseeing"}]}]}`;
 
   const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
   const raw = result.data;
@@ -308,6 +323,9 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
   const startDate = new Date();
   const endDate = new Date(startDate.getTime() + days * 86400000);
 
+  // Create the Trip first, then its TripDay/Activity children — Trip.days
+  // is a relation (TripDay[]), not a writable Json field, so it can't be
+  // passed inline to trip.create().
   const newTrip = await prisma.trip.create({
     data: {
       userId,
@@ -318,6 +336,9 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
       endDate,
       duration: days,
       travelers,
+      // GUESSED: "CULTURAL" assumed valid per VALID_PURPOSES seen in
+      // generate-trip/route.ts. Confirm against the real TripPurpose enum
+      // if this throws.
       purpose: "CULTURAL",
       budget,
       currency,
@@ -342,7 +363,11 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
             description: (a.description as string) ?? "",
             location: (a.location as string) ?? "",
             cost: Number(a.cost) || 0,
-            type: ((a.type as string) ?? "sightseeing") as any,
+            type: (a.type as string) ?? "sightseeing",
+            // GUESSED: duration is required per build error, but its exact
+            // type (Int minutes? String like "2 hours"?) is unconfirmed.
+            // Trying Int minutes as the most common convention. If this
+            // throws a type error, check the real Activity model.
             duration: Number(a.duration) || 60,
           })),
         },
@@ -350,6 +375,7 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
     });
   }
 
+  // Re-fetch with relations populated for the WhatsApp summary message.
   const fullTrip = await prisma.trip.findUnique({
     where: { id: newTrip.id },
     include: {
@@ -363,4 +389,5 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
 
 export async function GET() {
   return new NextResponse("Wandr WhatsApp webhook is live.", { status: 200 });
-}
+  }
+        
