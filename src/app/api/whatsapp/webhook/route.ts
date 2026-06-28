@@ -4,6 +4,13 @@ import crypto from "crypto";
 import prisma from "@/lib/db";
 import { generateAIJson } from "@/lib/ai";
 
+// Twilio's webhook timeout is ~15s, and this route's AI call is the
+// long pole — keep maxDuration comfortably under that so a slow AI
+// response fails fast (and the user gets a clean retry message)
+// rather than Twilio timing out first with no reply at all.
+export const runtime = "nodejs";
+export const maxDuration = 14;
+
 // Re-implements Twilio's request validation using only Node's built-in
 // crypto module — no `twilio` npm package required.
 //
@@ -266,7 +273,6 @@ async function handleSessionStep(
           data: { step: "DONE", tripId: trip.id, updatedAt: new Date() },
         });
 
-        const summary = formatItinerarySummary(trip);
         return twiml(`✅ Your trip is ready!\n\n🧳 *${trip.title}*\n\nView & download your itinerary here:\nhttps://wandr-inky.vercel.app/trip/${trip.id}`);
       } catch (err) {
         console.error("WhatsApp trip generation error:", err);
@@ -317,29 +323,88 @@ async function createTripFromSession(
   const currency = "INR";
   const travelers = 1;
 
+  // Mirrors the website's /api/ai/generate-trip prompt so WhatsApp-created
+  // trips render identically on the trip page (map, budget, weather, safety,
+  // hotels/restaurants/hidden gems tabs). Kept as one prompt rather than two
+  // separate calls to stay inside Twilio's ~15s webhook window.
   const systemPrompt =
-  "Expert travel planner. Return ONLY valid JSON, no markdown, no preamble, no explanation. " +
-  "The JSON object MUST have a top-level key named exactly \"itinerary\" containing an array with one entry per day. " +
-  "Each day MUST have a non-empty \"activities\" array with at least 3 activities. Costs in INR.";
-const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
+    "Expert travel planner. Return ONLY valid JSON, no markdown, no preamble, no explanation. " +
+    "The JSON object MUST have a top-level key named exactly \"itinerary\" containing an array with one entry per day. " +
+    "Each day MUST have a non-empty \"activities\" array with at least 3 activities. Costs in INR.";
+
+  const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
+
 Return JSON in EXACTLY this shape (top-level key must be "itinerary"):
-{"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type":"sightseeing","duration":60}]}]}
-"type" must be one of: sightseeing, food, transport, accommodation, adventure, shopping, rest.`;
+{"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"Exact Place Name, ${destination}","cost":0,"type":"sightseeing","duration":60}]}],"hotels":[{"name":"Hotel Name","area":"Area","pricePerNight":2000,"rating":4,"amenities":["WiFi"]}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","when":"Early morning","cost":0}],"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
 
-const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
-const raw = result.data;
+RULES:
+1. Return ONLY valid JSON. No markdown fences, no comments, no trailing commas.
+2. "type" must be one of: sightseeing, food, transport, accommodation, adventure, shopping, rest.
+3. Include 3-5 activities per day with real places, real timings, real costs in INR.
+4. Budget breakdown must sum close to the total budget given.
+5. "location" must ALWAYS be a plain string like "Exact Place Name, ${destination}".`;
 
-if (!raw) throw new Error("AI returned empty response");
+  const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
+  const raw = result.data;
 
-const rawDays = (raw.itinerary ?? raw.days ?? raw.itineraryDays ?? []) as Array<Record<string, unknown>>;
-console.log("RAW DAYS:", JSON.stringify(rawDays));
+  if (!raw) throw new Error("AI returned empty response");
 
-if (rawDays.length === 0) {
-  console.error("[createTripFromSession] AI response had no itinerary days. Full raw response:", JSON.stringify(raw));
-  throw new Error("AI returned no itinerary days — see RAW DAYS / raw response log above.");
-}
+  // Some smaller/faster fallback models drift from the exact key name despite
+  // the system prompt — accept a couple of common variants defensively so a
+  // trip still gets full activities instead of silently writing zero days.
+  const rawDays = (raw.itinerary ?? raw.days ?? raw.itineraryDays ?? []) as Array<Record<string, unknown>>;
+  console.log("RAW DAYS:", JSON.stringify(rawDays));
+
+  if (rawDays.length === 0) {
+    console.error("[createTripFromSession] AI response had no itinerary days. Full raw response:", JSON.stringify(raw));
+    throw new Error("AI returned no itinerary days — see RAW DAYS / raw response log above.");
+  }
+
   const startDate = new Date();
   const endDate = new Date(startDate.getTime() + days * 86400000);
+
+  // ── Normalise days/activities the same way generate-trip/route.ts does ──
+  // No geocoding here (no lat/lng filled in) — kept out deliberately to stay
+  // inside Twilio's webhook timeout. Map pins for WhatsApp trips will show
+  // without exact coordinates until/unless geocoding is added to this path.
+  const normalisedDays = rawDays.map((d, i) => ({
+    dayNumber: (d.dayNumber as number) ?? (d.day as number) ?? i + 1,
+    date: (d.date as string) ?? "",
+    theme: (d.theme as string) ?? `Day ${i + 1}`,
+    summary: (d.summary as string) ?? "",
+    activities: ((d.activities as Array<Record<string, unknown>>) ?? []).map((a) => ({
+      ...a,
+      location: typeof a.location === "string" ? a.location : String(a.location ?? ""),
+    })),
+  }));
+
+  const rawBudget = (raw.budget ?? raw.budgetBreakdown ?? {}) as Record<string, unknown>;
+  const normalisedBudget = {
+    total: rawBudget.total ?? budget,
+    actualCost: rawBudget.actualCost ?? rawBudget.total ?? budget,
+    transport: rawBudget.transport ?? 0,
+    accommodation: rawBudget.accommodation ?? 0,
+    food: rawBudget.food ?? 0,
+    activities: rawBudget.activities ?? 0,
+    miscellaneous: rawBudget.misc ?? rawBudget.miscellaneous ?? 0,
+    emergencyFund: rawBudget.emergencyFund ?? 0,
+    perDay: rawBudget.perDay ?? Math.round(budget / days),
+    perPerson: rawBudget.perPerson ?? Math.round(budget / travelers),
+    breakdown: rawBudget.breakdown ?? [],
+  };
+
+  const itineraryPayload = {
+    title: raw.title ?? null,
+    summary: raw.summary ?? null,
+    days: normalisedDays,
+    hotels: raw.hotels ?? [],
+    restaurants: raw.restaurants ?? [],
+    hiddenGems: raw.hiddenGems ?? [],
+    transportGuide: raw.transportGuide ?? null,
+    seasonalTips: raw.seasonalTips ?? [],
+    localPhrases: raw.localPhrases ?? [],
+    crowdPrediction: raw.crowdPrediction ?? null,
+  };
 
   const newTrip = await prisma.trip.create({
     data: {
@@ -354,20 +419,27 @@ if (rawDays.length === 0) {
       purpose: "CULTURAL" as any,
       budget,
       currency,
+      itinerary: itineraryPayload,
+      budgetBreakdown: normalisedBudget,
+      packingList: raw.packingList ?? undefined,
+      weatherInfo: raw.weatherForecast ?? raw.weatherInfo ?? undefined,
+      safetyInfo: raw.safety ?? raw.safetyInfo ?? undefined,
     },
   });
 
-  for (let i = 0; i < rawDays.length; i++) {
-    const d = rawDays[i];
-    const activities = (d.activities ?? []) as Array<Record<string, unknown>>;
+  // Also write relational TripDay/Activity rows — "send itinerary" and
+  // formatItinerarySummary read from these, not from the itinerary JSON blob.
+  for (let i = 0; i < normalisedDays.length; i++) {
+    const d = normalisedDays[i];
+    const activities = d.activities as Array<Record<string, unknown>>;
 
     await prisma.tripDay.create({
       data: {
         tripId: newTrip.id,
-        dayNumber: (d.day as number) ?? i + 1,
+        dayNumber: d.dayNumber,
         date: new Date(startDate.getTime() + i * 86400000),
-        theme: (d.theme as string) ?? `Day ${i + 1}`,
-        summary: (d.summary as string) ?? "",
+        theme: d.theme,
+        summary: d.summary,
         activities: {
           create: activities.map((a) => ({
             time: (a.time as string) ?? "",
@@ -396,4 +468,4 @@ if (rawDays.length === 0) {
 
 export async function GET() {
   return new NextResponse("Wandr WhatsApp webhook is live.", { status: 200 });
-}
+            }
