@@ -328,7 +328,7 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
   if (!raw) throw new Error("AI returned empty response");
 
   const rawDays = (raw.itinerary ?? []) as Array<Record<string, unknown>>;
-
+  console.log("RAW DAYS:", JSON.stringify(rawDays));
   const startDate = new Date();
   const endDate = new Date(startDate.getTime() + days * 86400000);
 
