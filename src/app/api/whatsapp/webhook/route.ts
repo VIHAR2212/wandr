@@ -103,14 +103,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- Phase 4: check if there's an in-progress conversational session ---
-    const session = await prisma.whatsapp_sessions.findFirst({ where: { phone } });
-
-    if (session && session.step !== "DONE") {
-      return await handleSessionStep(session, body, user.id);
-    }
-
-    // --- Command: "send itinerary" ---
+// --- Command: "send itinerary" ---
     if (lowerBody.includes("send itinerary") || lowerBody.includes("my itinerary")) {
       const trip = await prisma.trip.findFirst({
         where: { userId: user.id },
@@ -125,6 +118,14 @@ export async function POST(req: NextRequest) {
       const summary = formatItinerarySummary(trip);
       return twiml(summary);
     }
+    
+    // --- Phase 4: check if there's an in-progress conversational session ---
+    const session = await prisma.whatsapp_sessions.findFirst({ where: { phone } });
+
+    if (session && session.step !== "DONE") {
+      return await handleSessionStep(session, body, user.id);
+    }
+
 
     // --- Command: "plan a trip to X" — starts a new Phase 4 session ---
     const planMatch = lowerBody.match(/plan a trip to (.+)/i);
@@ -174,13 +175,20 @@ function formatItinerarySummary(trip: {
 }) {
   let msg = `🧳 *${trip.title}* — ${trip.destination}\n\n`;
   for (const day of trip.days) {
-    msg += `*Day ${day.dayNumber}*${day.theme ? ` — ${day.theme}` : ""}\n`;
+    msg += `*Day ${day.dayNumber}*\n`;
     for (const act of day.activities) {
-      msg += `  ${act.time} — ${act.title}\n`;
+      msg += `• ${act.title}\n`;
     }
     msg += "\n";
   }
-  return msg.trim();
+  const MAX = 1500;
+if (msg.length <= MAX) return msg.trim();
+// Split at day boundaries
+return trip.days.map((day: any) => {
+  let d = `🧳 *${trip.title}*\n*Day ${day.dayNumber}*${day.theme ? ` — ${day.theme}` : ""}\n`;
+  for (const act of day.activities) d += `  ${act.time} — ${act.title}\n`;
+  return d.trim();
+}).join("\n\n");
 }
 
 // ---------------------------------------------------------------
