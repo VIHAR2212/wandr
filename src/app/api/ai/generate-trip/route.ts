@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 
 export const runtime    = 'nodejs';
-export const maxDuration = 10;
+export const maxDuration = 59;
 
 const VALID_PURPOSES = [
   'ADVENTURE', 'DEVOTIONAL', 'HIKING', 'HONEYMOON', 'FAMILY',
@@ -108,7 +108,7 @@ async function geocodeItinerary(
 
         if (!query.trim() || query.trim() === `, ${destination}`) continue;
 
-        if (reqCount > 0) await sleep(1100); // Nominatim 1 req/sec
+        if (reqCount > 0) await sleep(550); // Nominatim 1 req/sec
         reqCount++;
 
         const geo = await serverGeocode(query);
