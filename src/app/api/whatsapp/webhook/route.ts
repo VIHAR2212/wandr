@@ -267,7 +267,7 @@ async function handleSessionStep(
         });
 
         const summary = formatItinerarySummary(trip);
-        return twiml(`✅ Your trip is ready!\n\n${summary}`);
+        return twiml(`✅ Your trip is ready!\n\n🧳 *${tripTitle}*\n\nView & download your itinerary here:\nhttps://wandr-inky.vercel.app/trip/${newTrip.id}`);
       } catch (err) {
         console.error("WhatsApp trip generation error:", err);
         // Reset the session so the user can try again rather than getting stuck.
