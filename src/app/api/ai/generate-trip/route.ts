@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateAIJson } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
+import { checkRateLimit } from '@/lib/rateLimit';
 
 export const runtime    = 'nodejs';
 export const maxDuration = 59;
@@ -79,11 +80,6 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/**
- * Geocodes every activity/hotel/restaurant in the AI output that has
- * lat:0 or lng:0 (AI placeholder).
- * Mutates the days array in-place and returns it.
- */
 async function geocodeItinerary(
   days: any[],
   destination: string
@@ -98,9 +94,6 @@ async function geocodeItinerary(
         !isNaN(Number(act.lat)) && !isNaN(Number(act.lng));
 
       if (!hasCoords) {
-        // Build the best possible query:
-        // Use the location string (e.g. "Taj Mahal, Agra") if available,
-        // otherwise fall back to title + destination
         const locStr = typeof act.location === 'string' ? act.location : '';
         const query  = locStr
           ? `${locStr}, ${destination}`
@@ -108,14 +101,13 @@ async function geocodeItinerary(
 
         if (!query.trim() || query.trim() === `, ${destination}`) continue;
 
-        if (reqCount > 0) await sleep(550); // Nominatim 1 req/sec
+        if (reqCount > 0) await sleep(550);
         reqCount++;
 
         const geo = await serverGeocode(query);
         if (geo) {
           act.lat = geo.lat;
           act.lng = geo.lng;
-          // Also write to nested location object if present
           if (act.location && typeof act.location === 'object') {
             act.location.lat = geo.lat;
             act.location.lng = geo.lng;
@@ -140,6 +132,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'You must be signed in to generate a trip.' },
         { status: 401 }
+      );
+    }
+
+    // ── Rate limit: 5 per hour, 10 per day ──
+    const rl = checkRateLimit(session.user.id, "TRIP_GEN");
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          error: `Too many trip generations. You can try again in ${rl.retryAfter}s.`,
+          retryAfter: rl.retryAfter,
+          remaining: rl.remaining,
+        },
+        { status: 429 }
       );
     }
 
@@ -186,7 +191,6 @@ RULES:
 
     const rawDays = (trip.itinerary ?? trip.days ?? []) as Record<string, unknown>[];
 
-    // ── Normalise day/activity shapes ──
     let normalisedDays = rawDays.map((d, i) => ({
       dayNumber:  d.dayNumber ?? d.day ?? i + 1,
       date:       d.date ?? '',
@@ -203,11 +207,6 @@ RULES:
       })),
     }));
 
-    /* ── GEOCODE: fill in real lat/lng before saving ──
-       This runs server-side so Nominatim is never blocked.
-       For a 3-day / 12-stop trip, adds ~13s — acceptable at generation time.
-       The map will then render immediately from stored coords, no geocoding needed
-       on the client at all. */
     console.log('[generate-trip] Starting server-side geocoding...');
     normalisedDays = await geocodeItinerary(normalisedDays, destination);
     console.log('[generate-trip] Geocoding complete.');
@@ -238,7 +237,7 @@ RULES:
     const itineraryPayload = {
       title:         trip.title ?? null,
       summary:       trip.summary ?? null,
-      days:          normalisedDays,   // ← now includes real lat/lng
+      days:          normalisedDays,
       hotels:        trip.hotels ?? [],
       restaurants:   trip.restaurants ?? [],
       hiddenGems:    trip.hiddenGems ?? [],
