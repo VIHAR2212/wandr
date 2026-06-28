@@ -283,6 +283,22 @@ async function handleSessionStep(
   }
 }
 
+function mapActivityType(type: string): string {
+  const map: Record<string, string> = {
+    sightseeing: "SIGHTSEEING",
+    food: "RESTAURANT",
+    restaurant: "RESTAURANT",
+    transport: "TRANSPORT",
+    accommodation: "ACCOMMODATION",
+    adventure: "ADVENTURE",
+    shopping: "SHOPPING",
+    rest: "REST",
+    ceremony: "CEREMONY",
+    meeting: "MEETING",
+  };
+  return (map[type?.toLowerCase()] ?? "SIGHTSEEING") as any;
+}
+
 async function createTripFromSession(
   userId: string,
   origin: string,
@@ -296,7 +312,7 @@ async function createTripFromSession(
   const systemPrompt =
     "Expert travel planner. Return ONLY valid JSON, no markdown. Costs in INR.";
   const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
-Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type":"sightseeing","duration":60}]}]}`;
+Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type": one of: sightseeing, food, transport, accommodation, adventure, shopping, rest,"duration":60}]}]}`;
 
   const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
   const raw = result.data;
@@ -342,7 +358,7 @@ Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"
             description: (a.description as string) ?? "",
             location: (a.location as string) ?? "",
             cost: Number(a.cost) || 0,
-            type: ((a.type as string) ?? "sightseeing") as any,
+            type: mapActivityType(a.type),
             duration: Number(a.duration) || 60,
           })),
         },
