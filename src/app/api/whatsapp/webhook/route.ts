@@ -318,17 +318,26 @@ async function createTripFromSession(
   const travelers = 1;
 
   const systemPrompt =
-    "Expert travel planner. Return ONLY valid JSON, no markdown. Costs in INR.";
-  const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
-Return JSON: {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type": one of: sightseeing, food, transport, accommodation, adventure, shopping, rest,"duration":60}]}]}`;
+  "Expert travel planner. Return ONLY valid JSON, no markdown, no preamble, no explanation. " +
+  "The JSON object MUST have a top-level key named exactly \"itinerary\" containing an array with one entry per day. " +
+  "Each day MUST have a non-empty \"activities\" array with at least 3 activities. Costs in INR.";
+const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
+Return JSON in EXACTLY this shape (top-level key must be "itinerary"):
+{"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"","cost":0,"type":"sightseeing","duration":60}]}]}
+"type" must be one of: sightseeing, food, transport, accommodation, adventure, shopping, rest.`;
 
-  const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
-  const raw = result.data;
+const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
+const raw = result.data;
 
-  if (!raw) throw new Error("AI returned empty response");
+if (!raw) throw new Error("AI returned empty response");
 
-  const rawDays = (raw.itinerary ?? []) as Array<Record<string, unknown>>;
-  console.log("RAW DAYS:", JSON.stringify(rawDays));
+const rawDays = (raw.itinerary ?? raw.days ?? raw.itineraryDays ?? []) as Array<Record<string, unknown>>;
+console.log("RAW DAYS:", JSON.stringify(rawDays));
+
+if (rawDays.length === 0) {
+  console.error("[createTripFromSession] AI response had no itinerary days. Full raw response:", JSON.stringify(raw));
+  throw new Error("AI returned no itinerary days — see RAW DAYS / raw response log above.");
+}
   const startDate = new Date();
   const endDate = new Date(startDate.getTime() + days * 86400000);
 
