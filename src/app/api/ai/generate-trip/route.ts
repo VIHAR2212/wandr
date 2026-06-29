@@ -3,7 +3,7 @@ import { generateAIJson } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 import { findTrains, formatTrainsForPrompt } from '@/lib/trains/findTrains';
-
+// hiiii
 export const runtime    = 'nodejs';
 export const maxDuration = 10;
 
