@@ -186,17 +186,35 @@ const KNOWN: Record<string, [number, number]> = {
   "sri lanka": [80.7718, 7.8731], colombo: [79.8612, 6.9271],
 };
 
+// FIX 1: Word-boundary matching instead of substring
 function findKnownCoords(text: string): [number, number] | null {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().trim();
+  if (!lower) return null;
+
+  // Exact match first
   if (KNOWN[lower]) return KNOWN[lower];
+
+  // Word-boundary match: key must appear as a whole word
   for (const [key, coords] of Object.entries(KNOWN)) {
-    if (lower.includes(key)) return coords;
+    const regex = new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    if (regex.test(lower)) return coords;
   }
   return null;
 }
 
-// Minimal inline CSS — just enough for MapLibre to render correctly.
-// We inject this synchronously so it's ready before Map() constructor runs.
+// FIX 2: Haversine distance in km between two lat/lng points
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Minimal inline CSS
 const MAPLIBRE_CSS = `
 .maplibregl-map{overflow:hidden;position:relative;width:100%;height:100%}
 .maplibregl-canvas-container{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -241,7 +259,6 @@ export default function TripMap({ trip }: TripMapProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [stopsVersion, setStopsVersion] = useState(0);
 
-  // Inject CSS synchronously on first render — must be before Map() runs
   useEffect(() => {
     const id = "maplibre-css-wandr";
     if (document.getElementById(id)) return;
@@ -272,7 +289,13 @@ export default function TripMap({ trip }: TripMapProps) {
     const destCoords = findKnownCoords(destination) || [78.9629, 20.5937];
 
     if (needsGeo.length === 0) {
-      stopsRef.current = withCoords.map((r) => ({
+      // FIX 3: Validate coordinates before displaying
+      const valid = withCoords.filter((r) => {
+        if (r.lat === null || r.lng === null) return false;
+        const dist = haversineKm(r.lat, r.lng, destCoords[1], destCoords[0]);
+        return dist < 500; // Drop points more than 500km from destination
+      });
+      stopsRef.current = valid.map((r) => ({
         name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
         day: r.day ?? undefined, description: r.description,
         time: r.time, duration: r.duration,
@@ -290,8 +313,14 @@ export default function TripMap({ trip }: TripMapProps) {
         const query = item.locationHint || item.name;
         const known = findKnownCoords(query) || findKnownCoords(destination);
         if (known) {
-          item.lat = known[1] + i * 0.005;
-          item.lng = known[0] + i * 0.005;
+          // FIX 2: Use the exact known coords, NOT offset by index
+          // Only apply known coords if the query actually matches (not a vague substring)
+          const queryKnown = findKnownCoords(query);
+          if (queryKnown) {
+            item.lat = queryKnown[1];
+            item.lng = queryKnown[0];
+          }
+          // If only destination matched, don't fake coords — skip it
         }
       }
       const stillMissing = needsGeo.filter((r) => r.lat === null || r.lng === null);
@@ -318,13 +347,22 @@ export default function TripMap({ trip }: TripMapProps) {
       }
       if (cancelled) return;
       setGeoStatus(null);
-      const all = [...withCoords, ...needsGeo].map((r, idx) => ({
-        name: r.name,
-        lat: r.lat ?? (destCoords[1] + idx * 0.01),
-        lng: r.lng ?? (destCoords[0] + idx * 0.01),
-        type: r.type, day: r.day ?? undefined,
-        description: r.description, time: r.time, duration: r.duration,
-      }));
+
+      // FIX 3: Combine and validate — drop invalid/outlier coords, skip unknowns
+      const all = [...withCoords, ...needsGeo]
+        .filter((r) => r.lat !== null && r.lng !== null)
+        .filter((r) => {
+          const dist = haversineKm(r.lat!, r.lng!, destCoords[1], destCoords[0]);
+          return dist < 500; // Drop points >500km from destination
+        })
+        .map((r) => ({
+          name: r.name,
+          lat: r.lat!,
+          lng: r.lng!,
+          type: r.type, day: r.day ?? undefined,
+          description: r.description, time: r.time, duration: r.duration,
+        }));
+
       stopsRef.current = all;
       setStopsVersion((v) => v + 1);
       setLoading(false);
@@ -401,13 +439,11 @@ export default function TripMap({ trip }: TripMapProps) {
     }
   }, [activeDay, activeTypes]);
 
-  // ── EFFECT C: re-apply stops when data or filters change ──
   useEffect(() => {
     if (!mounted || !mapLoadedRef.current) return;
     applyStops();
   }, [stopsVersion, mounted, applyStops]);
 
-  // ── EFFECT B: init map ONCE ──
   useEffect(() => {
     if (!mounted || !containerRef.current) return;
     let destroyed = false;
@@ -422,7 +458,6 @@ export default function TripMap({ trip }: TripMapProps) {
       }
     };
 
-    // Safety timeout
     loadTimeout = setTimeout(() => {
       if (!destroyed) finishLoading("Map took too long to load. Refresh the page.");
     }, 20000);
@@ -431,7 +466,6 @@ export default function TripMap({ trip }: TripMapProps) {
       const ml = mlRef.current;
       if (!ml || destroyed || !containerRef.current) return;
 
-      // Remove previous map instance if retrying with fallback
       if (mapRef.current) {
         try { mapRef.current.remove(); } catch (_) {}
         mapRef.current = null;
@@ -452,14 +486,10 @@ export default function TripMap({ trip }: TripMapProps) {
 
       mapRef.current = map;
 
-      // KEY FIX: listen on "styledata" not "load"
-      // "load" waits for ALL tiles — can stall forever if tiles error.
-      // "styledata" fires as soon as the style JSON is parsed, before tiles fetch.
       map.once("styledata", () => {
         if (destroyed) return;
         mapLoadedRef.current = true;
 
-        // Apply dark filter on canvas for OSM fallback (Stadia is already dark)
         if (isFallback) {
           const canvas = map.getCanvas();
           if (canvas) {
@@ -467,7 +497,6 @@ export default function TripMap({ trip }: TripMapProps) {
           }
         }
 
-        // Force correct canvas size
         map.resize();
         finishLoading();
 
@@ -518,7 +547,6 @@ export default function TripMap({ trip }: TripMapProps) {
         const msg: string = e?.error?.message || e?.message || "";
         console.warn("[TripMap] map error:", msg);
 
-        // If Stadia tiles fail and we haven't fallen back yet, retry with OSM
         if (!isFallback && !usedFallback && (msg.includes("tile") || msg.includes("fetch") || msg.includes("network") || msg.includes("403") || msg.includes("401"))) {
           usedFallback = true;
           console.warn("[TripMap] Stadia tiles failed, falling back to OSM");
@@ -612,10 +640,8 @@ export default function TripMap({ trip }: TripMapProps) {
 
   return (
     <div className={`relative w-full ${fullscreen ? "fixed inset-0 z-50" : "h-[560px]"} rounded-2xl overflow-hidden bg-gray-900`}>
-      {/* MapLibre canvas — sits behind everything at z-0 */}
       <div ref={containerRef} className="absolute inset-0" style={{ zIndex: 0 }} />
 
-      {/* Geocoding status */}
       {geoStatus && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/85 z-10">
           <div className="w-10 h-10 border-[3px] border-white/20 border-t-orange-500 rounded-full animate-spin" />
@@ -623,7 +649,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* Loading spinner — only shown while map is initializing */}
       {loading && !geoStatus && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 z-10">
           <div className="w-10 h-10 border-[3px] border-white/20 border-t-orange-500 rounded-full animate-spin" />
@@ -631,7 +656,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* Error state */}
       {error && !loading && !geoStatus && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90 z-10 px-6">
           <div className="text-red-400 text-lg font-semibold mb-2">Map Error</div>
@@ -651,7 +675,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* Day filter pills */}
       {days.length > 1 && !loading && !geoStatus && !error && (
         <div className="absolute top-3 left-3 z-20 flex flex-wrap gap-1.5">
           <button
@@ -672,7 +695,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* Type legend */}
       {allTypes.length > 1 && !loading && !geoStatus && !error && (
         <div className="absolute bottom-3 left-3 z-20 flex flex-wrap gap-1.5 backdrop-blur-md bg-black/30 rounded-xl p-2 border border-white/10">
           {allTypes.map((t) => (
@@ -688,7 +710,6 @@ export default function TripMap({ trip }: TripMapProps) {
         </div>
       )}
 
-      {/* Toolbar */}
       {!loading && !geoStatus && !error && (
         <div className="absolute top-3 right-3 z-20 flex flex-col gap-1.5">
           {([
