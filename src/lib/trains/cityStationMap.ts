@@ -84,4 +84,3 @@ export function getStationCodesForCity(city: string): string[] {
 
   return [];
 }
-

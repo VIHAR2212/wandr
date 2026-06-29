@@ -1,4 +1,4 @@
-// src/app/api/whatsapp/webhook/route.ts nice file 
+// src/app/api/whatsapp/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/db";
@@ -478,4 +478,4 @@ RULES:
 
 export async function GET() {
   return new NextResponse("Wandr WhatsApp webhook is live.", { status: 200 });
-  }
+}

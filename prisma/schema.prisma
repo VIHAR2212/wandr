@@ -404,3 +404,47 @@ enum SubscriptionStatus {
   CANCELLED
   PAST_DUE
 }
+
+// ── Indian Railways static route data ──
+// Seeded once from datameet/railways (CC0 license). Not live/real-time —
+// gives real train numbers, names, classes, and timings for grounding the
+// AI's transport suggestions instead of letting it invent train numbers.
+model TrainStation {
+  id    String  @id @default(cuid())
+  code  String  @unique // e.g. "NDLS"
+  name  String // e.g. "NEW DELHI"
+  state String?
+  zone  String?
+  lat   Float?
+  lng   Float?
+
+  fromTrains Train[] @relation("FromStation")
+  toTrains   Train[] @relation("ToStation")
+
+  @@index([name])
+  @@map("train_stations")
+}
+
+model Train {
+  id              String  @id @default(cuid())
+  number          String  @unique // e.g. "12951"
+  name            String // e.g. "Mumbai Rajdhani"
+  fromStationId   String
+  toStationId     String
+  departure       String // "16:55:00"
+  arrival         String
+  durationMinutes Int
+  distanceKm      Int?
+  type            String? // "Rajdhani", "Exp", "SF", etc.
+  hasSleeper      Boolean @default(false)
+  hasThirdAc      Boolean @default(false)
+  hasSecondAc     Boolean @default(false)
+  hasFirstAc      Boolean @default(false)
+  hasChairCar     Boolean @default(false)
+
+  fromStation TrainStation @relation("FromStation", fields: [fromStationId], references: [id])
+  toStation   TrainStation @relation("ToStation", fields: [toStationId], references: [id])
+
+  @@index([fromStationId, toStationId])
+  @@map("trains")
+}

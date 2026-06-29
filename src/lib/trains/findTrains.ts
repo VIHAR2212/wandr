@@ -98,4 +98,3 @@ export function formatTrainsForPrompt(trains: TrainOption[]): string {
 
   return `Real available trains (use one of these EXACTLY as given, do not invent a different train number/name/timing):\n${lines.join("\n")}`;
 }
-
