@@ -98,32 +98,13 @@ interface RawItem {
 function extractRawItems(trip: any): RawItem[] {
   if (!trip) return [];
 
-  function resolveCoords(s: any): [number | null, number | null] {
-    const nested =
-      (s?.location && typeof s.location === "object" ? s.location : null) ||
-      s?.geo || s?.position || s?.coords || null;
-    if (nested) {
-      const la = Number(nested.lat ?? nested.latitude ?? NaN);
-      const lo = Number(nested.lng ?? nested.lon ?? nested.long ?? nested.longitude ?? NaN);
-      if (!isNaN(la) && !isNaN(lo) && (la !== 0 || lo !== 0)) return [la, lo];
-    }
-    const la = Number(s?.lat ?? s?.latitude ?? NaN);
-    const lo = Number(s?.lng ?? s?.lon ?? s?.long ?? s?.longitude ?? NaN);
-    if (!isNaN(la) && !isNaN(lo) && (la !== 0 || lo !== 0)) return [la, lo];
-    if (Array.isArray(s?.coordinates) && s.coordinates.length >= 2) {
-      const glo = Number(s.coordinates[0]);
-      const gla = Number(s.coordinates[1]);
-      if (!isNaN(gla) && !isNaN(glo) && (gla !== 0 || glo !== 0)) return [gla, glo];
-    }
-    return [null, null];
-  }
-
   function mapItem(s: any, i: number, dayNum: number | null): RawItem {
-    const [lat, lng] = resolveCoords(s);
+    // IMPORTANT: Do NOT extract AI coords — set lat/lng to null always
+    // so every item goes through geocoding
     const locStr = typeof s?.location === "string" ? s.location : "";
     const name = s?.name || s?.title || s?.place || s?.placeName || s?.attraction || `Stop ${i + 1}`;
     return {
-      name, lat, lng,
+      name, lat: null, lng: null, // Force null — never trust AI coords
       type: s?.type || s?.category || s?.placeType || "sightseeing",
       day: dayNum,
       description: s?.description || s?.details || "",
@@ -186,15 +167,11 @@ const KNOWN: Record<string, [number, number]> = {
   "sri lanka": [80.7718, 7.8731], colombo: [79.8612, 6.9271],
 };
 
-// FIX 1: Word-boundary matching instead of substring
+// Word-boundary matching instead of substring
 function findKnownCoords(text: string): [number, number] | null {
   const lower = text.toLowerCase().trim();
   if (!lower) return null;
-
-  // Exact match first
   if (KNOWN[lower]) return KNOWN[lower];
-
-  // Word-boundary match: key must appear as a whole word
   for (const [key, coords] of Object.entries(KNOWN)) {
     const regex = new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
     if (regex.test(lower)) return coords;
@@ -202,7 +179,7 @@ function findKnownCoords(text: string): [number, number] | null {
   return null;
 }
 
-// FIX 2: Haversine distance in km between two lat/lng points
+// Haversine distance in km
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -212,6 +189,32 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
     Math.sin(dLng / 2) * Math.sin(dLng / 2);
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Deduplicate stops that are within 500m of each other (same place, different names/coords)
+function deduplicateStops(stops: Stop[]): Stop[] {
+  const result: Stop[] = [];
+  for (const stop of stops) {
+    const isDup = result.some((existing) =>
+      haversineKm(stop.lat!, stop.lng!, existing.lat!, existing.lng!) < 0.5
+    );
+    if (!isDup) result.push(stop);
+  }
+  return result;
+}
+
+// Compute a tight radius based on actual point spread
+function computeRadiusKm(stops: Stop[], destCoords: [number, number]): number {
+  if (stops.length === 0) return 100;
+  const destLat = destCoords[1]; // KNOWN stores [lng, lat]
+  const destLng = destCoords[0];
+  const distances = stops
+    .filter((s) => s.lat != null && s.lng != null)
+    .map((s) => haversineKm(s.lat!, s.lng!, destLat, destLng));
+  if (distances.length === 0) return 100;
+  const maxDist = Math.max(...distances);
+  // Radius = max distance from destination + 50km buffer, minimum 50km
+  return Math.max(50, maxDist + 50);
 }
 
 // Minimal inline CSS
@@ -270,7 +273,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
   useEffect(() => { setMounted(true); }, []);
 
-  // ── EFFECT A: extract stops + geocode ──
+  // ── EFFECT A: extract stops + geocode ALL (never trust AI coords) ──
   useEffect(() => {
     if (!mounted) return;
     const rawItems = extractRawItems(trip);
@@ -280,50 +283,29 @@ export default function TripMap({ trip }: TripMapProps) {
       return;
     }
 
-    const withCoords = rawItems.filter((r) => r.lat !== null && r.lng !== null);
-    const needsGeo = rawItems.filter((r) => r.lat === null || r.lng === null);
+    // All items have lat:null, lng:null now (extractRawItems forces null)
 
     const destination =
       typeof trip?.destination === "string" ? trip.destination :
       typeof trip?.title === "string" ? trip.title : "";
     const destCoords = findKnownCoords(destination) || [78.9629, 20.5937];
 
-    if (needsGeo.length === 0) {
-      // FIX 3: Validate coordinates before displaying
-      const valid = withCoords.filter((r) => {
-        if (r.lat === null || r.lng === null) return false;
-        const dist = haversineKm(r.lat, r.lng, destCoords[1], destCoords[0]);
-        return dist < 500; // Drop points more than 500km from destination
-      });
-      stopsRef.current = valid.map((r) => ({
-        name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
-        day: r.day ?? undefined, description: r.description,
-        time: r.time, duration: r.duration,
-      }));
-      setStopsVersion((v) => v + 1);
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
     (async () => {
-      for (let i = 0; i < needsGeo.length; i++) {
+      // Step 1: Try KNOWN table for each item
+      for (let i = 0; i < rawItems.length; i++) {
         if (cancelled) return;
-        const item = needsGeo[i];
+        const item = rawItems[i];
         const query = item.locationHint || item.name;
-        const known = findKnownCoords(query) || findKnownCoords(destination);
+        const known = findKnownCoords(query);
         if (known) {
-          // FIX 2: Use the exact known coords, NOT offset by index
-          // Only apply known coords if the query actually matches (not a vague substring)
-          const queryKnown = findKnownCoords(query);
-          if (queryKnown) {
-            item.lat = queryKnown[1];
-            item.lng = queryKnown[0];
-          }
-          // If only destination matched, don't fake coords — skip it
+          item.lat = known[1]; // KNOWN stores [lng, lat]
+          item.lng = known[0];
         }
       }
-      const stillMissing = needsGeo.filter((r) => r.lat === null || r.lng === null);
+
+      // Step 2: Geocode remaining items via API
+      const stillMissing = rawItems.filter((r) => r.lat === null || r.lng === null);
       if (stillMissing.length > 0 && !cancelled) {
         try {
           setGeoStatus(`Finding ${stillMissing.length} location${stillMissing.length > 1 ? "s" : ""}...`);
@@ -348,22 +330,27 @@ export default function TripMap({ trip }: TripMapProps) {
       if (cancelled) return;
       setGeoStatus(null);
 
-      // FIX 3: Combine and validate — drop invalid/outlier coords, skip unknowns
-      const all = [...withCoords, ...needsGeo]
-        .filter((r) => r.lat !== null && r.lng !== null)
-        .filter((r) => {
-          const dist = haversineKm(r.lat!, r.lng!, destCoords[1], destCoords[0]);
-          return dist < 500; // Drop points >500km from destination
-        })
-        .map((r) => ({
-          name: r.name,
-          lat: r.lat!,
-          lng: r.lng!,
-          type: r.type, day: r.day ?? undefined,
-          description: r.description, time: r.time, duration: r.duration,
-        }));
+      // Step 3: Keep only items that got valid coords
+      const withCoords = rawItems.filter((r) => r.lat !== null && r.lng !== null);
 
-      stopsRef.current = all;
+      // Step 4: Compute tight radius and filter outliers
+      const radius = computeRadiusKm(
+        withCoords.map((r) => ({ name: r.name, lat: r.lat!, lng: r.lng!, type: r.type, day: r.day, description: r.description, time: r.time, duration: r.duration })),
+        destCoords
+      );
+      const withinRadius = withCoords.filter((r) => {
+        const dist = haversineKm(r.lat!, r.lng!, destCoords[1], destCoords[0]);
+        return dist <= radius;
+      });
+
+      // Step 5: Deduplicate (merge stops <500m apart)
+      const stops: Stop[] = deduplicateStops(withinRadius.map((r) => ({
+        name: r.name, lat: r.lat!, lng: r.lng!, type: r.type,
+        day: r.day ?? undefined, description: r.description,
+        time: r.time, duration: r.duration,
+      })));
+
+      stopsRef.current = stops;
       setStopsVersion((v) => v + 1);
       setLoading(false);
     })();
