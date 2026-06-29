@@ -335,7 +335,7 @@ export default function TripMap({ trip }: TripMapProps) {
 
       // Step 4: Compute tight radius and filter outliers
       const radius = computeRadiusKm(
-        withCoords.map((r) => ({ name: r.name, lat: r.lat!, lng: r.lng!, type: r.type, day: r.day, description: r.description, time: r.time, duration: r.duration })),
+        withCoords.map((r) => ({ name: r.name, lat: r.lat!, lng: r.lng!, type: r.type, day: r.day ?? undefined, description: r.description, time: r.time, duration: r.duration })),
         destCoords
       );
       const withinRadius = withCoords.filter((r) => {
