@@ -1,12 +1,26 @@
+// src/app/api/whatsapp/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/db";
 import { generateAIJson } from "@/lib/ai";
-import { checkRateLimit } from "@/lib/rateLimit";
+import { findTrains, formatTrainsForPrompt } from "@/lib/trains/findTrains";
 
+// Twilio's webhook timeout is ~15s, and this route's AI call is the
+// long pole — keep maxDuration comfortably under that so a slow AI
+// response fails fast (and the user gets a clean retry message)
+// rather than Twilio timing out first with no reply at all.
 export const runtime = "nodejs";
 export const maxDuration = 14;
 
+// Re-implements Twilio's request validation using only Node's built-in
+// crypto module — no `twilio` npm package required.
+//
+// How Twilio's signature works:
+// 1. Take the full webhook URL.
+// 2. Sort the POST params alphabetically by key, and append each
+//    key+value directly (no separators) to the URL string.
+// 3. Compute HMAC-SHA1 of that string using your Auth Token as the key.
+// 4. Base64-encode the result. This must match the X-Twilio-Signature header.
 function validateTwilioSignature(
   authToken: string,
   signature: string,
@@ -24,11 +38,16 @@ function validateTwilioSignature(
     .update(Buffer.from(data, "utf-8"))
     .digest("base64");
 
+  // Timing-safe comparison
   const a = Buffer.from(expected);
   const b = Buffer.from(signature);
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
 }
+
+// Twilio sends application/x-www-form-urlencoded, not JSON.
+// We need the RAW body string for signature validation, so we
+// read it once with req.text() and parse it ourselves.
 
 function twiml(message: string) {
   const xml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(
@@ -47,15 +66,16 @@ function escapeXml(str: string) {
     .replace(/>/g, "&gt;");
 }
 
-function sanitizeInput(str: string, maxLen: number = 50): string {
-  return str.slice(0, maxLen).replace(/[^a-zA-Z\s,.\-]/g, '').replace(/\s+/g, ' ').trim();
-}
-
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const params = Object.fromEntries(new URLSearchParams(rawBody));
 
+  // --- 1. Verify the request actually came from Twilio ---
   const twilioSignature = req.headers.get("x-twilio-signature") ?? "";
+
+  // Must exactly match the URL Twilio is configured to POST to,
+  // including https:// and the full path. Set TWILIO_WEBHOOK_BASE_URL
+  // in .env.local once you know your real domain (or ngrok URL while testing).
   const webhookUrl = `${process.env.TWILIO_WEBHOOK_BASE_URL}/api/whatsapp/webhook`;
 
   const isValid = validateTwilioSignature(
@@ -70,7 +90,8 @@ export async function POST(req: NextRequest) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
-  const from = params.From ?? "";
+  // --- 2. Extract the inbound message ---
+  const from = params.From ?? ""; // e.g. "whatsapp:+919876543210"
   const body = (params.Body ?? "").trim();
   const phone = from.replace("whatsapp:", "");
 
@@ -78,14 +99,10 @@ export async function POST(req: NextRequest) {
     return twiml("Sorry, I didn't receive a valid message.");
   }
 
-  // Input length check
-  if (body.length > 500) {
-    return twiml("Message too long. Keep it under 500 characters.");
-  }
-
   const lowerBody = body.toLowerCase();
 
   try {
+    // --- 3. Find the user by phone number ---
     const user = await prisma.user.findFirst({ where: { phone } });
 
     if (!user) {
@@ -94,13 +111,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Rate limit per phone
-    const rl = checkRateLimit(user.id, "CHAT");
-    if (!rl.allowed) {
-      return twiml("Slow down! You're sending messages too fast. Try again in a minute.");
-    }
-
-    // --- Command: "send itinerary" ---
+// --- Command: "send itinerary" ---
     if (lowerBody.includes("send itinerary") || lowerBody.includes("my itinerary")) {
       const trip = await prisma.trip.findFirst({
         where: { userId: user.id },
@@ -123,10 +134,11 @@ export async function POST(req: NextRequest) {
       return await handleSessionStep(session, body, user.id);
     }
 
+
     // --- Command: "plan a trip to X" — starts a new Phase 4 session ---
     const planMatch = lowerBody.match(/plan a trip to (.+)/i);
     if (planMatch) {
-      const destination = capitalize(sanitizeInput(planMatch[1].trim()));
+      const destination = capitalize(planMatch[1].trim());
 
       await prisma.whatsapp_sessions.upsert({
         where: { phone },
@@ -178,12 +190,13 @@ function formatItinerarySummary(trip: {
     msg += "\n";
   }
   const MAX = 1500;
-  if (msg.length <= MAX) return msg.trim();
-  return trip.days.map((day: any) => {
-    let d = `🧳 *${trip.title}*\n*Day ${day.dayNumber}*${day.theme ? ` — ${day.theme}` : ""}\n`;
-    for (const act of day.activities) d += `  ${act.time} — ${act.title}\n`;
-    return d.trim();
-  }).join("\n\n");
+if (msg.length <= MAX) return msg.trim();
+// Split at day boundaries
+return trip.days.map((day: any) => {
+  let d = `🧳 *${trip.title}*\n*Day ${day.dayNumber}*${day.theme ? ` — ${day.theme}` : ""}\n`;
+  for (const act of day.activities) d += `  ${act.time} — ${act.title}\n`;
+  return d.trim();
+}).join("\n\n");
 }
 
 // ---------------------------------------------------------------
@@ -210,7 +223,7 @@ async function handleSessionStep(
 
   switch (session.step) {
     case "AWAITING_ORIGIN": {
-      const origin = capitalize(sanitizeInput(trimmed));
+      const origin = capitalize(trimmed);
       if (!origin) {
         return twiml("Please tell me which city you're traveling from.");
       }
@@ -234,28 +247,20 @@ async function handleSessionStep(
     }
 
     case "AWAITING_BUDGET": {
+      // Strip common currency symbols/commas so "₹15,000" or "15000" both work
       const cleaned = trimmed.replace(/[^0-9.]/g, "");
       const budget = parseFloat(cleaned);
       if (isNaN(budget) || budget <= 0) {
         return twiml("Please reply with just the budget number (e.g. \"15000\").");
       }
 
+      // We have everything we need — build the trip now.
       await prisma.whatsapp_sessions.update({
         where: { phone: session.phone },
         data: { step: "GENERATING", budget, updatedAt: new Date() },
       });
 
       try {
-        // Rate limit trip generation
-        const rl = checkRateLimit(userId, "TRIP_GEN");
-        if (!rl.allowed) {
-          await prisma.whatsapp_sessions.update({
-            where: { phone: session.phone },
-            data: { step: "DONE", updatedAt: new Date() },
-          });
-          return twiml("You've generated too many trips recently. Wait a bit before trying again.");
-        }
-
         const trip = await createTripFromSession(
           userId,
           session.origin as string,
@@ -272,6 +277,7 @@ async function handleSessionStep(
         return twiml(`✅ Your trip is ready!\n\n🧳 *${trip.title}*\n\nView & download your itinerary here:\nhttps://wandr-inky.vercel.app/trip/${trip.id}`);
       } catch (err) {
         console.error("WhatsApp trip generation error:", err);
+        // Reset the session so the user can try again rather than getting stuck.
         await prisma.whatsapp_sessions.update({
           where: { phone: session.phone },
           data: { step: "DONE", updatedAt: new Date() },
@@ -283,6 +289,7 @@ async function handleSessionStep(
     }
 
     default:
+      // Unknown/stale step — clear it so the user isn't stuck in limbo.
       await prisma.whatsapp_sessions.update({
         where: { phone: session.phone },
         data: { step: "DONE", updatedAt: new Date() },
@@ -317,28 +324,44 @@ async function createTripFromSession(
   const currency = "INR";
   const travelers = 1;
 
+  // Look up real Indian Railways trains for this route (major cities only —
+  // see src/lib/trains/cityStationMap.ts). When available, these are
+  // injected as ground truth so the AI picks a REAL train instead of
+  // inventing one. Kept as a single fast DB lookup (no geocoding) to stay
+  // well inside Twilio's ~15s webhook window.
+  const realTrains = await findTrains(origin, destination);
+  const trainPromptBlock = formatTrainsForPrompt(realTrains);
+
+  // Mirrors the website's /api/ai/generate-trip prompt so WhatsApp-created
+  // trips render identically on the trip page (map, budget, weather, safety,
+  // hotels/restaurants/hidden gems tabs). Kept as one prompt rather than two
+  // separate calls to stay inside Twilio's ~15s webhook window.
   const systemPrompt =
     "Expert travel planner. Return ONLY valid JSON, no markdown, no preamble, no explanation. " +
     "The JSON object MUST have a top-level key named exactly \"itinerary\" containing an array with one entry per day. " +
     "Each day MUST have a non-empty \"activities\" array with at least 3 activities. Costs in INR.";
 
   const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
-
+${trainPromptBlock ? `\n${trainPromptBlock}\n` : ''}
 Return JSON in EXACTLY this shape (top-level key must be "itinerary"):
 {"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"Exact Place Name, ${destination}","cost":0,"type":"sightseeing","duration":60}]}],"hotels":[{"name":"Hotel Name","area":"Area","pricePerNight":2000,"rating":4,"amenities":["WiFi"]}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","when":"Early morning","cost":0}],"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
 
 RULES:
 1. Return ONLY valid JSON. No markdown fences, no comments, no trailing commas.
 2. "type" must be one of: sightseeing, food, transport, accommodation, adventure, shopping, rest.
-3. Include 3-5 activities per day with real places, real timings, real costs in INR.
-4. Budget breakdown must sum close to the total budget given.
-5. "location" must ALWAYS be a plain string like "Exact Place Name, ${destination}".`;
+3. If a day's first activity involves travel between ${origin} and ${destination}, and real trains were given above, use one of THOSE EXACTLY (train number, name, departure/arrival) — do not invent a different one. If none were given, you may suggest a plausible flight or train.
+4. Include 3-5 activities per day with real places, real timings, real costs in INR.
+5. Budget breakdown must sum close to the total budget given.
+6. "location" must ALWAYS be a plain string like "Exact Place Name, ${destination}".`;
 
   const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
   const raw = result.data;
 
   if (!raw) throw new Error("AI returned empty response");
 
+  // Some smaller/faster fallback models drift from the exact key name despite
+  // the system prompt — accept a couple of common variants defensively so a
+  // trip still gets full activities instead of silently writing zero days.
   const rawDays = (raw.itinerary ?? raw.days ?? raw.itineraryDays ?? []) as Array<Record<string, unknown>>;
   console.log("RAW DAYS:", JSON.stringify(rawDays));
 
@@ -350,6 +373,10 @@ RULES:
   const startDate = new Date();
   const endDate = new Date(startDate.getTime() + days * 86400000);
 
+  // ── Normalise days/activities the same way generate-trip/route.ts does ──
+  // No geocoding here (no lat/lng filled in) — kept out deliberately to stay
+  // inside Twilio's webhook timeout. Map pins for WhatsApp trips will show
+  // without exact coordinates until/unless geocoding is added to this path.
   const normalisedDays = rawDays.map((d, i) => ({
     dayNumber: (d.dayNumber as number) ?? (d.day as number) ?? i + 1,
     date: (d.date as string) ?? "",
@@ -410,6 +437,8 @@ RULES:
     },
   });
 
+  // Also write relational TripDay/Activity rows — "send itinerary" and
+  // formatItinerarySummary read from these, not from the itinerary JSON blob.
   for (let i = 0; i < normalisedDays.length; i++) {
     const d = normalisedDays[i];
     const activities = d.activities as Array<Record<string, unknown>>;
@@ -446,6 +475,7 @@ RULES:
   return fullTrip as NonNullable<typeof fullTrip>;
 }
 
+
 export async function GET() {
   return new NextResponse("Wandr WhatsApp webhook is live.", { status: 200 });
-}
+  }
