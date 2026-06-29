@@ -14,9 +14,8 @@ export interface TrainOption {
   classes: string[];
 }
 
-/* ── In-memory cache ─────────────────────────────────────────────────── */
 const trainCache = new Map<string, { trains: TrainOption[]; ts: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function getCached(origin: string, dest: string): TrainOption[] | null {
   const key = `${origin}|${dest}`;
@@ -33,7 +32,6 @@ function setCache(origin: string, dest: string, trains: TrainOption[]) {
   trainCache.set(`${origin}|${dest}`, { trains, ts: Date.now() });
 }
 
-// Auto-cleanup cache every 10 minutes (same pattern as rateLimit)
 if (typeof globalThis !== "undefined") {
   setInterval(() => {
     const now = Date.now();
@@ -43,28 +41,16 @@ if (typeof globalThis !== "undefined") {
   }, 10 * 60 * 1000);
 }
 
-/* ────────────────────────────────────────────────────────────────────── */
-
-/**
- * Look up real direct trains between two cities.
- * Returns empty array if either city isn't in the map, or no direct trains
- * exist — callers should treat this as "no real train data" and let AI
- * fall back to a generic suggestion.
- *
- * Wrapped in try/catch so a DB error NEVER crashes trip generation.
- */
 export async function findTrains(
   originCity: string,
   destinationCity: string,
   limit: number = 5
 ): Promise<TrainOption[]> {
-  // Sanitize inputs
   const origin = (originCity ?? "").trim().slice(0, 100);
   const dest = (destinationCity ?? "").trim().slice(0, 100);
 
   if (!origin || !dest) return [];
 
-  // Check cache first
   const cached = getCached(origin, dest);
   if (cached) return cached;
 
@@ -72,9 +58,7 @@ export async function findTrains(
     const fromCodes = getStationCodesForCity(origin);
     const toCodes = getStationCodesForCity(dest);
 
-    if (fromCodes.length === 0 || toCodes.length === 0) {
-      return [];
-    }
+    if (fromCodes.length === 0 || toCodes.length === 0) return [];
 
     const stations = await prisma.trainStation.findMany({
       where: { code: { in: [...fromCodes, ...toCodes] } },
@@ -130,10 +114,6 @@ export async function findTrains(
   }
 }
 
-/**
- * Formats train options into a plain-text block to inject into the AI
- * prompt, so the model picks a real train instead of inventing one.
- */
 export function formatTrainsForPrompt(trains: TrainOption[]): string {
   if (trains.length === 0) return "";
 
