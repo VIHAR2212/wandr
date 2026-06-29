@@ -33,7 +33,7 @@ interface ItineraryStop {
   time: string;
   description: string;
   isHomeStop?: boolean;
-  isOriginStop?: boolean; // FIX (Feature): marks the injected origin→dest transit stop
+  isOriginStop?: boolean;
 }
 
 /* ─── Haversine distance (km) ───────────────────────────── */
@@ -49,11 +49,7 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
   return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-/* ─── FIX Bug 3: Geocode via server proxy (not Nominatim directly) ── */
-// The client-side Nominatim call was returning wrong cities for generic names
-// (e.g. "Akshardham Temple" → Delhi instead of Gujarat) because no destination
-// context was appended. The server proxy at /api/geocode already handles this
-// with a fallback retry that appends destination. Route all geocoding through it.
+/* ─── Geocode via server proxy ────────────────────────── */
 const geoCache = new Map<string, { lat: number; lng: number }>();
 
 async function geocodeBatch(
@@ -69,7 +65,6 @@ async function geocodeBatch(
     });
     if (!res.ok) return queries.map(() => null);
     const data = await res.json();
-    // data.results is [number, number] | null  →  convert to {lat,lng}
     return (data.results as ([number, number] | null)[]).map((r) =>
       r ? { lat: r[1], lng: r[0] } : null
     );
@@ -94,17 +89,11 @@ const INTER_CITY_KM = 50;
 const REMINDER_INTERVAL = 15000;
 const MAX_REMINDERS = 5;
 const PAN_THROTTLE = 400;
-
-// FIX Bug 2: slow animation — 3000ms total per segment = 75ms per step at 40 steps
 const STEPS_PER_SEG = 40;
-const MS_PER_STEP = 75; // 40 × 75ms = 3000ms per segment (~3s)
+const MS_PER_STEP = 75;
 
-/* ─── FIX Bug 4: Detect transport mode — prefer formData first ──── */
-// Previously only read from act.title, causing "Flight" to appear even when
-// user selected Train. Now formData.transportPreferences[0] takes priority
-// for any inter-city leg.
+/* ─── Detect transport mode ───────────────────────────── */
 function resolveTransportMode(actTitle: string, formData: any): string {
-  // User's explicit primary transport preference wins for inter-city legs
   const prefs: string[] = formData?.transportPreferences ?? [];
   if (prefs.length > 0) {
     const primary = prefs[0].toUpperCase();
@@ -117,7 +106,6 @@ function resolveTransportMode(actTitle: string, formData: any): string {
     if (primary === 'FERRY') return 'Ferry';
     if (primary === 'BICYCLE') return 'Walking';
   }
-  // Fallback: read from activity title (original logic)
   return detectTransportModeFromTitle(actTitle);
 }
 
@@ -131,10 +119,14 @@ function detectTransportModeFromTitle(title: string): string {
   return 'Car';
 }
 
-/* ─── Build raw stops ──────────────────────────────────────
-   FIX (Feature): prepend an origin→destination transit stop so the demo
-   shows the inter-city journey FIRST before exploring local stops.
-─────────────────────────────────────────────────────────── */
+/* ─── Is this a transport-only activity? ──────────────── */
+function isTransportOnly(type: string, name: string): boolean {
+  if (type === 'transport' || type === 'TRANSPORT') return true;
+  const n = (name || '').toLowerCase();
+  return n.includes('flight to') || n.includes('train to') || n.includes('bus to') || n.includes('drive to');
+}
+
+/* ─── Build raw stops ──────────────────────────────────── */
 function buildRawStops(
   trip: any,
   formData: any,
@@ -144,8 +136,7 @@ function buildRawStops(
   const days = trip?.days || [];
   const destination = trip?.destination || formData?.destination || '';
 
-  // ── Inject origin→destination transit stop at position 0 ──
-  // This makes the demo animate the travel arc first, then explore locally.
+  // Inject origin stop
   const primaryMode = resolveTransportMode('', formData);
   stops.push({
     name: originName || formData?.origin || 'Home',
@@ -158,19 +149,17 @@ function buildRawStops(
     isOriginStop: true,
   });
 
-  // ── Then add actual itinerary stops ──
+  // Add actual itinerary stops — SKIP transport-only activities
   days.forEach((day: any, dayIdx: number) => {
     const dayNum = day.day || dayIdx + 1;
     (day.activities || []).forEach((act: any) => {
+      // Skip transport activities — they're not real map stops
+      if (isTransportOnly(act.type || '', act.title || '')) return;
       stops.push({
         name: act.title || 'Unnamed Stop',
         location: act.location || act.title || '',
         type: act.type || 'sightseeing',
-        // FIX Bug 4: use formData transport for inter-city legs
-        transportTo:
-          act.type === 'transport'
-            ? resolveTransportMode(act.title, formData)
-            : '',
+        transportTo: '',
         dayNumber: dayNum,
         time: act.time || '',
         description: act.description || '',
@@ -248,12 +237,11 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
   const panTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopsRef = useRef<ItineraryStop[]>([]);
-  // FIX Bug 2: track whether beginDemo has been called to avoid double-start
   const demoStartedRef = useRef(false);
 
   useEffect(() => { stopsRef.current = stops; }, [stops]);
 
-  /* ─── FIX Bug 3: Geocode all stops via server proxy ─── */
+  /* ─── Geocode all stops via server proxy ─── */
   useEffect(() => {
     let cancelled = false;
     const originName = formData?.origin || '';
@@ -262,11 +250,9 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
     (async () => {
       setGeoProgress({ done: 0, total: raw.length });
-
-      // ── Handle origin stop (index 0) using provided coords or geocoding ──
       const geocoded: ItineraryStop[] = [];
 
-      // Try to use pre-resolved originLat/Lng first for the origin stop
+      // Handle origin stop
       let originCoord: { lat: number; lng: number } | null = null;
       if (originLat && originLng) {
         originCoord = { lat: originLat, lng: originLng };
@@ -281,13 +267,9 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       });
       setGeoProgress({ done: 1, total: raw.length });
 
-      // ── Geocode remaining stops in a single batch via server proxy ──
-      // This fixes Bug 3: server proxy appends destination as context,
-      // so "Akshardham Temple" resolves to Gujarat, not Delhi.
+      // Geocode remaining stops in batch
       const remainingRaw = raw.slice(1);
       const queries = remainingRaw.map((s) => s.location || s.name || '');
-
-      // Batch geocode (server handles 1-req/sec throttle)
       const batchResults = await geocodeBatch(queries, destination);
 
       for (let i = 0; i < remainingRaw.length; i++) {
@@ -295,12 +277,11 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         const s = remainingRaw[i];
         let coord = batchResults[i] ?? null;
 
-        // Fallback 1: check if act already has lat/lng from AI generation
+        // Fallback: AI coords
         if (!coord) {
           let actIdx = 0;
           for (const day of trip?.days || []) {
             for (const act of day.activities || []) {
-              // +1 offset because raw[0] is the injected origin stop
               if (actIdx + 1 === i + 1 && act.lat && act.lng) {
                 coord = { lat: act.lat, lng: act.lng };
                 break;
@@ -311,7 +292,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           }
         }
 
-        // Fallback 2: home stop → use originLat/Lng
+        // Fallback: home stop → origin coords
         if (!coord && s.isHomeStop) {
           if (originLat && originLng) coord = { lat: originLat, lng: originLng };
           else if (geocoded.length > 0) coord = { lat: geocoded[0].lat, lng: geocoded[0].lng };
@@ -323,7 +304,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
       if (cancelled) return;
 
-      // ── Mark inter-city legs ──
+      // Mark inter-city legs (first leg always inter-city due to origin)
       for (let i = 1; i < geocoded.length; i++) {
         const dist = haversineKm(
           { lat: geocoded[i - 1].lat, lng: geocoded[i - 1].lng },
@@ -331,8 +312,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         );
         geocoded[i].isInterCity =
           dist >= INTER_CITY_KM ||
-          geocoded[i].type === 'transport' ||
-          geocoded[i - 1].isOriginStop === true; // always mark first leg as inter-city
+          geocoded[i - 1].isOriginStop === true;
       }
       if (geocoded.length > 0) geocoded[0].isInterCity = false;
 
@@ -343,14 +323,10 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trip, originLat, originLng]);
 
-  /* ─── FIX Bug 2: Init Map — use map.once('load') reliably ─────── */
-  // Previously `beginDemo(0)` was called inside the load handler but
-  // `stopsRef.current` was not yet populated if `setStops` hadn't flushed.
-  // Fix: separate concerns — map init here, demo start in a separate effect
-  // that watches for both `stops` being populated AND `phase === 'geocoding'`.
+  /* ─── Init Map ───────────────────────────────────────── */
   useEffect(() => {
     if (stops.length === 0 || phase !== 'geocoding') return;
-    if (mapRef.current) return; // already initialised
+    if (mapRef.current) return;
 
     const timer = setTimeout(() => {
       if (!mapContainerRef.current || mapRef.current) return;
@@ -358,7 +334,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
       const isDark = document.documentElement.classList.contains('dark');
       const styleUrl = isDark
         ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
-        : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+        : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
@@ -375,11 +351,9 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
       map.once('load', () => {
         const allCoords: [number, number][] = [];
-        const validStops = stops.filter(s => !(s.lat === 0 && s.lng === 0));
+        // Only use stops with valid coords (not 0,0)
+        const validStops = stops.filter(s => s.lat !== 0 && s.lng !== 0);
 
-        // ── FIX Bug 1: Add stop label layer so place names are visible ──
-        // The original code only added dot markers without any text/symbol layer.
-        // We now add a GeoJSON source + symbol layer for labels.
         const labelFeatures: any[] = [];
 
         validStops.forEach((stop) => {
@@ -407,52 +381,43 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
           stopMarkersRef.current.push(marker);
 
-          // Collect for label layer
           labelFeatures.push({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: coord },
-            properties: {
-              label: stop.name,
-              // offset so label doesn't overlap the dot
-              textOffset: stop.isHomeStop || stop.isOriginStop ? [0, -1.5] : [0, 1.5],
-            },
+            properties: { label: stop.name },
           });
         });
 
-        // ── Add label GeoJSON source ──
-        map.addSource('stop-labels', {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: labelFeatures,
-          },
-        });
+        // Label layer — dark text with white halo for visibility on any map style
+        if (labelFeatures.length > 0) {
+          map.addSource('stop-labels', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: labelFeatures },
+          });
+          map.addLayer({
+            id: 'stop-labels-layer',
+            type: 'symbol',
+            source: 'stop-labels',
+            layout: {
+              'text-field': ['get', 'label'],
+              'text-size': 12,
+              'text-font': ['Open Sans Bold', 'Arial Bold', 'sans-serif'],
+              'text-anchor': 'top',
+              'text-offset': [0, 1.2],
+              'text-max-width': 8,
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
+            },
+            paint: {
+              'text-color': '#1a1a2e',
+              'text-halo-color': '#ffffff',
+              'text-halo-width': 2.5,
+              'text-opacity': 1,
+            },
+          });
+        }
 
-        // ── Add symbol layer for place name labels ──
-        // This was the missing piece causing Bug 1.
-        map.addLayer({
-          id: 'stop-labels-layer',
-          type: 'symbol',
-          source: 'stop-labels',
-          layout: {
-            'text-field': ['get', 'label'],
-            'text-size': 11,
-            'text-font': ['Noto Sans Regular', 'Open Sans Regular', 'Arial Unicode MS Regular'],
-            'text-anchor': 'top',
-            'text-offset': [0, 1.0],
-            'text-max-width': 10,
-            'text-allow-overlap': false,
-            'text-ignore-placement': false,
-          },
-          paint: {
-            'text-color': '#ffffff',
-            'text-halo-color': '#000000',
-            'text-halo-width': 1.5,
-            'text-opacity': 0.9,
-          },
-        });
-
-        // ── Route lines ──
+        // Route lines
         if (allCoords.length > 1) {
           const routeGeo: any = {
             type: 'Feature',
@@ -499,8 +464,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
           layout: { 'line-cap': 'round', 'line-join': 'round' },
         });
 
-        // FIX Bug 2: transition phase AFTER map is fully ready, then
-        // a separate effect will call beginDemo(0)
         setPhase('transit');
       });
 
@@ -511,29 +474,19 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stops]);
 
-  /* ─── FIX Bug 2: Start demo once map+stops are both ready ──────── */
-  // The original code called beginDemo(0) inside the load handler, but
-  // stopsRef.current might not be up to date yet. By watching phase change
-  // to 'transit' AND stopsRef being populated, we guarantee the animation
-  // starts with correct data.
+  /* ─── Start demo once map + stops are both ready ──────── */
   useEffect(() => {
     if (phase !== 'transit') return;
     if (stopsRef.current.length === 0) return;
     if (demoStartedRef.current) return;
     if (!mapRef.current) return;
     demoStartedRef.current = true;
-    // Small delay to ensure map tiles are rendered before panning
     const t = setTimeout(() => beginDemo(0), 600);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, stops]);
 
-  /* ─── Demo engine ───────────────────────────────────────
-     FIX Bug 2: was using setInterval at 300ms for 40 steps = 12s but
-     the interval was being cleared/reset incorrectly causing 0% stuck.
-     Now uses MS_PER_STEP=75ms × 40 steps = 3s per segment, and properly
-     guards against stale closure over stopsRef.
-  ─────────────────────────────────────────────────────── */
+  /* ─── Demo engine ─────────────────────────────────────── */
   const beginDemo = useCallback((fromIdx: number) => {
     if (demoIntervalRef.current) {
       clearInterval(demoIntervalRef.current);
@@ -548,27 +501,32 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
     const from = allStops[fromIdx];
     const to = allStops[fromIdx + 1];
+
+    // Skip if current stop has no valid coords
     if (!from || (from.lat === 0 && from.lng === 0)) {
-      // Skip this stop if no coords
       setCurrentIdx(fromIdx + 1);
       setTimeout(() => beginDemo(fromIdx + 1), 200);
       return;
     }
 
-    // FIX Bug 4: transport mode already resolved in buildRawStops via
-    // resolveTransportMode, so to.transportTo is already correct here
-    if (to.isInterCity && to.transportTo) {
-      setCurrentTransportMode(to.transportTo);
+    // Skip if next stop has no valid coords — jump to next valid
+    if (!to || (to.lat === 0 && to.lng === 0)) {
+      setCurrentIdx(fromIdx + 1);
+      setTimeout(() => beginDemo(fromIdx + 1), 200);
+      return;
+    }
+
+    // Set transport mode for inter-city legs
+    if (to.isInterCity) {
+      setCurrentTransportMode(from.isOriginStop ? (allStops[0]?.transportTo || '') : '');
     } else {
       setCurrentTransportMode('');
     }
 
     const map = mapRef.current;
     if (map && userMarkerRef.current) {
-      const newEl =
-        to.isInterCity && to.transportTo
-          ? makeTransportEl(to.transportTo)
-          : makeUserEl();
+      const useTransport = to.isInterCity && to.transportTo;
+      const newEl = useTransport ? makeTransportEl(to.transportTo) : makeUserEl();
       userMarkerRef.current.remove();
       userMarkerRef.current = new maplibregl.Marker({ element: newEl })
         .setLngLat([from.lng, from.lat])
@@ -578,7 +536,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     let step = 0;
 
     demoIntervalRef.current = setInterval(() => {
-      // Always read from ref, not closure, to avoid stale data
       const s = stopsRef.current;
       if (!s || fromIdx >= s.length - 1) {
         if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
@@ -617,7 +574,6 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
         if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
         demoIntervalRef.current = null;
 
-        // Snap marker exactly to destination
         if (mapRef.current && userMarkerRef.current) {
           userMarkerRef.current.setLngLat([to.lng, to.lat]);
         }
@@ -640,20 +596,28 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ─── Handle "Reached" ──────────────────────────────── */
+  /* ─── Handle "Reached" — skip invalid stops ──────────── */
   const handleReached = useCallback(() => {
     if (reminderRef.current) clearInterval(reminderRef.current);
     setReminderCount(0);
     setShowHelpline(false);
-    const nextIdx = currentIdx + 1;
+
+    // Find next valid stop (skip 0,0 coords)
+    let nextIdx = currentIdx + 1;
+    while (nextIdx < stops.length) {
+      const s = stops[nextIdx];
+      if (s && s.lat !== 0 && s.lng !== 0) break;
+      nextIdx++;
+    }
+
     if (nextIdx >= stops.length) {
       setPhase('completed');
       if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
       return;
     }
+
     setCurrentIdx(nextIdx);
     setPhase('transit');
-    // FIX Bug 2: reset demoStarted guard so the transit effect re-fires
     demoStartedRef.current = false;
     setTimeout(() => {
       demoStartedRef.current = true;
@@ -699,9 +663,7 @@ export function TrackingOverlay({ tripData, onClose }: { tripData: TrackingTripD
 
   const currentStop = stops[currentIdx] || null;
   const nextStop = stops[currentIdx + 1] || null;
-  // Subtract 1 from progress because index 0 is the injected origin stop (not a "real" destination stop)
   const realStopCount = Math.max(1, stops.length - 1);
-  const displayIdx = Math.max(0, currentIdx - 1); // shown index excludes origin
   const progressPct = stops.length > 1 ? Math.round((currentIdx / (stops.length - 1)) * 100) : 0;
 
   /* ─── Render ────────────────────────────────────────── */
