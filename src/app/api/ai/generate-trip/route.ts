@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateAIJson } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
-import { findTrains, formatTrainsForPrompt } from '@/lib/trains/findTrains'; 
+import { findTrains, formatTrainsForPrompt } from '@/lib/trains/findTrains';
 import { checkRateLimit } from '@/lib/rateLimit';
 
 export const runtime    = 'nodejs';
@@ -100,9 +100,6 @@ async function geocodeItinerary(
         !isNaN(Number(act.lat)) && !isNaN(Number(act.lng));
 
       if (!hasCoords) {
-        // Build the best possible query:
-        // Use the location string (e.g. "Taj Mahal, Agra") if available,
-        // otherwise fall back to title + destination
         const locStr = typeof act.location === 'string' ? act.location : '';
         const query  = locStr
           ? `${locStr}, ${destination}`
@@ -117,7 +114,6 @@ async function geocodeItinerary(
         if (geo) {
           act.lat = geo.lat;
           act.lng = geo.lng;
-          // Also write to nested location object if present
           if (act.location && typeof act.location === 'object') {
             act.location.lat = geo.lat;
             act.location.lng = geo.lng;
@@ -160,17 +156,28 @@ export async function POST(req: NextRequest) {
     const endD     = new Date(endDate);
     const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
-    // Look up real Indian Railways trains for this route (major cities only —
-    // see src/lib/trains/cityStationMap.ts). When available, these are
-    // injected into the prompt so the AI picks a REAL train number/name/timing
-    // instead of inventing one, the same way it currently invents flight numbers.
-    const realTrains = await findTrains(origin, destination);
+    // ── Rate limit check ──
+    const rl = checkRateLimit(session.user.id, "TRIP_GEN");
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many trip generations. Try again later.", retryAfter: rl.retryAfter, remaining: rl.remaining },
+        { status: 429 }
+      );
+    }
+
+    // ── Train lookup (graceful degrade — never crashes trip gen) ──
+    let realTrains: Awaited<ReturnType<typeof findTrains>> = [];
+    try {
+      realTrains = await findTrains(origin, destination);
+    } catch (err) {
+      console.warn('[generate-trip] findTrains failed, using AI-only transport:', err);
+    }
     const trainPromptBlock = formatTrainsForPrompt(realTrains);
 
     const systemPrompt = `Expert travel planner. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose ?? 'general travel'}. Hotel: ${hotelPreference}.`;
 
     const userPrompt = `${duration}-day ${destination} trip. Budget: ${budget} ${currency ?? 'INR'}, ${travelers ?? 1} traveler(s), ${startDate} to ${endDate}. Transport pref: ${(transportPreferences ?? []).join('/') || 'any'}.${specialRequests ? ` Notes: ${specialRequests}.` : ''}
-${trainPromptBlock ? `\n${trainPromptBlock}\n` : ''}
+ ${trainPromptBlock ? `\n${trainPromptBlock}\n` : ''}
 STRICT JSON (no markdown, no text):
 {"destination":"${destination}","title":"...","summary":"2-3 lines","totalDays":${duration},"itinerary":[{"day":1,"date":"${startDate}","theme":"Theme","activities":[{"time":"06:00-08:15","type":"TRANSPORT","title":"Flight: ${origin} to ${destination}","description":"IndiGo 6E-204 · T2 Departure · Arrives T1","location":"${origin} Airport","lat":28.5562,"lng":77.1000,"cost":0,"duration":135,"notes":"Reach airport 2hrs early"},{"time":"09:00","type":"SIGHTSEEING","title":"Visit Place","description":"Details","location":"Exact Place Name, ${destination}","lat":11.6234,"lng":92.7265,"cost":0,"duration":90,"notes":"tip"}]}],"hotels":[{"name":"Hotel Name","area":"Area","lat":11.6234,"lng":92.7265,"pricePerNight":2000,"rating":4,"amenities":["WiFi"],"diet":"${foodPreference || 'all'}"}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","diet":"${foodPreference || 'all'}","lat":11.6234,"lng":92.7265,"pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","lat":11.6234,"lng":92.7265,"when":"Early morning","cost":0}],"transportGuide":{"overview":"Brief transport overview","legs":[{"from":"${origin}","to":"${destination}","mode":"${(transportPreferences ?? ['FLIGHT'])[0]}","duration":"2h","cost":0,"operator":"Airline/Railway","vehicleNo":"6E-204","vehicle":"A320neo"}]},"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"],"forecast":[{"date":"${startDate}","condition":"Sunny","high":32,"low":22}]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
 
@@ -212,11 +219,7 @@ RULES:
       })),
     }));
 
-    /* ── GEOCODE: fill in real lat/lng before saving ──
-       This runs server-side so Nominatim is never blocked.
-       For a 3-day / 12-stop trip, adds ~13s — acceptable at generation time.
-       The map will then render immediately from stored coords, no geocoding needed
-       on the client at all. */
+    /* ── GEOCODE: fill in real lat/lng before saving ── */
     console.log('[generate-trip] Starting server-side geocoding...');
     normalisedDays = await geocodeItinerary(normalisedDays, destination);
     console.log('[generate-trip] Geocoding complete.');
@@ -247,7 +250,7 @@ RULES:
     const itineraryPayload = {
       title:         trip.title ?? null,
       summary:       trip.summary ?? null,
-      days:          normalisedDays,   // ← now includes real lat/lng
+      days:          normalisedDays,
       hotels:        trip.hotels ?? [],
       restaurants:   trip.restaurants ?? [],
       hiddenGems:    trip.hiddenGems ?? [],
