@@ -43,12 +43,6 @@ function safePurpose(value: unknown) {
     : 'CULTURAL';
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   SERVER-SIDE GEOCODING
-   Runs after AI generation, before Prisma save.
-   Nominatim is called from the Node.js server — never blocked by Vercel Edge.
-   Fills in lat/lng on every activity that has lat:0 or lng:0.
-───────────────────────────────────────────────────────────────────────── */
 const geoCache = new Map<string, { lat: number; lng: number } | null>();
 
 async function serverGeocode(
@@ -81,11 +75,6 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/**
- * Geocodes every activity/hotel/restaurant in the AI output that has
- * lat:0 or lng:0 (AI placeholder).
- * Mutates the days array in-place and returns it.
- */
 async function geocodeItinerary(
   days: any[],
   destination: string
@@ -107,7 +96,7 @@ async function geocodeItinerary(
 
         if (!query.trim() || query.trim() === `, ${destination}`) continue;
 
-        if (reqCount > 0) await sleep(1100); // Nominatim 1 req/sec
+        if (reqCount > 0) await sleep(1100);
         reqCount++;
 
         const geo = await serverGeocode(query);
@@ -128,8 +117,6 @@ async function geocodeItinerary(
 
   return days;
 }
-
-/* ─────────────────────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest) {
   try {
@@ -156,7 +143,6 @@ export async function POST(req: NextRequest) {
     const endD     = new Date(endDate);
     const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
-    // ── Rate limit check ──
     const rl = checkRateLimit(session.user.id, "TRIP_GEN");
     if (!rl.allowed) {
       return NextResponse.json(
@@ -165,7 +151,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Train lookup (graceful degrade — never crashes trip gen) ──
     let realTrains: Awaited<ReturnType<typeof findTrains>> = [];
     try {
       realTrains = await findTrains(origin, destination);
@@ -202,7 +187,6 @@ RULES:
 
     const rawDays = (trip.itinerary ?? trip.days ?? []) as Record<string, unknown>[];
 
-    // ── Normalise day/activity shapes ──
     let normalisedDays = rawDays.map((d, i) => ({
       dayNumber:  d.dayNumber ?? d.day ?? i + 1,
       date:       d.date ?? '',
@@ -219,7 +203,6 @@ RULES:
       })),
     }));
 
-    /* ── GEOCODE: fill in real lat/lng before saving ── */
     console.log('[generate-trip] Starting server-side geocoding...');
     normalisedDays = await geocodeItinerary(normalisedDays, destination);
     console.log('[generate-trip] Geocoding complete.');
