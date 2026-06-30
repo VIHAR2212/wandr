@@ -16,51 +16,97 @@ interface GeoContext {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Destination scenery image (Wikimedia Commons, CORS-friendly)      */
+/*  Destination scenery image — Wikipedia + Wikimedia Commons           */
 /* ------------------------------------------------------------------ */
+
+/** Load a remote image via <img> + canvas → JPEG data-URL (browser only). */
+function imageToBase64(url: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const maxW = 900;
+        const scale = Math.min(1, maxW / (img.naturalWidth || 1));
+        canvas.width = Math.round(img.naturalWidth * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(null); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
 
 async function fetchDestinationImage(destination: string): Promise<string | null> {
   try {
-    const query = encodeURIComponent(`${destination} landscape scenery travel tourist`);
-    const searchUrl =
-      `https://commons.wikimedia.org/w/api.php` +
-      `?action=query&generator=search&gsrnamespace=6` +
-      `&gsrsearch=${query}&gsrlimit=8` +
-      `&prop=imageinfo&iiprop=url|size&iiurlwidth=900` +
-      `&format=json&origin=*`;
+    // e.g. "Rajasthan, India" → "Rajasthan"
+    const destName = destination.split(',')[0].trim();
+    if (!destName) return null;
 
-    const resp = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) });
-    const data = await resp.json();
+    // --- Method 1: Wikipedia pageimages API (most reliable) ---
+    try {
+      const wikiApi =
+        `https://en.wikipedia.org/w/api.php` +
+        `?action=query&titles=${encodeURIComponent(destName)}` +
+        `&prop=pageimages&format=json&pithumbsize=900&origin=*`;
+      const wikiResp = await fetch(wikiApi, { signal: AbortSignal.timeout(6000) });
+      if (wikiResp.ok) {
+        const wikiData = await wikiResp.json();
+        const pages = wikiData?.query?.pages;
+        if (pages) {
+          const pageId = Object.keys(pages)[0];
+          const thumbUrl = pages[pageId]?.thumbnail?.source;
+          if (thumbUrl) {
+            const b64 = await imageToBase64(thumbUrl);
+            if (b64) return b64;
+          }
+        }
+      }
+    } catch {
+      // Fall through to Method 2
+    }
 
-    const pages = data?.query?.pages;
-    if (!pages) return null;
+    // --- Method 2: Wikimedia Commons search as fallback ---
+    try {
+      const query = encodeURIComponent(`${destName} landscape scenery travel tourist`);
+      const searchUrl =
+        `https://commons.wikimedia.org/w/api.php` +
+        `?action=query&generator=search&gsrnamespace=6` +
+        `&gsrsearch=${query}&gsrlimit=8` +
+        `&prop=imageinfo&iiprop=url|size&iiurlwidth=900` +
+        `&format=json&origin=*`;
 
-    const images = Object.values(pages) as any[];
+      const resp = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) });
+      const data = await resp.json();
+      const cmPages = data?.query?.pages;
+      if (cmPages) {
+        const images = Object.values(cmPages) as any[];
+        const pick =
+          images.find((img: any) => {
+            const w = img.imageinfo?.[0]?.width || 0;
+            const h = img.imageinfo?.[0]?.height || 0;
+            return w >= 600 && w > h * 0.9;
+          }) ||
+          images.find((img: any) => (img.imageinfo?.[0]?.width || 0) >= 500) ||
+          images[0];
+        const thumbUrl = pick?.imageinfo?.[0]?.thumburl;
+        if (thumbUrl) {
+          const b64 = await imageToBase64(thumbUrl);
+          if (b64) return b64;
+        }
+      }
+    } catch {
+      // Give up silently
+    }
 
-    // Prefer landscape-oriented images >= 600 px wide
-    const pick =
-      images.find((img: any) => {
-        const w = img.imageinfo?.[0]?.width || 0;
-        const h = img.imageinfo?.[0]?.height || 0;
-        return w >= 600 && w > h * 0.9; // landscape-ish
-      }) ||
-      images.find((img: any) => (img.imageinfo?.[0]?.width || 0) >= 500) ||
-      images[0];
-
-    const thumbUrl = pick?.imageinfo?.[0]?.thumburl;
-    if (!thumbUrl) return null;
-
-    // Fetch actual image bytes → data-URL
-    const imgResp = await fetch(thumbUrl, { signal: AbortSignal.timeout(8000) });
-    if (!imgResp.ok) return null;
-    const blob = await imgResp.blob();
-
-    return new Promise<string | null>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
+    return null;
   } catch {
     return null;
   }
@@ -290,7 +336,7 @@ export async function buildTripPDF(
   // Brand mark + eyebrow
   setFont(9, DARK.primary, 'bold');
   doc.text(
-    '\u25C8  WANDR  \u00b7  AI-GENERATED TRIP',
+    'WANDR  \u00b7  AI-GENERATED TRIP',
     pageW / 2,
     28,
     { align: 'center' },
