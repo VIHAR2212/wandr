@@ -7,7 +7,7 @@ import {
   ChevronUp, Star, AlertTriangle, Utensils, Hotel, Sparkles
 } from 'lucide-react';
 import TripMap from '@/components/features/map/TripMap';
-import { TripChat } from '@/components/features/chat/TripChat';
+import { TripChat, type Message as ChatMessage } from '@/components/features/chat/TripChat';
 import SendToWhatsAppButton from "@/components/trip/SendToWhatsAppButton";
 import { TrackingOverlay } from '@/components/features/tracking/TrackingOverlay';
 import LiquidLoading from '@/components/features/itinerary/LiquidLoading';
@@ -192,6 +192,10 @@ export function TripResultView({ tripId }: { tripId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Chat messages live here (not inside TripChat) so switching tabs away from
+  // and back to "AI Chat" doesn't unmount TripChat and wipe the conversation.
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+
   const loadTrip = useCallback(() => {
     fetch(`/api/trips/${tripId}`)
       .then((r: Response) => r.json())
@@ -214,6 +218,32 @@ export function TripResultView({ tripId }: { tripId: string }) {
   }, [tripId]);
 
   useEffect(() => { loadTrip(); }, [loadTrip]);
+
+  // Load real chat history once trip data arrives. Falls back to the
+  // greeting only if this trip has no saved messages yet.
+  useEffect(() => {
+    if (!tripData || chatMessages.length > 0) return;
+    const saved = (tripData as any).chats as Array<{ id: string; role: string; content: string; createdAt: string }> | undefined;
+
+    if (saved && saved.length > 0) {
+      setChatMessages(
+        saved.map((m) => ({
+          id: m.id,
+          role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
+          content: m.content,
+          ts: new Date(m.createdAt),
+        }))
+      );
+    } else {
+      setChatMessages([{
+        id: '0',
+        role: 'assistant',
+        content: `Hi! I'm your Wandr AI travel assistant for your trip to **${tripData.formData.destination}**. I know your complete itinerary, budget, and preferences. Ask me anything — from last-minute packing tips to what to do if your train is delayed. 🧳`,
+        ts: new Date(),
+      }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripData]);
 
   useEffect(() => {
     if (error !== '__GENERATING__') return;
@@ -1298,7 +1328,14 @@ export function TripResultView({ tripId }: { tripId: string }) {
           })()}
 
           {/* CHAT */}
-          {activeTab === 'chat' && <TripChat tripId={tripId} tripContext={fd} />}
+          {activeTab === 'chat' && (
+            <TripChat
+              tripId={tripId}
+              tripContext={fd}
+              messages={chatMessages}
+              setMessages={setChatMessages}
+            />
+          )}
         </motion.div>
       </AnimatePresence>
 
