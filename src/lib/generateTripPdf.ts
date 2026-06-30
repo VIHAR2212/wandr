@@ -149,7 +149,7 @@ export async function buildTripPDF(trip: GeneratedTrip, fd: TripFormData, geo: G
 
   // Brand mark + eyebrow
   setFont(9, DARK.primary, 'bold');
-  doc.text('\u25C8  WANDR  \u00b7  AI-GENERATED TRIP', pageW / 2, 28, { align: 'center' });
+  doc.text('WANDR  \u00b7  AI-GENERATED TRIP', pageW / 2, 28, { align: 'center' });
 
   setFont(28, DARK.foreground, 'bold', TYPE.display);
   doc.text(trip.title, pageW / 2, 46, { align: 'center', maxWidth: usableW });
