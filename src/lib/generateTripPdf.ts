@@ -452,7 +452,7 @@ export async function buildTripPDF(
   y = 26;
 
   // ---------- Budget Breakdown ----------
-  sectionHeader('Budget Breakdown', LIGHT.accent);
+  sectionHeader('> Budget Breakdown', LIGHT.accent);
 
   const b = trip.budget as any;
   const budgetItems = [
@@ -694,7 +694,7 @@ export async function buildTripPDF(
   // ---------- Hotels ----------
   if (trip.hotels && trip.hotels.length > 0) {
     y += 2;
-    sectionHeader('Recommended Stays', LIGHT.accent);
+    sectionHeader('> Recommended Stays', LIGHT.accent);
 
     (trip.hotels as any[]).forEach((hotel) => {
       checkPage(20);
@@ -726,7 +726,7 @@ export async function buildTripPDF(
   // ---------- Food & Dining ----------
   if (trip.restaurants && trip.restaurants.length > 0) {
     y += 2;
-    sectionHeader('Food & Dining', PALETTE.sunset500);
+    sectionHeader('> Food & Dining', PALETTE.sunset500);
 
     (trip.restaurants as any[]).forEach((r) => {
       checkPage(18);
@@ -769,7 +769,7 @@ export async function buildTripPDF(
   // ---------- Packing Checklist ----------
   if (trip.packingList && trip.packingList.length > 0) {
     y += 2;
-    sectionHeader('Packing Checklist', LIGHT.primary);
+    sectionHeader('> Packing Checklist', LIGHT.primary);
 
     (trip.packingList as any[]).forEach((cat) => {
       checkPage(16);
@@ -805,7 +805,7 @@ export async function buildTripPDF(
   const safety = trip.safety as any;
   if (safety && (safety.tips?.length || safety.overallScore)) {
     y += 2;
-    sectionHeader('Safety & Tips', PALETTE.sunset500);
+    sectionHeader('> Safety & Tips', PALETTE.sunset500);
 
     if (safety.overallScore) {
       const scoreColor =
