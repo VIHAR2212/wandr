@@ -292,10 +292,10 @@ export function TripResultView({ tripId }: { tripId: string }) {
     setPdfLoading(true);
     try {
       await downloadTripPDF(trip, fd, {
-        originLat: tripData.originLat,
-        originLng: tripData.originLng,
-        destLat: tripData.destLat,
-        destLng: tripData.destLng,
+        originLat: tripData!.originLat,
+        originLng: tripData!.originLng,
+        destLat: tripData!.destLat,
+        destLng: tripData!.destLng,
       });
     } catch (err) {
       console.error('[TripResultView] PDF download failed:', err);
