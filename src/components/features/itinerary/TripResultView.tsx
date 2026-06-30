@@ -15,8 +15,7 @@ import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safety
 import { cn } from '@/lib/utils';
 import type { TripFormData, GeneratedTrip, TripDay } from '@/types';
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { generateTripPdf } from '@/lib/generateTripPdf';
 
 interface TripData {
   tripId: string;
