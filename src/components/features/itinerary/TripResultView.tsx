@@ -7,7 +7,7 @@ import {
   ChevronUp, Star, AlertTriangle, Utensils, Hotel, Sparkles
 } from 'lucide-react';
 import TripMap from '@/components/features/map/TripMap';
-import { TripChat, type Message as ChatMessage } from '@/components/features/chat/TripChat';
+import { TripChat } from '@/components/features/chat/TripChat';
 import SendToWhatsAppButton from "@/components/trip/SendToWhatsAppButton";
 import { TrackingOverlay } from '@/components/features/tracking/TrackingOverlay';
 import LiquidLoading from '@/components/features/itinerary/LiquidLoading';
@@ -15,7 +15,8 @@ import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safety
 import { cn } from '@/lib/utils';
 import type { TripFormData, GeneratedTrip, TripDay } from '@/types';
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
-import { downloadTripPDF } from '@/lib/generateTripPdf';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface TripData {
   tripId: string;
@@ -132,17 +133,34 @@ function normalizeTripData(raw: any, tripId: string): TripData {
     breakdown: [] as any[],
   };
 
+  // ── Packing list normalization ──
+  // Supports both new grouped format and old flat format.
+  // Always capitalizes category names (Title Case).
   const rawPacking = Array.isArray(raw.packingList) ? raw.packingList : [];
   let packingList: any[];
-  if (rawPacking.length > 0 && rawPacking[0]?.category) {
-    packingList = rawPacking;
+  if (rawPacking.length > 0 && Array.isArray(rawPacking[0]?.items)) {
+    // New grouped format: [{category:"Clothing", items:[{name, reason, essential, quantity}]}]
+    packingList = rawPacking.map((cat: any) => ({
+      ...cat,
+      category: cat.category
+        ? cat.category.replace(/\b\w/g, (c: string) => c.toUpperCase())
+        : 'Other',
+    }));
+  } else if (rawPacking.length > 0) {
+    // Old flat format: [{item:"Shoes", category:"clothing", essential:true, ...}]
+    const byCategory = new Map<string, any[]>();
+    rawPacking.forEach((p: any) => {
+      const cat = (p.category || 'Other').replace(/\b\w/g, (c: string) => c.toUpperCase());
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push({
+        name: p.item || p.name || '',
+        essential: !!p.essential,
+        quantity: p.quantity || 1,
+      });
+    });
+    packingList = Array.from(byCategory.entries()).map(([category, items]) => ({ category, items }));
   } else {
-    const essentials = rawPacking.filter((p: any) => p.essential);
-    const optional = rawPacking.filter((p: any) => !p.essential);
-    packingList = [
-      { category: 'Essentials', items: essentials.map((p: any) => ({ name: p.item || p.name || '', essential: true, quantity: p.quantity || 1 })) },
-      { category: 'Optional', items: optional.map((p: any) => ({ name: p.item || p.name || '', essential: false, quantity: p.quantity || 1 })) },
-    ].filter((c: any) => c.items.length > 0);
+    packingList = [];
   }
 
   const si: any = raw.safetyInfo || raw.safety || {};
@@ -190,11 +208,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
   const [showTracking, setShowTracking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [pdfLoading, setPdfLoading] = useState(false);
-
-  // Chat messages live here (not inside TripChat) so switching tabs away from
-  // and back to "AI Chat" doesn't unmount TripChat and wipe the conversation.
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const loadTrip = useCallback(() => {
     fetch(`/api/trips/${tripId}`)
@@ -218,32 +231,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
   }, [tripId]);
 
   useEffect(() => { loadTrip(); }, [loadTrip]);
-
-  // Load real chat history once trip data arrives. Falls back to the
-  // greeting only if this trip has no saved messages yet.
-  useEffect(() => {
-    if (!tripData || chatMessages.length > 0) return;
-    const saved = (tripData as any).chats as Array<{ id: string; role: string; content: string; createdAt: string }> | undefined;
-
-    if (saved && saved.length > 0) {
-      setChatMessages(
-        saved.map((m) => ({
-          id: m.id,
-          role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
-          content: m.content,
-          ts: new Date(m.createdAt),
-        }))
-      );
-    } else {
-      setChatMessages([{
-        id: '0',
-        role: 'assistant',
-        content: `Hi! I'm your Wandr AI travel assistant for your trip to **${tripData.formData.destination}**. I know your complete itinerary, budget, and preferences. Ask me anything — from last-minute packing tips to what to do if your train is delayed. 🧳`,
-        ts: new Date(),
-      }]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tripData]);
 
   useEffect(() => {
     if (error !== '__GENERATING__') return;
@@ -287,33 +274,480 @@ export function TripResultView({ tripId }: { tripId: string }) {
     { id: 'chat', label: 'AI Chat', icon: MessageCircle },
   ];
 
-  async function handleDownloadPDF() {
-    if (pdfLoading) return;
-    if (!tripData) return;
-    setPdfLoading(true);
-    try {
-      const destLower = fd.destination?.toLowerCase() || '';
-      let sectorKey = '';
-      if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
-      else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
-      else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
-      else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
-      else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
-      else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
-      const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
+  // ── Train cost estimation (same logic as generateTripPdf.ts) ──
+  const estimateTrainCost = (title: string): number => {
+    const t = title.toLowerCase();
+    if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('duronto') || t.includes('vande bharat')) return 2000;
+    if (t.includes('express') || t.includes('superfast')) return 1200;
+    return 800;
+  };
 
-      await downloadTripPDF(trip, fd, {
-        originLat: tripData.originLat,
-        originLng: tripData.originLng,
-        destLat: tripData.destLat,
-        destLng: tripData.destLng,
-        communityFlight,
-      });
-    } catch (err) {
-      console.error('[TripResultView] PDF download failed:', err);
-    } finally {
-      setPdfLoading(false);
+  function handleDownloadPDF() {
+    if (!tripData) return;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 16;
+    const usableW = pageW - margin * 2;
+    let y = 0;
+
+    const fmtCur = (amt: number) => formatCurrency(amt, fd.currency);
+
+    // ---------- Color Palette ----------
+    const C: Record<string, [number, number, number]> = {
+      primary: [30, 58, 138],
+      primaryLight: [59, 130, 246],
+      accent: [14, 165, 133],
+      accentLight: [52, 211, 153],
+      dark: [15, 23, 42],
+      mid: [71, 85, 105],
+      light: [148, 163, 184],
+      bg: [248, 250, 252],
+      white: [255, 255, 255],
+      rowAlt: [241, 245, 249],
+      orange: [234, 88, 12],
+      purple: [124, 58, 237],
+      pink: [219, 39, 119],
+    };
+
+    // ---------- Helpers ----------
+    const setFont = (size: number, color: number[] = C.dark, style: string = 'normal') => {
+      doc.setFontSize(size);
+      doc.setTextColor(color[0], color[1], color[2]);
+      if (style === 'bold') doc.setFont('helvetica', 'bold');
+      else doc.setFont('helvetica', 'normal');
+    };
+
+    const checkPage = (needed: number) => {
+      if (y + needed > pageH - 30) {
+        addFooter(doc, pageW, pageH, margin);
+        doc.addPage();
+        y = margin;
+        return true;
+      }
+      return false;
+    };
+
+    const drawRoundedRect = (x: number, yy: number, w: number, h: number, r: number, fillColor: number[]) => {
+      doc.setFillColor(fillColor[0], fillColor[1], fillColor[2]);
+      doc.roundedRect(x, yy, w, h, r, r, 'F');
+    };
+
+    const drawBar = (x: number, yy: number, w: number, h: number, color: number[]) => {
+      doc.setFillColor(color[0], color[1], color[2]);
+      doc.roundedRect(x, yy, w, h, h / 2, h / 2, 'F');
+    };
+
+    const addFooter = (d: any, pW: number, pH: number, m: number) => {
+      const totalPages = d.getNumberOfPages();
+      const p = d.getNumberOfPages();
+      d.setFontSize(7);
+      d.setTextColor(C.light[0], C.light[1], C.light[2]);
+      d.text('Generated by Wandr AI', m, pH - 8);
+      d.text(`Page ${p} of ${totalPages}`, pW / 2, pH - 8, { align: 'center' });
+      d.text(new Date().toLocaleDateString(), pW - m, pH - 8, { align: 'right' });
+    };
+
+    // ==================== PAGE 1: COVER + OVERVIEW + BUDGET ====================
+
+    // --- Gradient Header Bar ---
+    const headerH = 58;
+    for (let i = 0; i < headerH; i++) {
+      const t = i / headerH;
+      const r = Math.round(C.primary[0] * (1 - t) + C.primaryLight[0] * t);
+      const g = Math.round(C.primary[1] * (1 - t) + C.primaryLight[1] * t);
+      const b = Math.round(C.primary[2] * (1 - t) + C.primaryLight[2] * t);
+      doc.setFillColor(r, g, b);
+      doc.rect(0, i, pageW, 1, 'F');
     }
+
+    // Title on gradient
+    doc.setFontSize(24);
+    doc.setTextColor(C.white[0], C.white[1], C.white[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.text(trip.title, pageW / 2, 24, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(200, 215, 245);
+    doc.text(trip.summary, pageW / 2, 34, { align: 'center', maxWidth: usableW + 10 });
+
+    // Decorative line
+    doc.setDrawColor(C.accentLight[0], C.accentLight[1], C.accentLight[2]);
+    doc.setLineWidth(0.8);
+    doc.line(pageW / 2 - 30, 42, pageW / 2 + 30, 42);
+
+    // Date range on header
+    doc.setFontSize(8);
+    doc.setTextColor(180, 200, 240);
+    const dateRange = fd.startDate && fd.endDate
+      ? `${fd.startDate}  \u2192  ${fd.endDate}`
+      : '';
+    if (dateRange) {
+      doc.text(dateRange, pageW / 2, 50, { align: 'center' });
+    }
+
+    y = headerH + 12;
+
+    // --- Trip Overview Cards ---
+    const duration = fd.startDate && fd.endDate
+      ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} days`
+      : '-- days';
+
+    const overviewItems = [
+      { label: 'Destination', value: fd.destination, color: C.primary },
+      { label: 'Duration', value: duration, color: C.accent },
+      { label: 'Travelers', value: String(fd.travelers), color: C.orange },
+      { label: 'Total Budget', value: fmtCur(Number(trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget) || 0), color: C.purple },
+    ];
+
+    const cardW = (usableW - 12) / 2;
+    const cardH = 18;
+    overviewItems.forEach((item, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const cx = margin + col * (cardW + 12);
+      const cy = y + row * (cardH + 6);
+
+      drawRoundedRect(cx, cy, cardW, cardH, 3, C.bg);
+      doc.setDrawColor(220, 225, 235);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(cx, cy, cardW, cardH, 3, 3, 'S');
+
+      drawBar(cx, cy + 3, 2.5, cardH - 6, item.color);
+
+      setFont(6.5, C.light);
+      doc.text(item.label, cx + 7, cy + 6.5);
+
+      setFont(10, C.dark, 'bold');
+      doc.text(item.value, cx + 7, cy + 13.5);
+    });
+
+    y += Math.ceil(overviewItems.length / 2) * (cardH + 6) + 10;
+
+    // --- BUDGET SUMMARY (moved to page 1!) ---
+    checkPage(85);
+
+    setFont(13, C.dark, 'bold');
+    doc.text('Budget Breakdown', margin, y);
+    doc.setDrawColor(C.accent[0], C.accent[1], C.accent[2]);
+    doc.setLineWidth(1.2);
+    doc.line(margin, y + 1.5, margin + 38, y + 1.5);
+    y += 8;
+
+    const bTransport = Number(trip.budget?.transport) || 0;
+    const bAccommodation = Number(trip.budget?.accommodation) || 0;
+    const bFood = Number(trip.budget?.food) || 0;
+    const bActivities = Number(trip.budget?.activities) || 0;
+    const bMisc = Number(trip.budget?.miscellaneous) || 0;
+    const bEmergency = Number(trip.budget?.emergencyFund) || 0;
+    const budgetTotal = bTransport + bAccommodation + bFood + bActivities + bMisc + bEmergency;
+
+    const budgetItems = [
+      { label: 'Transport', amount: bTransport, color: C.primaryLight },
+      { label: 'Accommodation', amount: bAccommodation, color: C.accent },
+      { label: 'Food', amount: bFood, color: C.orange },
+      { label: 'Activities', amount: bActivities, color: C.purple },
+      { label: 'Miscellaneous', amount: bMisc, color: C.pink },
+      { label: 'Emergency', amount: bEmergency, color: C.light },
+    ].filter(b => b.amount > 0);
+
+    const barMaxW = usableW * 0.45;
+    const maxAmount = Math.max(...budgetItems.map(b => b.amount), 1);
+
+    budgetItems.forEach((item) => {
+      const barW = Math.max(2, (item.amount / maxAmount) * barMaxW);
+
+      setFont(8.5, C.mid);
+      doc.text(item.label, margin, y + 4);
+
+      setFont(8.5, C.dark, 'bold');
+      doc.text(fmtCur(item.amount), pageW - margin, y + 4, { align: 'right' });
+
+      drawBar(margin + 35, y + 6.5, barMaxW + 10, 2.5, [230, 235, 242]);
+      drawBar(margin + 35, y + 6.5, barW, 2.5, item.color);
+
+      y += 10;
+    });
+
+    y += 2;
+    doc.setDrawColor(C.primary[0], C.primary[1], C.primary[2]);
+    doc.setLineWidth(0.6);
+    doc.line(margin, y, pageW - margin, y);
+    y += 6;
+
+    setFont(11, C.primary, 'bold');
+    doc.text('Total Budget', margin, y + 2);
+    doc.text(fmtCur(budgetTotal), pageW - margin, y + 2, { align: 'right' });
+
+    y += 7;
+    setFont(7.5, C.light);
+    doc.text(`Per Day: ${fmtCur(trip.budget?.perDay || 0)}   |   Per Person: ${fmtCur(trip.budget?.perPerson || 0)}`, margin, y);
+
+    y += 12;
+
+    // ==================== DAY-BY-DAY ITINERARY ====================
+    const destLower = fd.destination?.toLowerCase() || '';
+    let sectorKey = '';
+    if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
+    else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
+    else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
+    else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
+    else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
+    else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
+    const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
+
+    // Pre-calculate transport cost distribution for inline PDF
+    const allTransportActs: any[] = [];
+    (trip.days ?? []).forEach((day: any) => {
+      (day.activities ?? []).forEach((a: any) => {
+        if ((a.type || '').toLowerCase() === 'transport') allTransportActs.push(a);
+      });
+    });
+    const transportBudget = Number(trip.budget?.transport) || 0;
+    const resolvedCostsMap = new Map<any, number>();
+    let knownTransportTotal = 0;
+    let zeroCostTransportCount = 0;
+    allTransportActs.forEach((act: any) => {
+      const baseCost = Number(act.cost) || 0;
+      if (baseCost > 0) {
+        resolvedCostsMap.set(act, baseCost);
+        knownTransportTotal += baseCost;
+      } else {
+        const title = (act.title || '').toLowerCase();
+        if (communityFlight && (title.includes('flight') || title.includes('arrival'))) {
+          const c = Number(communityFlight.avgPrice) || 0;
+          resolvedCostsMap.set(act, c);
+          knownTransportTotal += c;
+        } else if (title.includes('train')) {
+          const c = estimateTrainCost(act.title || '');
+          resolvedCostsMap.set(act, c);
+          knownTransportTotal += c;
+        } else {
+          zeroCostTransportCount++;
+        }
+      }
+    });
+    const surplus = Math.max(0, transportBudget - knownTransportTotal);
+    const distributedPerAct = zeroCostTransportCount > 0 ? Math.round(surplus / zeroCostTransportCount) : 0;
+    const getActCost = (act: any): number => {
+      const base = Number(act.cost) || 0;
+      if (base > 0) return base;
+      const resolved = resolvedCostsMap.get(act);
+      if (resolved !== undefined && resolved > 0) return resolved;
+      return (act.type || '').toLowerCase() === 'transport' ? distributedPerAct : 0;
+    };
+
+    const days = trip.days ?? [];
+    days.forEach((day, dayIdx) => {
+      checkPage(40);
+
+      drawRoundedRect(margin, y - 2, usableW, 8, 2, C.primary);
+      setFont(11, C.white, 'bold');
+      doc.text(`Day ${day.dayNumber}: ${day.theme}`, margin + 6, y + 3);
+      setFont(7, [180, 200, 240]);
+      if (day.date) doc.text(day.date, pageW - margin - 4, y + 3, { align: 'right' });
+      y += 10;
+
+      if (day.summary) {
+        setFont(8, C.mid);
+        doc.text(day.summary, margin + 2, y, { maxWidth: usableW - 4 });
+        y += 6;
+      }
+
+      const acts = day.activities ?? [];
+      if (acts.length > 0) {
+        checkPage(acts.length * 9 + 14);
+
+        autoTable(doc, {
+          startY: y,
+          head: [['Time', 'Activity', 'Location', 'Duration', 'Cost', 'Type']],
+          body: acts.map((act) => [
+            act.time || '--',
+            act.title || '',
+            act.location || '',
+            act.duration ? `${act.duration}m` : '',
+            fmtCur(getActCost(act)),
+            act.type || '',
+          ]),
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 7.5, cellPadding: 2.5, textColor: [C.dark[0], C.dark[1], C.dark[2]], lineColor: [225, 230, 240], lineWidth: 0.2 },
+          headStyles: {
+            fillColor: C.bg,
+            textColor: C.mid,
+            fontSize: 7,
+            fontStyle: 'bold',
+            lineColor: [200, 210, 225],
+            lineWidth: 0.3,
+          },
+          alternateRowStyles: { fillColor: C.rowAlt },
+          columnStyles: {
+            0: { cellWidth: 17, fontStyle: 'bold' },
+            1: { cellWidth: 44 },
+            2: { cellWidth: 34 },
+            3: { cellWidth: 18, halign: 'center' },
+            4: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
+            5: { cellWidth: 20, halign: 'center' },
+          },
+          didDrawCell: (data: any) => {
+            // --- FIX: Cover default black text in Type column, then draw colored ---
+            if (data.section === 'body' && data.column.index === 5) {
+              const isAlt = data.row.index % 2 === 1;
+              const bg = isAlt ? C.rowAlt : C.bg;
+              doc.setFillColor(bg[0], bg[1], bg[2]);
+              doc.rect(
+                data.cell.x + 0.3,
+                data.cell.y + 0.3,
+                data.cell.width - 0.6,
+                data.cell.height - 0.6,
+                'F',
+              );
+
+              const typeColors: Record<string, number[]> = {
+                TRANSPORT: C.primaryLight,
+                SIGHTSEEING: C.accent,
+                ADVENTURE: C.orange,
+                RESTAURANT: C.pink,
+                SHOPPING: C.purple,
+                ACCOMMODATION: [59, 130, 246],
+                REST: C.light,
+              };
+              const col = typeColors[String(data.cell.raw).toUpperCase()] || C.mid;
+              doc.setTextColor(col[0], col[1], col[2]);
+              doc.setFontSize(6.5);
+              doc.setFont('helvetica', 'bold');
+              doc.text(String(data.cell.raw), data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 1.2, { align: 'center' });
+            }
+            if (data.section === 'body' && data.column.index === 4) {
+              doc.setTextColor(C.primary[0], C.primary[1], C.primary[2]);
+            }
+          },
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        y = (doc as any).lastAutoTable?.finalY + 6;
+      }
+
+      if (dayIdx < days.length - 1) {
+        y += 4;
+        doc.setDrawColor(230, 235, 242);
+        doc.setLineWidth(0.2);
+        doc.line(margin + 10, y, pageW - margin - 10, y);
+        y += 4;
+      }
+    });
+
+    // ---------- Hotels Section ----------
+    if (trip.hotels && trip.hotels.length > 0) {
+      checkPage(40);
+      y += 4;
+      setFont(13, C.dark, 'bold');
+      doc.text('Recommended Stays', margin, y);
+      doc.setDrawColor(C.accent[0], C.accent[1], C.accent[2]);
+      doc.setLineWidth(1.2);
+      doc.line(margin, y + 1.5, margin + 38, y + 1.5);
+      y += 8;
+
+      (trip.hotels as any[]).forEach((hotel) => {
+        checkPage(20);
+        drawRoundedRect(margin, y - 1, usableW, 14, 2, C.bg);
+        setFont(9, C.dark, 'bold');
+        doc.text(hotel.name || 'Hotel', margin + 5, y + 4);
+        setFont(7, C.mid);
+        const hotelMeta = `${hotel.type || hotel.location || ''}  \u00b7  ${hotel.rating ? '\u2605'.repeat(Math.round(hotel.rating)) + ' ' + hotel.rating : ''}  \u00b7  ${fmtCur(Number(hotel.pricePerNight) || 0)}/night`;
+        doc.text(hotelMeta, margin + 5, y + 9.5);
+        y += 18;
+      });
+    }
+
+    // ---------- Restaurants Section ----------
+    if (trip.restaurants && trip.restaurants.length > 0) {
+      checkPage(40);
+      y += 4;
+      setFont(13, C.dark, 'bold');
+      doc.text('Food & Dining', margin, y);
+      doc.setDrawColor(C.orange[0], C.orange[1], C.orange[2]);
+      doc.setLineWidth(1.2);
+      doc.line(margin, y + 1.5, margin + 30, y + 1.5);
+      y += 8;
+
+      (trip.restaurants as any[]).forEach((r) => {
+        checkPage(16);
+        setFont(8.5, C.dark, 'bold');
+        doc.text(r.name || 'Restaurant', margin, y + 2);
+        setFont(7, C.mid);
+        const meta = [
+          r.cuisine,
+          r.rating ? `\u2605 ${r.rating}` : '',
+          r.priceRange || fmtCur(Number(r.pricePerPerson) || 0) + '/person',
+        ].filter(Boolean).join('  \u00b7  ');
+        doc.text(meta, margin, y + 7);
+        if (r.mustTry?.length) {
+          setFont(7, C.accent);
+          doc.text(`Must try: ${r.mustTry.join(', ')}`, margin, y + 11);
+          y += 4;
+        }
+        y += 10;
+      });
+    }
+
+    // ---------- Packing Essentials ----------
+    if (trip.packingList && trip.packingList.length > 0) {
+      checkPage(30);
+      y += 4;
+      setFont(13, C.dark, 'bold');
+      doc.text('Packing Checklist', margin, y);
+      doc.setDrawColor(C.purple[0], C.purple[1], C.purple[2]);
+      doc.setLineWidth(1.2);
+      doc.line(margin, y + 1.5, margin + 35, y + 1.5);
+      y += 8;
+
+      (trip.packingList as any[]).forEach((cat) => {
+        checkPage(16);
+        setFont(8.5, C.dark, 'bold');
+        doc.text(cat.category || 'Packing', margin, y + 2);
+        const items = cat.items || (Array.isArray(cat) ? cat : []);
+        const itemNames = items.map((it: any) => it.name || it.item || it).join(', ');
+        setFont(7, C.mid);
+        doc.text(itemNames, margin + 3, y + 7, { maxWidth: usableW - 6 });
+        y += Math.max(12, Math.ceil(itemNames.length / 80) * 4 + 8);
+      });
+    }
+
+    // ---------- Safety Info ----------
+    if (trip.safety && (trip.safety as any).tips?.length) {
+      checkPage(30);
+      y += 4;
+      setFont(13, C.dark, 'bold');
+      doc.text('Safety & Tips', margin, y);
+      doc.setDrawColor(C.orange[0], C.orange[1], C.orange[2]);
+      doc.setLineWidth(1.2);
+      doc.line(margin, y + 1.5, margin + 28, y + 1.5);
+      y += 8;
+
+      const safety = trip.safety as any;
+      if (safety.overallScore) {
+        const scoreColor = safety.overallScore >= 7 ? C.accent : safety.overallScore >= 4 ? C.orange : C.pink;
+        drawRoundedRect(margin, y - 1, 50, 8, 2, scoreColor);
+        setFont(8, scoreColor, 'bold');
+        doc.text(`Safety Score: ${safety.overallScore}/10`, margin + 4, y + 4);
+        y += 12;
+      }
+
+      (safety.tips || []).slice(0, 5).forEach((tip: string) => {
+        checkPage(8);
+        setFont(7, C.mid);
+        doc.text(`\u2022  ${tip}`, margin + 2, y + 2);
+        y += 6;
+      });
+    }
+
+    // ---------- Footer on all pages ----------
+    addFooter(doc, pageW, pageH, margin);
+
+    // ---------- Save ----------
+    const safeName = trip.title.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_').substring(0, 40);
+    doc.save(`${safeName || 'Wandr_Trip'}.pdf`);
   }
 
   return (
@@ -340,16 +774,10 @@ export function TripResultView({ tripId }: { tripId: string }) {
               </button>
               <button
                 onClick={handleDownloadPDF}
-                disabled={pdfLoading}
-                className={cn(
-                  'flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-sm font-medium transition-colors',
-                  pdfLoading
-                    ? 'text-muted-foreground opacity-60 cursor-wait'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                )}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
               >
-                <Download className={cn('w-4 h-4', pdfLoading && 'animate-pulse')} />
-                {pdfLoading ? 'Generating PDF...' : 'Download PDF'}
+                <Download className="w-4 h-4" />
+                Download PDF
               </button>
               <button
   onClick={() => window.open(`https://wa.me/14155238886?text=${encodeURIComponent("send itinerary")}`, "_blank")}
@@ -432,18 +860,19 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
                 const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
 
-                const displayDayCost = Number(day.totalCost) || (day.activities ?? []).reduce((sum: number, act: any) => {
+                const displayDayCost = (day.activities ?? []).reduce((sum: number, act: any) => {
                   const baseCost = Number(act.cost) || 0;
-                  const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
-                  const isTrain = act.type === 'transport' && act.title?.toLowerCase().includes('train');
-                  if (isFlight && communityFlight) return sum + communityFlight.avgPrice;
-                  if (isTrain && baseCost === 0) {
-                    const t = (act.title || '').toLowerCase();
-                    if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('duronto') || t.includes('vande bharat')) return sum + 2000;
-                    if (t.includes('express') || t.includes('superfast')) return sum + 1200;
-                    return sum + 800;
+                  if (baseCost > 0) return sum + baseCost;
+                  const title = (act.title || '').toLowerCase();
+                  const type = (act.type || '').toLowerCase();
+                  if (type !== 'transport') return sum;
+                  if (communityFlight && (title.includes('flight') || title.includes('arrival'))) {
+                    return sum + (Number(communityFlight.avgPrice) || 0);
                   }
-                  return sum + baseCost;
+                  if (title.includes('train')) {
+                    return sum + estimateTrainCost(act.title || '');
+                  }
+                  return sum;
                 }, 0);
 
                 return (
@@ -482,16 +911,18 @@ export function TripResultView({ tripId }: { tripId: string }) {
                             <div className="relative space-y-0">
                               {(day.activities ?? []).map((act: any, i: number) => {
                                 const isFlightRow = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
-                                const isTrainRow = act.type === 'transport' && act.title?.toLowerCase().includes('train');
-                                const finalTitle = isFlightRow && communityFlight ? `Flight via ${communityFlight.airline}` : act.title;
-                                const finalDesc = isFlightRow && communityFlight ? `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}` : act.description;
+                                const isTrainRow = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('shatabdi') || act.title?.toLowerCase().includes('rajdhani') || act.title?.toLowerCase().includes('vande bharat') || act.title?.toLowerCase().includes('express'));
 
-                                let finalCost = isFlightRow && communityFlight ? communityFlight.avgPrice : (Number(act.cost) || 0);
-                                if (isTrainRow && finalCost === 0) {
-                                  const t = (act.title || '').toLowerCase();
-                                  if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('duronto') || t.includes('vande bharat')) finalCost = 2000;
-                                  else if (t.includes('express') || t.includes('superfast')) finalCost = 1200;
-                                  else finalCost = 800;
+                                let finalTitle = act.title;
+                                let finalDesc = act.description;
+                                let finalCost = Number(act.cost) || 0;
+
+                                if (isFlightRow && communityFlight) {
+                                  finalTitle = `Flight via ${communityFlight.airline}`;
+                                  finalDesc = `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}`;
+                                  finalCost = Number(communityFlight.avgPrice) || 0;
+                                } else if (isTrainRow && finalCost === 0) {
+                                  finalCost = estimateTrainCost(act.title || '');
                                 }
 
                                 return (
@@ -975,14 +1406,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           })()}
 
           {/* CHAT */}
-          {activeTab === 'chat' && (
-            <TripChat
-              tripId={tripId}
-              tripContext={fd}
-              messages={chatMessages}
-              setMessages={setChatMessages}
-            />
-          )}
+          {activeTab === 'chat' && <TripChat tripId={tripId} tripContext={fd} />}
         </motion.div>
       </AnimatePresence>
 
