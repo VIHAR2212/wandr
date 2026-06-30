@@ -162,7 +162,7 @@ const KNOWN_RAW: Array<[string, [number, number]]> = [
   ["rann of kutch", [69.8600, 23.7337]],
   ["rann utsav", [69.8600, 23.7337]],
   ["modhera sun temple", [72.1332, 23.5830]],
-  ["sun temple modhera", [72.1332, 23.5830],
+  ["sun temple modhera", [72.1332, 23.5830]],
   // ── Rajasthan specific (longest first) ──
   ["amber fort jaipur", [75.8513, 26.9855]],
   ["amer fort jaipur", [75.8513, 26.9855]],
