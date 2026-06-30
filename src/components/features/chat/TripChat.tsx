@@ -5,7 +5,7 @@ import { Send, Loader2, Bot, User, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TripFormData } from '@/types';
 
-interface Message { id: string; role: 'user' | 'assistant'; content: string; ts: Date; }
+export interface Message { id: string; role: 'user' | 'assistant'; content: string; ts: Date; }
 
 const QUICK_PROMPTS = [
   'What should I pack for this trip?',
@@ -16,13 +16,17 @@ const QUICK_PROMPTS = [
   'What are the best photo spots?',
 ];
 
-export function TripChat({ tripId: _tripId, tripContext }: { tripId: string; tripContext: TripFormData }) {
-  const [messages, setMessages] = useState<Message[]>([{
-    id: '0',
-    role: 'assistant',
-    content: `Hi! I'm your Wandr AI travel assistant for your trip to **${tripContext.destination}**. I know your complete itinerary, budget, and preferences. Ask me anything — from last-minute packing tips to what to do if your train is delayed. 🧳`,
-    ts: new Date(),
-  }]);
+export function TripChat({
+  tripId,
+  tripContext,
+  messages,
+  setMessages,
+}: {
+  tripId: string;
+  tripContext: TripFormData;
+  messages: Message[];
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+}) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -45,7 +49,7 @@ export function TripChat({ tripId: _tripId, tripContext }: { tripId: string; tri
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, tripContext }),
+        body: JSON.stringify({ messages: history, tripContext, tripId }),
       });
 
       if (!res.ok) {
