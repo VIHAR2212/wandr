@@ -337,14 +337,16 @@ async function createTripFromSession(
   // hotels/restaurants/hidden gems tabs). Kept as one prompt rather than two
   // separate calls to stay inside Twilio's ~15s webhook window.
   const systemPrompt =
-    "Expert travel planner. Return ONLY valid JSON, no markdown, no preamble, no explanation. " +
+    "Expert travel planner who knows every destination intimately. Return ONLY valid JSON, no markdown, no preamble, no explanation. " +
     "The JSON object MUST have a top-level key named exactly \"itinerary\" containing an array with one entry per day. " +
-    "Each day MUST have a non-empty \"activities\" array with at least 3 activities. Costs in INR.";
+    "Each day MUST have a non-empty \"activities\" array with at least 3 activities. Costs in INR. " +
+    `You have deep real-world knowledge of ${destination} — use it for every section.`;
 
-  const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s).
+  const startDateStr = new Date().toISOString().split('T')[0];
+  const userPrompt = `${days}-day trip from ${origin} to ${destination}. Budget: ${budget} ${currency}, ${travelers} traveler(s). Starting around ${startDateStr}.
 ${trainPromptBlock ? `\n${trainPromptBlock}\n` : ''}
 Return JSON in EXACTLY this shape (top-level key must be "itinerary"):
-{"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"Exact Place Name, ${destination}","cost":0,"type":"sightseeing","duration":60}]}],"hotels":[{"name":"Hotel Name","area":"Area","pricePerNight":2000,"rating":4,"amenities":["WiFi"]}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","when":"Early morning","cost":0}],"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
+{"title":"...","summary":"2-3 line summary","itinerary":[{"day":1,"theme":"","summary":"","activities":[{"time":"","title":"","description":"","location":"Exact Place Name, ${destination}","cost":0,"type":"sightseeing","duration":60}]}],"hotels":[{"name":"Hotel Name","area":"Area","pricePerNight":2000,"rating":4,"amenities":["WiFi"]}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","when":"Early morning","cost":0}],"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"category":"Clothing","items":[{"name":"Breathable cotton shirts","reason":"Rajasthan summer temperatures exceed 40°C","essential":true,"quantity":3}]},{"category":"Essentials","items":[{"name":"Sunscreen SPF 50+","reason":"Desert sun is extremely harsh; UV index very high","essential":true,"quantity":1}]}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"]},"safety":{"overallScore":7,"tips":["Avoid isolated areas after dark near the fort boundaries","Keep bottled water with you at all times — dehydration is common"],"emergencyNumber":"112","scamAlerts":["Fake guides at major tourist spots may demand excessive fees — only hire guides from the official government counter at the entrance","Some auto-rickshaw drivers may overcharge — insist on meter or agree on a price before boarding"],"hospitals":[{"name":"SMS Hospital","distance":"3km from city centre","phone":"0141-2518121"}],"safeAreas":["MI Road and surrounding areas","Old City market area during daytime"],"avoidAreas":["Isolated stretches near forts after sunset","Unlit narrow lanes in the old city at night"],"vaccinations":[]}}
 
 RULES:
 1. Return ONLY valid JSON. No markdown fences, no comments, no trailing commas.
@@ -352,7 +354,24 @@ RULES:
 3. If a day's first activity involves travel between ${origin} and ${destination}, and real trains were given above, use one of THOSE EXACTLY (train number, name, departure/arrival) — do not invent a different one. If none were given, you may suggest a plausible flight or train.
 4. Include 3-5 activities per day with real places, real timings, real costs in INR.
 5. Budget breakdown must sum close to the total budget given.
-6. "location" must ALWAYS be a plain string like "Exact Place Name, ${destination}".`;
+6. "location" must ALWAYS be a plain string like "Exact Place Name, ${destination}".
+7. PACKING LIST — must be genuinely useful and specific to ${destination}:
+   a) Format: array of category objects, each with "category" (Title Case string) and "items" (array).
+   b) Each item has "name" (specific item), "reason" (WHY it is needed for THIS trip), "essential" (boolean), "quantity" (number).
+   c) Categories MUST be Title Case: "Clothing", "Essentials", "Toiletries", "Documents", "Electronics", "Destination-Specific", "Health & First Aid".
+   d) Items must reflect the ACTUAL current season/weather at ${destination}. Do NOT suggest woolens for a summer trip or cotton for a winter Himalayan trip.
+   e) Include destination-specific items based on what ${destination} is known for (temples? beaches? trekking? desert?). For example: modest clothing for religious sites, trekking poles for mountains, rain gear for monsoon destinations.
+   f) Each "reason" must explain why the item is needed for THIS specific destination — NOT generic like "for walking". Be specific.
+   g) Include 15-25 items total across all categories. At least 3-4 items per category.
+8. SAFETY — must be genuinely researched and specific to ${destination}:
+   a) overallScore: Use your real knowledge of ${destination}'s actual safety conditions. Consider crime rates against tourists, political stability, health hazards, road safety, and natural disaster risk. Do NOT default to 8. Examples: Singapore ≈ 9, Jaipur ≈ 7, Kashmir border areas ≈ 5, Manila ≈ 5, Zurich ≈ 9. Vary it based on reality.
+   b) tips: 5-8 practical, destination-specific safety tips. NOT generic advice like "stay aware". Instead be specific to ${destination}'s real conditions.
+   c) scamAlerts: 2-4 REAL, known scams at this specific destination. Not "Common scam". Use real tourist-reported scams.
+   d) hospitals: 2-3 REAL hospitals near ${destination} with actual names, approximate distance, and phone numbers. NOT "Nearest Hospital, 2km, phone: 0".
+   e) safeAreas: 2-3 specific neighborhoods/areas in ${destination} that are safe for tourists. Use real area names.
+   f) avoidAreas: 1-3 specific areas tourists should avoid, especially at night, with a brief reason. Use real area names.
+   g) vaccinations: Any recommended vaccinations for this region. Empty array [] if none recommended.
+   h) emergencyNumber: The ACTUAL emergency phone number for ${destination}'s country (e.g., 112 for India, 911 for USA, 999 for UK).`;
 
   const result = await generateAIJson<Record<string, unknown>>(userPrompt, systemPrompt);
   const raw = result.data;
