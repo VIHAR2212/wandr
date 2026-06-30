@@ -289,13 +289,25 @@ export function TripResultView({ tripId }: { tripId: string }) {
 
   async function handleDownloadPDF() {
     if (pdfLoading) return;
+    if (!tripData) return;
     setPdfLoading(true);
     try {
+      const destLower = fd.destination?.toLowerCase() || '';
+      let sectorKey = '';
+      if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
+      else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
+      else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
+      else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
+      else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
+      else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
+      const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
+
       await downloadTripPDF(trip, fd, {
-        originLat: tripData!.originLat,
-        originLng: tripData!.originLng,
-        destLat: tripData!.destLat,
-        destLng: tripData!.destLng,
+        originLat: tripData.originLat,
+        originLng: tripData.originLng,
+        destLat: tripData.destLat,
+        destLng: tripData.destLng,
+        communityFlight,
       });
     } catch (err) {
       console.error('[TripResultView] PDF download failed:', err);
@@ -423,7 +435,15 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 const displayDayCost = Number(day.totalCost) || (day.activities ?? []).reduce((sum: number, act: any) => {
                   const baseCost = Number(act.cost) || 0;
                   const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
-                  return sum + (isFlight && communityFlight ? communityFlight.avgPrice : baseCost);
+                  const isTrain = act.type === 'transport' && act.title?.toLowerCase().includes('train');
+                  if (isFlight && communityFlight) return sum + communityFlight.avgPrice;
+                  if (isTrain && baseCost === 0) {
+                    const t = (act.title || '').toLowerCase();
+                    if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('duronto') || t.includes('vande bharat')) return sum + 2000;
+                    if (t.includes('express') || t.includes('superfast')) return sum + 1200;
+                    return sum + 800;
+                  }
+                  return sum + baseCost;
                 }, 0);
 
                 return (
@@ -462,9 +482,17 @@ export function TripResultView({ tripId }: { tripId: string }) {
                             <div className="relative space-y-0">
                               {(day.activities ?? []).map((act: any, i: number) => {
                                 const isFlightRow = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
+                                const isTrainRow = act.type === 'transport' && act.title?.toLowerCase().includes('train');
                                 const finalTitle = isFlightRow && communityFlight ? `Flight via ${communityFlight.airline}` : act.title;
                                 const finalDesc = isFlightRow && communityFlight ? `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}` : act.description;
-                                const finalCost = isFlightRow && communityFlight ? communityFlight.avgPrice : (Number(act.cost) || 0);
+
+                                let finalCost = isFlightRow && communityFlight ? communityFlight.avgPrice : (Number(act.cost) || 0);
+                                if (isTrainRow && finalCost === 0) {
+                                  const t = (act.title || '').toLowerCase();
+                                  if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('duronto') || t.includes('vande bharat')) finalCost = 2000;
+                                  else if (t.includes('express') || t.includes('superfast')) finalCost = 1200;
+                                  else finalCost = 800;
+                                }
 
                                 return (
                                   <div key={i} className="flex gap-4 pb-6 last:pb-0">
@@ -483,7 +511,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                                           </div>
                                           <h4 className="font-medium text-foreground">{finalTitle}</h4>
                                         </div>
-                                        {finalCost > 0 && (
+                                        {(finalCost > 0 || act.type === 'transport') && (
                                           <span className="text-sm font-semibold text-primary whitespace-nowrap">{formatCurrency(finalCost, fd.currency)}</span>
                                         )}
                                       </div>
