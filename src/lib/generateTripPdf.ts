@@ -1,694 +1,513 @@
-// src/lib/generateTripPdf.ts
-// Wandr AI — Premium trip PDF with dark cover + light interior pages.
-// Uses the site's actual design tokens (amber primary, teal accent, Inter font).
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatCurrency } from '@/lib/utils';
+import { DARK, LIGHT, PALETTE, TYPE, fmtCurPdf } from './pdfTheme';
+import { buildArcPoints } from './flightPathMotif';
+import { getDestinationMapSnapshot } from './staticMapSnapshot';
+import type { GeneratedTrip, TripFormData } from '@/types';
 
-interface PdfParams {
-  trip: any;
-  formData: any;
-  formatCurrency: (amount: number, currency?: string) => string;
+interface GeoContext {
+  originLat?: number | null;
+  originLng?: number | null;
+  destLat?: number | null;
+  destLng?: number | null;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   FONT LOADING — Inter supports ₹ ★ • — é etc.
-   Falls back to Helvetica if loading fails.
-   ═══════════════════════════════════════════════════════════════════ */
-function arrBufToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
-async function loadFonts(doc: jsPDF): Promise<boolean> {
-  const urls = [
-    '/fonts/Inter-Regular.ttf',
-    'https://cdn.jsdelivr.net/gh/nicokant/fonts@main/inter/Inter-Regular.ttf',
-  ];
-  for (const url of urls) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const buf = await res.arrayBuffer();
-      doc.addFileToVFS('Inter-Regular.ttf', arrBufToBase64(buf));
-      doc.addFont('Inter-Regular.ttf', 'Inter', 'normal');
-      // Synthetic bold via the same file
-      doc.addFileToVFS('Inter-Bold.ttf', arrBufToBase64(buf));
-      doc.addFont('Inter-Bold.ttf', 'Inter', 'bold');
-      return true;
-    } catch { /* next */ }
-  }
-  return false;
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   COLOR SYSTEM — pulled from site's CSS custom properties.
-   Dark mode: --primary: hsl(30,80%,60%) = amber, --accent: hsl(195,55%,50%) = teal
-   ═══════════════════════════════════════════════════════════════════ */
-const C = {
-  // Cover (dark)
-  coverBg:    [10, 10, 10],
-  amber:      [235, 153, 71],   // hsl(30,80%,60%)
-  amberDark:  [180, 110, 40],
-  teal:       [57, 198, 163],   // hsl(195,55%,50%)
-  tealDark:   [35, 140, 120],
-  white:      [255, 255, 255],
-  white80:    [255, 255, 255],
-  white40:    [180, 190, 200],
-  // Interior (light)
-  pageBg:     [253, 248, 243],  // earth-50 warm off-white
-  cardBg:     [255, 255, 255],
-  textDark:   [26, 26, 26],
-  textMid:    [107, 114, 128],  // gray-500
-  textLight:  [160, 165, 175],
-  border:     [220, 222, 226],
-  rowAlt:     [247, 245, 241],
-  // Type colors
-  transport:  [59, 130, 246],
-  sightseeing:[16, 185, 129],
-  adventure:  [234, 88, 12],
-  restaurant: [219, 39, 119],
-  shopping:   [124, 58, 237],
-  rest:       [148, 163, 184],
-  accommodation:[234, 88, 12],
-};
-
-/* ═══════════════════════════════════════════════════════════════════
-   HELPERS
-   ═══════════════════════════════════════════════════════════════════ */
-function setFont(doc: jsPDF, size: number, color: number[], style: 'normal' | 'bold' = 'normal') {
-  doc.setFontSize(size);
-  doc.setTextColor(color[0], color[1], color[2]);
-  if (useInter) {
-    doc.setFont('Inter', style);
-  } else {
-    doc.setFont('helvetica', style);
-  }
-}
-
-let useInter = false;
-
-function checkPage(doc: jsPDF, y: number, needed: number, pageW: number, pageH: number, margin: number): number {
-  if (y + needed > pageH - 25) {
-    addFooter(doc, pageW, pageH, margin);
-    doc.addPage();
-    // Light page background
-    doc.setFillColor(C.pageBg[0], C.pageBg[1], C.pageBg[2]);
-    doc.rect(0, 0, pageW, pageH, 'F');
-    return margin;
-  }
-  return y;
-}
-
-function addFooter(doc: jsPDF, pageW: number, pageH: number, m: number) {
-  const total = doc.getNumberOfPages();
-  const p = doc.getNumberOfPages();
-  doc.setFillColor(C.textLight[0], C.textLight[1], C.textLight[2]);
-  doc.setFontSize(7);
-  if (useInter) doc.setFont('Inter', 'normal'); else doc.setFont('helvetica', 'normal');
-  doc.text('Wandr AI', m, pageH - 8);
-  doc.text(`Page ${p} / ${total}`, pageW / 2, pageH - 8, { align: 'center' });
-  doc.text(new Date().toLocaleDateString(), pageW - m, pageH - 8, { align: 'right' });
-}
-
-function drawRRect(doc: jsPDF, x: number, y: number, w: number, h: number, r: number, fill: number[]) {
-  doc.setFillColor(fill[0], fill[1], fill[2]);
-  doc.roundedRect(x, y, w, h, r, r, 'F');
-}
-
-function drawPill(doc: jsPDF, x: number, y: number, w: number, h: number, color: number[]) {
-  doc.setFillColor(color[0], color[1], color[2]);
-  doc.roundedRect(x, y, w, h, h / 2, h / 2, 'F');
-}
-
-function fmtDuration(d: any): string {
-  if (!d) return '';
-  if (typeof d === 'number') return d >= 60 ? `${Math.floor(d / 60)}h ${d % 60}m` : `${d}m`;
-  return String(d);
-}
-
-function stars(n: number): string {
-  if (!n || n <= 0) return '';
-  let s = '';
-  for (let i = 0; i < Math.min(Math.round(n), 5); i++) s += '\u2605 ';
-  return s.trim();
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   DESTINATION SKYLINE — simple geometric silhouette on the cover
-   ═══════════════════════════════════════════════════════════════════ */
-function drawSkyline(doc: jsPDF, dest: string, x: number, baseY: number, w: number) {
-  const d = (dest || '').toLowerCase();
-  doc.setFillColor(C.white[0], C.white[1], C.white[2]);
-  doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
-
-  const draw = (pts: Array<[number, number, number, number]>) => {
-    pts.forEach(([bx, by, bw, bh]) => doc.rect(x + bx, baseY - by, bw, bh, 'F'));
-  };
-
-  if (d.includes('delhi') || d.includes('new delhi')) {
-    draw([[0, 18, 8, 18], [12, 24, 5, 24], [22, 30, 3, 30], [30, 20, 10, 20], [44, 35, 4, 35], [52, 15, 12, 15], [68, 28, 6, 28], [78, 22, 8, 22], [90, 14, 6, 14], [100, 26, 4, 26], [108, 18, 10, 18], [122, 12, 5, 12], [130, 20, 8, 20]]);
-  } else if (d.includes('mumbai')) {
-    draw([[0, 14, 12, 14], [16, 22, 6, 22], [26, 30, 4, 30], [34, 20, 8, 20], [46, 28, 5, 28], [55, 12, 14, 12], [73, 35, 4, 35], [81, 25, 7, 25], [92, 18, 6, 18], [102, 30, 4, 30], [110, 15, 10, 15], [124, 22, 6, 22]]);
-  } else if (d.includes('agra')) {
-    draw([[15, 12, 10, 12], [30, 38, 5, 38], [40, 35, 5, 35], [50, 12, 10, 12], [65, 42, 3, 42], [72, 38, 3, 38], [80, 12, 10, 12], [100, 20, 6, 20], [110, 15, 5, 15], [118, 25, 4, 25], [128, 18, 6, 18]]);
-  } else if (d.includes('jaipur')) {
-    draw([[0, 20, 6, 20], [10, 32, 4, 32], [18, 36, 4, 36], [26, 32, 4, 32], [34, 36, 4, 36], [42, 32, 4, 32], [50, 36, 4, 36], [58, 32, 4, 32], [66, 20, 10, 20], [80, 15, 6, 15], [90, 25, 5, 25], [100, 35, 4, 35], [108, 28, 5, 28], [118, 15, 10, 15], [132, 22, 4, 22]]);
-  } else if (d.includes('varanasi')) {
-    draw([[0, 22, 4, 22], [8, 30, 3, 30], [15, 26, 3, 26], [22, 34, 3, 34], [30, 20, 10, 20], [44, 28, 4, 28], [52, 18, 6, 18], [62, 32, 3, 32], [70, 24, 5, 24], [80, 36, 3, 36], [88, 20, 8, 20], [100, 28, 4, 28], [108, 16, 6, 16], [118, 22, 5, 22], [128, 30, 4, 30]]);
-  } else if (d.includes('goa')) {
-    draw([[0, 10, 14, 10], [18, 28, 4, 28], [26, 32, 3, 32], [33, 14, 10, 14], [47, 26, 4, 26], [55, 10, 12, 10], [71, 20, 5, 20], [80, 30, 3, 30], [87, 12, 8, 12], [99, 18, 5, 18], [108, 26, 4, 26], [116, 10, 10, 10], [130, 22, 4, 22]]);
-  } else if (d.includes('kerala') || d.includes('kochi') || d.includes('alleppey')) {
-    draw([[0, 8, 12, 8], [16, 18, 4, 18], [24, 12, 10, 12], [38, 22, 4, 22], [46, 10, 8, 10], [58, 16, 5, 16], [67, 20, 4, 20], [75, 8, 12, 8], [91, 24, 4, 24], [99, 14, 6, 14], [109, 18, 5, 18], [118, 10, 8, 10], [130, 16, 4, 16]]);
-  } else {
-    // Generic: mountain range + trees
-    draw([[0, 12, 10, 12], [14, 22, 6, 22], [24, 30, 4, 30], [32, 18, 8, 18], [44, 26, 5, 26], [53, 14, 10, 14], [67, 28, 4, 28], [75, 20, 6, 20], [85, 32, 3, 32], [92, 18, 8, 18], [104, 24, 5, 24], [113, 12, 8, 12], [125, 20, 5, 20], [134, 16, 4, 16]]);
-  }
-
-  doc.setGState(new (doc as any).GState({ opacity: 1 }));
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   SCHEMATIC MAP — plot itinerary stops as dots connected by lines
-   ═══════════════════════════════════════════════════════════════════ */
-function drawSchematicMap(doc: jsPDF, trip: any, x: number, y: number, w: number, h: number) {
-  const pad = 10;
-  const stops: Array<{ name: string; lat: number; lng: number; day: number }> = [];
-
-  (trip.days || []).forEach((day: any) => {
-    (day.activities || []).forEach((act: any) => {
-      const lat = Number(act.lat);
-      const lng = Number(act.lng);
-      if (lat && lng && lat !== 0 && lng !== 0) {
-        const t = (act.type || '').toUpperCase();
-        if (t !== 'TRANSPORT') {
-          stops.push({ name: act.title || act.name || '', lat, lng, day: day.dayNumber ?? 0 });
-        }
-      }
-    });
-  });
-
-  if (stops.length < 2) return y;
-
-  const lats = stops.map(s => s.lat);
-  const lngs = stops.map(s => s.lng);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const latRange = Math.max(maxLat - minLat, 0.01);
-  const lngRange = Math.max(maxLng - minLng, 0.01);
-  const mapW = w - pad * 2;
-  const mapH = h - pad * 2;
-
-  const toX = (lng: number) => x + pad + ((lng - minLng) / lngRange) * mapW;
-  const toY = (lat: number) => y + pad + mapH - ((lat - minLat) / latRange) * mapH;
-
-  // Background
-  drawRRect(doc, x, y, w, h, 4, [245, 242, 238]);
-  doc.setDrawColor(C.border[0], C.border[1], C.border[2]);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(x, y, w, h, 4, 4, 'S');
-
-  // Route lines
-  doc.setDrawColor(C.amber[0], C.amber[1], C.amber[2]);
-  doc.setLineWidth(0.8);
-  for (let i = 0; i < stops.length - 1; i++) {
-    doc.line(toX(stops[i].lng), toY(stops[i].lat), toX(stops[i + 1].lng), toY(stops[i + 1].lat));
-  }
-
-  // Dots
-  stops.forEach((s, i) => {
-    const cx = toX(s.lng);
-    const cy = toY(s.lat);
-    const isFirst = i === 0;
-    const isLast = i === stops.length - 1;
-    const color = isFirst || isLast ? C.amber : C.teal;
-    const r = isFirst || isLast ? 3 : 2;
-
-    doc.setFillColor(color[0], color[1], color[2]);
-    doc.circle(cx, cy, r, 'F');
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(0.5);
-    doc.circle(cx, cy, r, 'S');
-
-    // Labels for first, last, and every 3rd stop
-    if (isFirst || isLast || i % 3 === 0) {
-      setFont(doc, 5.5, C.textMid);
-      const label = s.name.length > 20 ? s.name.substring(0, 18) + '..' : s.name;
-      doc.text(label, cx, cy + r + 3, { align: 'center', maxWidth: 30 });
-    }
-  });
-
-  return y + h + 6;
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   MAIN EXPORT
-   ═══════════════════════════════════════════════════════════════════ */
-export async function generateTripPdf({ trip, formData: fd, formatCurrency: fmtCur }: PdfParams) {
+/**
+ * Builds the document and returns the jsPDF instance. No browser-only side
+ * effects (no `.save()`), so this half is testable in plain Node — only
+ * `downloadTripPDF` below needs an actual browser.
+ */
+export async function buildTripPDF(trip: GeneratedTrip, fd: TripFormData, geo: GeoContext = {}): Promise<jsPDF> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const margin = 16;
+  const margin = 18;
   const usableW = pageW - margin * 2;
-  let y = 0;
+  let y = margin;
 
-  // Load Inter font for ₹ ★ • — support
-  useInter = await loadFonts(doc);
-  console.log('[PDF] Font loaded:', useInter ? 'Inter' : 'Helvetica (fallback)');
+  const fmtCur = (amt: number) => fmtCurPdf(formatCurrency(amt, fd.currency));
 
-  // ── SECTION: DARK COVER + OVERVIEW ──────────────────────────────
-  // Cover background
-  doc.setFillColor(C.coverBg[0], C.coverBg[1], C.coverBg[2]);
-  doc.rect(0, 0, pageW, pageH, 'F');
+  // ---------------------------------------------------------------- helpers
 
-  // Amber accent bar at very top
-  doc.setFillColor(C.amber[0], C.amber[1], C.amber[2]);
-  doc.rect(0, 0, pageW, 3, 'F');
+  const setFont = (size: number, color = LIGHT.foreground, style: 'normal' | 'bold' = 'normal', font: string = TYPE.body) => {
+    doc.setFontSize(size);
+    doc.setTextColor(color[0], color[1], color[2]);
+    doc.setFont(font, style);
+  };
 
-  // Brand mark
-  setFont(doc, 8, C.white40);
-  doc.text('WANDR AI', pageW / 2, 14, { align: 'center' });
+  const fillRect = (x: number, yy: number, w: number, h: number, color: readonly number[], r = 0) => {
+    doc.setFillColor(color[0], color[1], color[2]);
+    if (r > 0) doc.roundedRect(x, yy, w, h, r, r, 'F');
+    else doc.rect(x, yy, w, h, 'F');
+  };
 
-  // Destination skyline
-  drawSkyline(doc, fd.destination, margin, pageH * 0.62, usableW);
+  const withOpacity = (alpha: number, draw: () => void) => {
+    const gsAlpha = (doc as any).GState ? new (doc as any).GState({ opacity: alpha }) : null;
+    if (gsAlpha) (doc as any).setGState(gsAlpha);
+    draw();
+    if (gsAlpha) (doc as any).setGState(new (doc as any).GState({ opacity: 1 }));
+  };
 
-  // Trip title
-  setFont(doc, 28, C.white, 'bold');
-  doc.text(trip.title || 'Your Trip', pageW / 2, pageH * 0.36, { align: 'center' });
+  const drawRatingDots = (x: number, yy: number, rating: number, color: readonly number[]) => {
+    const full = Math.floor(rating);
+    const half = rating - full >= 0.5;
+    const r = 1.1;
+    doc.setDrawColor(color[0], color[1], color[2]);
+    for (let i = 0; i < 5; i++) {
+      const cx = x + i * (r * 2.4);
+      const filled = i < full || (i === full && half);
+      if (filled) {
+        doc.setFillColor(color[0], color[1], color[2]);
+        doc.circle(cx, yy, r, 'F');
+      } else {
+        doc.setLineWidth(0.25);
+        doc.circle(cx, yy, r, 'S');
+      }
+    }
+    return x + 5 * (r * 2.4);
+  };
 
-  // Summary
-  setFont(doc, 10, C.white80);
-  const summary = trip.summary || `${fd.duration || ''}-day trip to ${fd.destination || 'your destination'}`;
-  doc.text(summary, pageW / 2, pageH * 0.41, { align: 'center', maxWidth: usableW - 20 });
+  const addFooter = (pageLabel?: string) => {
+    const totalPages = doc.getNumberOfPages();
+    const p = (doc as any).internal.getCurrentPageInfo().pageNumber;
+    doc.setFontSize(7);
+    doc.setFont(TYPE.body, 'normal');
+    doc.setTextColor(LIGHT.muted[0], LIGHT.muted[1], LIGHT.muted[2]);
+    doc.text('Generated by Wandr AI', margin, pageH - 9);
+    doc.text(`Page ${p} of ${totalPages}`, pageW / 2, pageH - 9, { align: 'center' });
+    doc.text(new Date().toLocaleDateString(), pageW - margin, pageH - 9, { align: 'right' });
+    if (pageLabel) {
+      doc.setDrawColor(LIGHT.border[0], LIGHT.border[1], LIGHT.border[2]);
+      doc.setLineWidth(0.2);
+      doc.line(margin, pageH - 13, pageW - margin, pageH - 13);
+    }
+  };
 
-  // Teal decorative line
-  doc.setDrawColor(C.teal[0], C.teal[1], C.teal[2]);
+  const drawInteriorHeader = () => {
+    doc.setFontSize(8);
+    doc.setFont(TYPE.body, 'bold');
+    doc.setTextColor(LIGHT.primary[0], LIGHT.primary[1], LIGHT.primary[2]);
+    doc.text('WANDR', margin, 13);
+    doc.setFont(TYPE.body, 'normal');
+    doc.setTextColor(LIGHT.muted[0], LIGHT.muted[1], LIGHT.muted[2]);
+    doc.text(`Trip to ${fd.destination || ''}`, pageW - margin, 13, { align: 'right' });
+    doc.setDrawColor(LIGHT.border[0], LIGHT.border[1], LIGHT.border[2]);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 16, pageW - margin, 16);
+  };
+
+  const newInteriorPage = () => {
+    addFooter();
+    doc.addPage();
+    fillRect(0, 0, pageW, pageH, LIGHT.background);
+    drawInteriorHeader();
+    y = 26;
+  };
+
+  const checkPage = (needed: number) => {
+    if (y + needed > pageH - 22) {
+      newInteriorPage();
+      return true;
+    }
+    return false;
+  };
+
+  const sectionHeader = (title: string, accent: readonly number[] = LIGHT.primary) => {
+    checkPage(20);
+    y += 6;
+    setFont(14, LIGHT.foreground, 'bold', TYPE.display);
+    doc.text(title, margin, y);
+    doc.setDrawColor(accent[0], accent[1], accent[2]);
+    doc.setLineWidth(1);
+    const w = doc.getTextWidth(title);
+    doc.line(margin, y + 2, margin + Math.min(w, 42), y + 2);
+    y += 10;
+  };
+
+  // ============================================================ PAGE 1: COVER
+
+  fillRect(0, 0, pageW, pageH, DARK.background);
+
+  // Signature motif: this trip's actual origin -> destination arc, low opacity.
+  if (geo.originLat != null && geo.originLng != null && geo.destLat != null && geo.destLng != null) {
+    const start = { x: margin + 14, y: 150 };
+    const end = { x: pageW - margin - 14, y: 118 };
+    const points = buildArcPoints(start, end, { bow: 0.18 });
+    withOpacity(0.16, () => {
+      doc.setDrawColor(DARK.primary[0], DARK.primary[1], DARK.primary[2]);
+      doc.setLineWidth(0.6);
+      for (let i = 0; i < points.length - 1; i++) {
+        doc.line(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y);
+      }
+      doc.setFillColor(DARK.accent[0], DARK.accent[1], DARK.accent[2]);
+      doc.circle(start.x, start.y, 1.6, 'F');
+      doc.setFillColor(DARK.primary[0], DARK.primary[1], DARK.primary[2]);
+      doc.circle(end.x, end.y, 2.2, 'F');
+    });
+  }
+
+  // Brand mark + eyebrow
+  setFont(9, DARK.primary, 'bold');
+  doc.text('\u25C8  WANDR  \u00b7  AI-GENERATED TRIP', pageW / 2, 28, { align: 'center' });
+
+  setFont(28, DARK.foreground, 'bold', TYPE.display);
+  doc.text(trip.title, pageW / 2, 46, { align: 'center', maxWidth: usableW });
+
+  setFont(10, DARK.muted, 'normal');
+  doc.text(trip.summary, pageW / 2, 58, { align: 'center', maxWidth: usableW - 20 });
+
+  doc.setDrawColor(DARK.accent[0], DARK.accent[1], DARK.accent[2]);
   doc.setLineWidth(0.8);
-  doc.line(pageW / 2 - 25, pageH * 0.445, pageW / 2 + 25, pageH * 0.445);
+  doc.line(pageW / 2 - 24, 66, pageW / 2 + 24, 66);
 
-  // Date range
-  setFont(doc, 9, C.white40);
-  const dateRange = fd.startDate && fd.endDate
-    ? `${fd.startDate}  \u2192  ${fd.endDate}`
-    : '';
-  if (dateRange) doc.text(dateRange, pageW / 2, pageH * 0.47, { align: 'center' });
+  const dateRange = fd.startDate && fd.endDate ? `${fd.startDate}  \u2013  ${fd.endDate}` : '';
+  if (dateRange) {
+    setFont(8.5, DARK.muted);
+    doc.text(dateRange, pageW / 2, 74, { align: 'center' });
+  }
 
-  // Overview pills
-  const duration = fd.startDate && fd.endDate
-    ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / 86400000) + 1} days`
-    : '-- days';
-  const budgetVal = trip.budget?.actualCost ?? trip.budget?.total ?? fd.budget ?? 0;
+  // Overview cards, dark surfaces
+  const duration =
+    fd.startDate && fd.endDate
+      ? `${Math.ceil((new Date(fd.endDate).getTime() - new Date(fd.startDate).getTime()) / 86400000) + 1} days`
+      : '\u2013 days';
 
-  const pills = [
-    { label: 'Destination', value: fd.destination || '--', accent: C.amber },
-    { label: 'Duration', value: String(duration), accent: C.teal },
-    { label: 'Travelers', value: String(fd.travelers || 1), accent: C.amberDark },
-    { label: 'Budget', value: fmtCur(Number(budgetVal) || 0), accent: C.tealDark },
+  const overview = [
+    { label: 'DESTINATION', value: fd.destination, accent: DARK.primary },
+    { label: 'DURATION', value: duration, accent: DARK.accent },
+    { label: 'TRAVELERS', value: String(fd.travelers), accent: PALETTE.sunset500 },
+    {
+      label: 'TOTAL BUDGET',
+      value: fmtCur(Number((trip.budget as any)?.actualCost ?? (trip.budget as any)?.total ?? fd.budget) || 0),
+      accent: PALETTE.forest500,
+    },
   ];
 
-  const pillY = pageH * 0.53;
-  const pillW = (usableW - 18) / 2;
-  const pillH = 14;
-  pills.forEach((p, i) => {
+  const cardW = (usableW - 12) / 2;
+  const cardH = 22;
+  const cardsTop = 188;
+  overview.forEach((item, i) => {
     const col = i % 2;
     const row = Math.floor(i / 2);
-    const px = margin + col * (pillW + 18);
-    const py = pillY + row * (pillH + 5);
+    const cx = margin + col * (cardW + 12);
+    const cy = cardsTop + row * (cardH + 8);
 
-    drawRRect(doc, px, py, pillW, pillH, 3, [20, 20, 22]);
-    drawPill(doc, px + 2, py + 3, 2, pillH - 6, p.accent);
+    fillRect(cx, cy, cardW, cardH, DARK.surface, 3);
+    fillRect(cx, cy + 4, 1.6, cardH - 8, item.accent, 1);
 
-    setFont(doc, 6, C.white40);
-    doc.text(p.label, px + 8, py + 5);
-    setFont(doc, 9.5, C.white, 'bold');
-    doc.text(p.value, px + 8, py + 10.5);
+    setFont(7, DARK.muted, 'normal');
+    doc.text(item.label, cx + 8, cy + 9);
+    setFont(12, DARK.foreground, 'bold');
+    doc.text(item.value, cx + 8, cy + 17, { maxWidth: cardW - 14 });
   });
 
-  // Budget breakdown on cover
-  y = pillY + Math.ceil(pills.length / 2) * (pillH + 5) + 8;
+  setFont(7, [110, 110, 110] as any, 'normal');
+  doc.text('Generated by Wandr AI', pageW / 2, pageH - 12, { align: 'center' });
 
-  setFont(doc, 12, C.white, 'bold');
-  doc.text('Budget Breakdown', margin, y);
-  doc.setDrawColor(C.amber[0], C.amber[1], C.amber[2]);
-  doc.setLineWidth(1);
-  doc.line(margin, y + 2, margin + 35, y + 2);
-  y += 8;
+  // ============================================================ INTERIOR PAGES
 
-  const budgetCats = [
-    { label: 'Transport', key: 'transport', color: C.transport },
-    { label: 'Accommodation', key: 'accommodation', color: C.teal },
-    { label: 'Food', key: 'food', color: C.amber },
-    { label: 'Activities', key: 'activities', color: [124, 58, 237] },
-    { label: 'Miscellaneous', key: 'miscellaneous', color: C.textLight },
-    { label: 'Emergency', key: 'emergencyFund', color: C.textLight },
-  ].filter(b => (Number(trip.budget?.[b.key]) || 0) > 0);
-
-  const barMaxW = usableW * 0.4;
-  const maxAmt = Math.max(...budgetCats.map(b => Number(trip.budget?.[b.key]) || 0), 1);
-
-  budgetCats.forEach(b => {
-    const amt = Number(trip.budget?.[b.key]) || 0;
-    const barW = Math.max(2, (amt / maxAmt) * barMaxW);
-
-    setFont(doc, 8, C.white80);
-    doc.text(b.label, margin, y + 3.5);
-    setFont(doc, 8, C.white, 'bold');
-    doc.text(fmtCur(amt), pageW - margin, y + 3.5, { align: 'right' });
-
-    // Track
-    drawPill(doc, margin + 34, y + 6, barMaxW + 10, 2, [50, 50, 55]);
-    // Fill
-    drawPill(doc, margin + 34, y + 6, barW, 2, b.color);
-    y += 9;
-  });
-
-  // Total line
-  y += 2;
-  doc.setDrawColor(C.white40[0], C.white40[1], C.white40[2]);
-  doc.setLineWidth(0.4);
-  doc.line(margin, y, pageW - margin, y);
-  y += 5;
-  setFont(doc, 10, C.amber, 'bold');
-  doc.text('Total Budget', margin, y + 1);
-  doc.text(fmtCur(budgetVal), pageW - margin, y + 1, { align: 'right' });
-  y += 5;
-  setFont(doc, 7, C.white40);
-  doc.text(`Per Day: ${fmtCur(trip.budget?.perDay || 0)}    |    Per Person: ${fmtCur(trip.budget?.perPerson || 0)}`, margin, y + 1);
-
-  // ── NEW PAGE: LIGHT INTERIOR ──────────────────────────────────
   doc.addPage();
-  doc.setFillColor(C.pageBg[0], C.pageBg[1], C.pageBg[2]);
-  doc.rect(0, 0, pageW, pageH, 'F');
-  y = margin;
+  fillRect(0, 0, pageW, pageH, LIGHT.background);
+  drawInteriorHeader();
+  y = 26;
 
-  // ── SECTION: DAY-BY-DAY ITINERARY ──────────────────────────────
-  const days: any[] = trip.days ?? [];
+  // ---------- Budget Breakdown ----------
+  sectionHeader('Budget Breakdown', LIGHT.accent);
 
-  days.forEach((day, dayIdx) => {
-    y = checkPage(doc, y, 30, pageW, pageH, margin);
+  const b = trip.budget as any;
+  const budgetItems = [
+    { label: 'Transport', amount: Number(b?.transport) || 0, color: PALETTE.ocean500 },
+    { label: 'Accommodation', amount: Number(b?.accommodation) || 0, color: PALETTE.forest500 },
+    { label: 'Food', amount: Number(b?.food) || 0, color: PALETTE.sunset500 },
+    { label: 'Activities', amount: Number(b?.activities) || 0, color: LIGHT.accent },
+    { label: 'Miscellaneous', amount: Number(b?.miscellaneous) || 0, color: PALETTE.earth500 },
+    { label: 'Emergency', amount: Number(b?.emergencyFund) || 0, color: PALETTE.earth300 },
+  ].filter((item) => item.amount > 0);
 
-    // Day header bar
-    drawRRect(doc, margin, y, usableW, 9, 2, [20, 20, 22]);
-    setFont(doc, 10, C.white, 'bold');
-    doc.text(`Day ${day.dayNumber ?? dayIdx + 1}: ${day.theme || ''}`, margin + 5, y + 6.2);
+  const barMaxW = usableW * 0.45;
+  const maxAmount = Math.max(...budgetItems.map((i) => i.amount), 1);
+
+  budgetItems.forEach((item) => {
+    checkPage(11);
+    const barW = Math.max(2, (item.amount / maxAmount) * barMaxW);
+    setFont(8.5, LIGHT.muted);
+    doc.text(item.label, margin, y + 4);
+    setFont(8.5, LIGHT.foreground, 'bold');
+    doc.text(fmtCur(item.amount), pageW - margin, y + 4, { align: 'right' });
+    fillRect(margin + 38, y + 6, barMaxW + 10, 2.4, LIGHT.surfaceMuted, 1.2);
+    fillRect(margin + 38, y + 6, barW, 2.4, item.color, 1.2);
+    y += 10;
+  });
+
+  y += 3;
+  checkPage(16);
+  doc.setDrawColor(LIGHT.border[0], LIGHT.border[1], LIGHT.border[2]);
+  doc.setLineWidth(0.3);
+  doc.line(margin, y, pageW - margin, y);
+  y += 6;
+  setFont(9.5, LIGHT.foreground, 'bold');
+  doc.text('Total Budget', margin, y);
+  doc.text(fmtCur(Number(b?.actualCost ?? b?.total) || 0), pageW - margin, y, { align: 'right' });
+  y += 6;
+  setFont(7.5, LIGHT.muted);
+  doc.text(`Per Day: ${fmtCur(Number(b?.perDay) || 0)}   \u00b7   Per Person: ${fmtCur(Number(b?.perPerson) || 0)}`, margin, y);
+  y += 14;
+
+  // ---------- Day-by-day itinerary ----------
+  const days = trip.days ?? [];
+  const allActivityPins: { lat: number; lng: number }[] = [];
+
+  days.forEach((day: any, dayIdx: number) => {
+    checkPage(20);
+    fillRect(margin, y - 2, usableW, 9, LIGHT.primary, 2);
+    setFont(10.5, [255, 255, 255] as any, 'bold');
+    doc.text(`Day ${day.dayNumber}: ${day.theme}`, margin + 6, y + 4);
     if (day.date) {
-      setFont(doc, 7, C.white40);
-      doc.text(String(day.date), pageW - margin - 4, y + 6, { align: 'right' });
+      setFont(7, [255, 235, 220] as any);
+      doc.text(day.date, pageW - margin - 4, y + 4, { align: 'right' });
     }
     y += 12;
 
     if (day.summary) {
-      setFont(doc, 7.5, C.textMid);
-      doc.text(String(day.summary), margin + 2, y, { maxWidth: usableW - 4 });
+      setFont(8, LIGHT.muted);
+      doc.text(day.summary, margin + 2, y, { maxWidth: usableW - 4 });
       y += 6;
     }
 
-    const acts: any[] = day.activities ?? [];
+    const acts = day.activities ?? [];
+    acts.forEach((a: any) => {
+      if (a.lat != null && a.lng != null) allActivityPins.push({ lat: a.lat, lng: a.lng });
+    });
+
     if (acts.length > 0) {
-      y = checkPage(doc, y, 12, pageW, pageH, margin);
+      checkPage(Math.min(acts.length * 9 + 14, pageH - 50));
 
       autoTable(doc, {
         startY: y,
         head: [['Time', 'Activity', 'Location', 'Duration', 'Cost', 'Type']],
-        body: acts.map(act => [
-          act.time || '--',
+        body: acts.map((act: any) => [
+          act.time || '\u2013',
           act.title || '',
           act.location || '',
-          fmtDuration(act.duration),
+          act.duration ? `${act.duration}m` : '',
           fmtCur(Number(act.cost) || 0),
           act.type || '',
         ]),
-        margin: { left: margin, right: margin, top: 0, bottom: 0 },
+        margin: { left: margin, right: margin },
         styles: {
+          font: TYPE.body,
           fontSize: 7.5,
-          cellPadding: 2.5,
-          textColor: [C.textDark[0], C.textDark[1], C.textDark[2]],
-          lineColor: [C.border[0], C.border[1], C.border[2]],
-          lineWidth: 0.15,
-          font: useInter ? 'Inter' : 'helvetica',
+          cellPadding: 2.6,
+          textColor: LIGHT.foreground as any,
+          lineColor: LIGHT.border as any,
+          lineWidth: 0.2,
         },
         headStyles: {
-          fillColor: [245, 243, 240],
-          textColor: C.textMid,
-          fontSize: 6.5,
+          fillColor: LIGHT.surfaceMuted as any,
+          textColor: LIGHT.muted as any,
+          fontSize: 7,
           fontStyle: 'bold',
-          font: useInter ? 'Inter' : 'helvetica',
+          lineColor: LIGHT.border as any,
+          lineWidth: 0.3,
         },
-        alternateRowStyles: { fillColor: C.rowAlt },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
         columnStyles: {
-          0: { cellWidth: 16, fontStyle: 'bold' },
-          1: { cellWidth: 42 },
-          2: { cellWidth: 36 },
+          0: { cellWidth: 17, fontStyle: 'bold' },
+          1: { cellWidth: 43 },
+          2: { cellWidth: 34 },
           3: { cellWidth: 18, halign: 'center' },
-          4: { cellWidth: 22, halign: 'right', fontStyle: 'bold' },
-          5: { cellWidth: 22, halign: 'center' },
+          4: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
+          5: { cellWidth: 20, halign: 'center' },
         },
         didDrawCell: (data: any) => {
           if (data.section === 'body' && data.column.index === 5) {
-            const typeColors: Record<string, number[]> = {
-              TRANSPORT: C.transport,
-              SIGHTSEEING: C.sightseeing,
-              ADVENTURE: C.adventure,
-              RESTAURANT: C.restaurant,
-              SHOPPING: C.shopping,
-              ACCOMMODATION: C.accommodation,
-              REST: C.rest,
+            const typeColors: Record<string, readonly number[]> = {
+              TRANSPORT: PALETTE.ocean500,
+              SIGHTSEEING: LIGHT.accent,
+              ADVENTURE: PALETTE.sunset500,
+              RESTAURANT: PALETTE.sunset500,
+              SHOPPING: LIGHT.primary,
+              ACCOMMODATION: PALETTE.forest500,
+              REST: LIGHT.muted,
             };
-            const col = typeColors[data.cell.raw] || C.textMid;
+            const col = typeColors[String(data.cell.raw).toUpperCase()] || LIGHT.muted;
             doc.setTextColor(col[0], col[1], col[2]);
             doc.setFontSize(6.5);
-            if (useInter) doc.setFont('Inter', 'bold'); else doc.setFont('helvetica', 'bold');
-            doc.text(String(data.cell.raw), data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 1.2, { align: 'center' });
+            doc.setFont(TYPE.body, 'bold');
+            doc.text(String(data.cell.raw), data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 1.2, {
+              align: 'center',
+            });
           }
           if (data.section === 'body' && data.column.index === 4) {
-            doc.setTextColor(C.amber[0], C.amber[1], C.amber[2]);
+            doc.setTextColor(LIGHT.primary[0], LIGHT.primary[1], LIGHT.primary[2]);
           }
         },
       });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      y = (doc as any).lastAutoTable?.finalY + 8;
+
+      y = (doc as any).lastAutoTable?.finalY + 6;
     }
 
     if (dayIdx < days.length - 1) {
-      y = checkPage(doc, y, 8, pageW, pageH, margin);
-      doc.setDrawColor(C.border[0], C.border[1], C.border[2]);
+      checkPage(8);
+      y += 3;
+      doc.setDrawColor(LIGHT.border[0], LIGHT.border[1], LIGHT.border[2]);
       doc.setLineWidth(0.2);
       doc.line(margin + 10, y, pageW - margin - 10, y);
       y += 5;
     }
   });
 
-  // ── SECTION: SCHEMATIC MAP ─────────────────────────────────────
-  y = checkPage(doc, y, 65, pageW, pageH, margin);
-  setFont(doc, 12, C.textDark, 'bold');
-  doc.text('Route Map', margin, y);
-  doc.setDrawColor(C.amber[0], C.amber[1], C.amber[2]);
-  doc.setLineWidth(1);
-  doc.line(margin, y + 2, margin + 28, y + 2);
-  y += 8;
-  y = drawSchematicMap(doc, trip, margin, y, usableW, 55);
-
-  // ── SECTION: HOTELS ────────────────────────────────────────────
-  const hotels: any[] = trip.hotels || [];
-  if (hotels.length > 0) {
-    y = checkPage(doc, y, 30, pageW, pageH, margin);
-    setFont(doc, 12, C.textDark, 'bold');
-    doc.text('Recommended Stays', margin, y);
-    doc.setDrawColor(C.teal[0], C.teal[1], C.teal[2]);
-    doc.setLineWidth(1);
-    doc.line(margin, y + 2, margin + 38, y + 2);
-    y += 8;
-
-    hotels.forEach((hotel) => {
-      y = checkPage(doc, y, 18, pageW, pageH, margin);
-      drawRRect(doc, margin, y, usableW, 16, 3, C.cardBg);
-      doc.setDrawColor(C.border[0], C.border[1], C.border[2]);
-      doc.setLineWidth(0.2);
-      doc.roundedRect(margin, y, usableW, 16, 3, 3, 'S');
-
-      drawPill(doc, margin + 3, y + 3, 2, 10, C.teal);
-
-      setFont(doc, 9, C.textDark, 'bold');
-      doc.text(hotel.name || 'Hotel', margin + 9, y + 5);
-      setFont(doc, 7, C.textMid);
-      const hMeta = [
-        hotel.type || hotel.location || hotel.area || '',
-        hotel.rating ? `${stars(hotel.rating)} ${hotel.rating}` : '',
-        `${fmtCur(Number(hotel.pricePerNight) || 0)}/night`,
-      ].filter(Boolean).join('  \u00b7  ');
-      doc.text(hMeta, margin + 9, y + 10.5);
-      if (hotel.amenities?.length) {
-        setFont(doc, 6, C.tealDark);
-        doc.text(hotel.amenities.slice(0, 6).join('  \u00b7  '), margin + 9, y + 13.5, { maxWidth: usableW - 18 });
+  // ---------- Destination map ----------
+  if (geo.destLat != null && geo.destLng != null) {
+    try {
+      const snapshot = await getDestinationMapSnapshot(geo.destLat, geo.destLng, {
+        widthPx: 1000,
+        heightPx: 560,
+        zoom: 12,
+        extraPins: allActivityPins.slice(0, 12).map((p) => ({ ...p, color: LIGHT.accent as any, radius: 3.5 })),
+      });
+      if (snapshot) {
+        const imgW = usableW;
+        const imgH = imgW * (560 / 1000);
+        checkPage(imgH + 20);
+        y += 4;
+        sectionHeader('Where You\u2019re Headed', LIGHT.primary);
+        fillRect(margin - 1, y - 1, imgW + 2, imgH + 2, LIGHT.border, 3);
+        doc.addImage(snapshot, 'PNG', margin, y, imgW, imgH, undefined, 'FAST');
+        y += imgH + 12;
       }
+    } catch {
+      // Map is a nice-to-have; never let it break the rest of the document.
+    }
+  }
+
+  // ---------- Hotels ----------
+  if (trip.hotels && trip.hotels.length > 0) {
+    y += 2;
+    sectionHeader('Recommended Stays', LIGHT.accent);
+
+    (trip.hotels as any[]).forEach((hotel) => {
+      checkPage(20);
+      fillRect(margin, y - 1, usableW, 16, LIGHT.surfaceMuted, 2);
+      setFont(9.5, LIGHT.foreground, 'bold');
+      doc.text(hotel.name || 'Hotel', margin + 5, y + 5);
+      setFont(7.5, LIGHT.muted);
+      const loc = hotel.type || hotel.location || '';
+      doc.text(loc, margin + 5, y + 10.5);
+      if (hotel.rating) {
+        drawRatingDots(margin + 5 + doc.getTextWidth(loc) + 5, y + 9.3, Number(hotel.rating), PALETTE.sunset500);
+      }
+      setFont(7.5, LIGHT.foreground, 'bold');
+      doc.text(`${fmtCur(Number(hotel.pricePerNight) || 0)}/night`, pageW - margin - 5, y + 10.5, { align: 'right' });
       y += 20;
     });
   }
 
-  // ── SECTION: FOOD & DINING ──────────────────────────────────────
-  const restaurants: any[] = trip.restaurants || [];
-  if (restaurants.length > 0) {
-    y = checkPage(doc, y, 30, pageW, pageH, margin);
-    setFont(doc, 12, C.textDark, 'bold');
-    doc.text('Food & Dining', margin, y);
-    doc.setDrawColor(C.amber[0], C.amber[1], C.amber[2]);
-    doc.setLineWidth(1);
-    doc.line(margin, y + 2, margin + 28, y + 2);
-    y += 8;
+  // ---------- Food & Dining ----------
+  if (trip.restaurants && trip.restaurants.length > 0) {
+    y += 2;
+    sectionHeader('Food & Dining', PALETTE.sunset500);
 
-    restaurants.forEach((r) => {
-      y = checkPage(doc, y, 18, pageW, pageH, margin);
-      setFont(doc, 9, C.textDark, 'bold');
-      doc.text(r.name || 'Restaurant', margin, y + 3);
-      setFont(doc, 7, C.textMid);
-      const rMeta = [
-        r.cuisine,
-        r.rating ? `${stars(r.rating)} ${r.rating}` : '',
-        r.priceRange || `${fmtCur(Number(r.pricePerPerson) || 0)}/person`,
-      ].filter(Boolean).join('  \u00b7  ');
-      doc.text(rMeta, margin, y + 8);
-      if (r.mustTry?.length) {
-        setFont(doc, 7, C.amberDark);
-        doc.text(`Must try: ${Array.isArray(r.mustTry) ? r.mustTry.join(', ') : r.mustTry}`, margin, y + 12);
-        y += 4;
+    (trip.restaurants as any[]).forEach((r) => {
+      checkPage(18);
+      setFont(9, LIGHT.foreground, 'bold');
+      doc.text(r.name || 'Restaurant', margin, y + 2);
+      let metaY = y + 7;
+      setFont(7.5, LIGHT.muted);
+      doc.text(r.cuisine || '', margin, metaY);
+      if (r.rating) {
+        drawRatingDots(margin + doc.getTextWidth(r.cuisine || '') + 6, metaY - 1.2, Number(r.rating), PALETTE.sunset500);
       }
-      y += 10;
+      const priceText = r.priceRange || (r.pricePerPerson ? `${fmtCur(Number(r.pricePerPerson) || 0)}/person` : '');
+      if (priceText) doc.text(priceText, pageW - margin, metaY, { align: 'right' });
+
+      if (r.mustTry?.length) {
+        setFont(7.5, LIGHT.accent);
+        doc.text(`Must try: ${r.mustTry.join(', ')}`, margin, metaY + 5, { maxWidth: usableW });
+        y = metaY + 11;
+      } else {
+        y = metaY + 7;
+      }
     });
   }
 
-  // ── SECTION: PACKING CHECKLIST (FIXED — groups by category) ────
-  const rawPacking: any[] = trip.packingList || [];
-  if (rawPacking.length > 0) {
-    y = checkPage(doc, y, 30, pageW, pageH, margin);
-    setFont(doc, 12, C.textDark, 'bold');
-    doc.text('Packing Checklist', margin, y);
-    doc.setDrawColor([124, 58, 237][0], [124, 58, 237][1], [124, 58, 237][2]);
-    doc.setLineWidth(1);
-    doc.line(margin, y + 2, margin + 36, y + 2);
-    y += 8;
+  // ---------- Packing Checklist ----------
+  if (trip.packingList && trip.packingList.length > 0) {
+    y += 2;
+    sectionHeader('Packing Checklist', LIGHT.primary);
 
-    // BUG FIX: The AI returns a FLAT array [{item, reason, category, essential}],
-    // NOT [{category, items: [...]}]. Group by category first.
-    const groups: Record<string, any[]> = {};
-    rawPacking.forEach((p: any) => {
-      const cat = p.category || 'Other';
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(p);
-    });
+    (trip.packingList as any[]).forEach((cat) => {
+      checkPage(16);
+      setFont(8.5, LIGHT.foreground, 'bold');
+      doc.text(cat.category || 'Packing', margin, y + 2);
 
-    const catColors: Record<string, number[]> = {
-      clothing: C.amber,
-      accessories: C.teal,
-      electronics: C.transport,
-      toiletries: [219, 39, 119],
-      documents: C.textMid,
-      essential: C.sightseeing,
-      other: C.textLight,
-    };
+      const rawItems = Array.isArray(cat.items) ? cat.items : Array.isArray(cat) ? cat : [];
+      const itemNames = rawItems
+        .map((it: any) => (typeof it === 'string' ? it : it?.name || it?.item || ''))
+        .filter(Boolean);
 
-    Object.entries(groups).forEach(([cat, items]) => {
-      y = checkPage(doc, y, 14, pageW, pageH, margin);
-
-      // Category header with colored dot
-      const cc = catColors[cat.toLowerCase()] || C.textMid;
-      doc.setFillColor(cc[0], cc[1], cc[2]);
-      doc.circle(margin + 2, y + 2.5, 1.5, 'F');
-
-      setFont(doc, 8.5, C.textDark, 'bold');
-      doc.text(cat.charAt(0).toUpperCase() + cat.slice(1), margin + 6, y + 4);
-      y += 7;
-
-      items.forEach((item: any) => {
-        y = checkPage(doc, y, 5, pageW, pageH, margin);
-        const name = item.item || item.name || '';
-        const essential = item.essential ? '\u2713 ' : '\u25cb ';
-        setFont(doc, 7, C.textMid);
-        doc.text(`${essential}${name}`, margin + 5, y + 3);
-        y += 4.5;
-      });
-      y += 3;
+      if (itemNames.length === 0) {
+        setFont(7, [...LIGHT.muted] as any, 'normal');
+        doc.text('No items listed for this category.', margin + 3, y + 7);
+        y += 11;
+      } else {
+        const joined = itemNames.join('  \u00b7  ');
+        setFont(7, LIGHT.muted);
+        doc.text(joined, margin + 3, y + 7, { maxWidth: usableW - 6 });
+        const lineCount = doc.splitTextToSize(joined, usableW - 6).length;
+        y += Math.max(12, lineCount * 4 + 8);
+      }
     });
   }
 
-  // ── SECTION: SAFETY & TIPS (FIXED — full data, no truncation) ──
-  // BUG FIX: try both trip.safety and trip.safetyInfo paths
-  const safety: any = trip.safety || trip.safetyInfo || null;
-  if (safety) {
-    y = checkPage(doc, y, 30, pageW, pageH, margin);
-    setFont(doc, 12, C.textDark, 'bold');
-    doc.text('Safety & Travel Tips', margin, y);
-    doc.setDrawColor(C.amber[0], C.amber[1], C.amber[2]);
-    doc.setLineWidth(1);
-    doc.line(margin, y + 2, margin + 38, y + 2);
-    y += 8;
+  // ---------- Safety & Tips ----------
+  const safety = trip.safety as any;
+  if (safety && (safety.tips?.length || safety.overallScore)) {
+    y += 2;
+    sectionHeader('Safety & Tips', PALETTE.sunset500);
 
-    // Safety score
     if (safety.overallScore) {
-      const sc = Number(safety.overallScore);
-      const scColor = sc >= 7 ? C.sightseeing : sc >= 4 ? C.amber : C.restaurant;
-      drawRRect(doc, margin, y, 48, 8, 2, scColor);
-      setFont(doc, 8, C.white, 'bold');
-      doc.text(`Safety Score: ${sc}/10`, margin + 4, y + 5.5);
-      y += 12;
+      const scoreColor = safety.overallScore >= 7 ? PALETTE.forest500 : safety.overallScore >= 4 ? PALETTE.sunset500 : [219, 39, 89];
+      checkPage(14);
+      fillRect(margin, y - 1, 56, 9, scoreColor as any, 2);
+      setFont(8.5, [255, 255, 255] as any, 'bold');
+      doc.text(`Safety Score: ${safety.overallScore}/10`, margin + 5, y + 5);
+      y += 14;
     }
 
-    // Tips — show ALL, not just 5
-    const tips: string[] = safety.tips || [];
-    if (tips.length > 0) {
-      setFont(doc, 8, C.textDark, 'bold');
-      doc.text('Tips', margin, y);
-      y += 5;
-      tips.forEach((tip: string) => {
-        y = checkPage(doc, y, 5, pageW, pageH, margin);
-        setFont(doc, 7, C.textMid);
-        doc.text(`\u2022  ${tip}`, margin + 3, y + 3);
-        y += 4.5;
-      });
-      y += 3;
-    }
-
-    // Scam alerts
-    const scams: string[] = safety.scamAlerts || [];
-    if (scams.length > 0) {
-      setFont(doc, 8, C.textDark, 'bold');
-      doc.text('Scam Alerts', margin, y);
-      y += 5;
-      scams.forEach((s: string) => {
-        y = checkPage(doc, y, 5, pageW, pageH, margin);
-        setFont(doc, 7, C.restaurant);
-        doc.text(`\u2022  ${s}`, margin + 3, y + 3);
-        y += 4.5;
-      });
-      y += 3;
-    }
-
-    // Emergency info
-    if (safety.emergencyNumber) {
-      setFont(doc, 8, C.textDark, 'bold');
-      doc.text(`Emergency: ${safety.emergencyNumber}`, margin, y);
+    (safety.tips || []).slice(0, 10).forEach((tip: string) => {
+      checkPage(8);
+      setFont(7.5, LIGHT.muted);
+      doc.text(`\u2022  ${tip}`, margin + 2, y + 2, { maxWidth: usableW - 4 });
       y += 6;
-    }
-
-    // Hospitals
-    const hospitals: any[] = safety.hospitals || [];
-    if (hospitals.length > 0) {
-      setFont(doc, 8, C.textDark, 'bold');
-      doc.text('Nearby Hospitals', margin, y);
-      y += 5;
-      hospitals.forEach((h: any) => {
-        y = checkPage(doc, y, 5, pageW, pageH, margin);
-        setFont(doc, 7, C.textMid);
-        doc.text(`\u2022  ${h.name || 'Hospital'}${h.distance ? `  \u2014  ${h.distance}` : ''}${h.phone ? `  \u2014  ${h.phone}` : ''}`, margin + 3, y + 3);
-        y += 4.5;
-      });
-    }
+    });
   }
 
-  // ── FINAL FOOTER ──────────────────────────────────────────────
-  addFooter(doc, pageW, pageH, margin);
+  // ---------- Closing sign-off ----------
+  checkPage(34);
+  y += 6;
+  doc.setDrawColor(LIGHT.border[0], LIGHT.border[1], LIGHT.border[2]);
+  doc.setLineWidth(0.3);
+  doc.line(pageW / 2 - 20, y, pageW / 2 + 20, y);
+  y += 9;
+  setFont(11, LIGHT.primary, 'bold', TYPE.display);
+  doc.text('Have an amazing trip.', pageW / 2, y, { align: 'center' });
+  y += 6;
+  setFont(7.5, LIGHT.muted);
+  doc.text('\u2014 Team Wandr AI', pageW / 2, y, { align: 'center' });
 
-  // ── SAVE ──────────────────────────────────────────────────────
+  addFooter();
+
+  return doc;
+}
+
+/**
+ * Browser-only convenience wrapper: builds the document, then triggers the
+ * actual file download. This is what the "Download PDF" button should call.
+ */
+export async function downloadTripPDF(trip: GeneratedTrip, fd: TripFormData, geo: GeoContext = {}): Promise<void> {
+  const doc = await buildTripPDF(trip, fd, geo);
   const safeName = (trip.title || 'Wandr_Trip').replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_').substring(0, 40);
-  doc.save(`${safeName}.pdf`);
+  doc.save(`${safeName || 'Wandr_Trip'}.pdf`);
 }
