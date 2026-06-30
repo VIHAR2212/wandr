@@ -3,7 +3,6 @@ import { generateAIJson } from '@/lib/ai';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/db';
 import { findTrains, formatTrainsForPrompt } from '@/lib/trains/findTrains';
-import { checkRateLimit } from '@/lib/rateLimit';
 
 export const runtime    = 'nodejs';
 export const maxDuration = 10;
@@ -43,6 +42,12 @@ function safePurpose(value: unknown) {
     : 'CULTURAL';
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   SERVER-SIDE GEOCODING
+   Runs after AI generation, before Prisma save.
+   Nominatim is called from the Node.js server — never blocked by Vercel Edge.
+   Fills in lat/lng on every activity that has lat:0 or lng:0.
+───────────────────────────────────────────────────────────────────────── */
 const geoCache = new Map<string, { lat: number; lng: number } | null>();
 
 async function serverGeocode(
@@ -75,6 +80,11 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Geocodes every activity/hotel/restaurant in the AI output that has
+ * lat:0 or lng:0 (AI placeholder).
+ * Mutates the days array in-place and returns it.
+ */
 async function geocodeItinerary(
   days: any[],
   destination: string
@@ -89,6 +99,9 @@ async function geocodeItinerary(
         !isNaN(Number(act.lat)) && !isNaN(Number(act.lng));
 
       if (!hasCoords) {
+        // Build the best possible query:
+        // Use the location string (e.g. "Taj Mahal, Agra") if available,
+        // otherwise fall back to title + destination
         const locStr = typeof act.location === 'string' ? act.location : '';
         const query  = locStr
           ? `${locStr}, ${destination}`
@@ -96,13 +109,14 @@ async function geocodeItinerary(
 
         if (!query.trim() || query.trim() === `, ${destination}`) continue;
 
-        if (reqCount > 0) await sleep(1100);
+        if (reqCount > 0) await sleep(1100); // Nominatim 1 req/sec
         reqCount++;
 
         const geo = await serverGeocode(query);
         if (geo) {
           act.lat = geo.lat;
           act.lng = geo.lng;
+          // Also write to nested location object if present
           if (act.location && typeof act.location === 'object') {
             act.location.lat = geo.lat;
             act.location.lng = geo.lng;
@@ -117,6 +131,8 @@ async function geocodeItinerary(
 
   return days;
 }
+
+/* ─────────────────────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest) {
   try {
@@ -143,58 +159,47 @@ export async function POST(req: NextRequest) {
     const endD     = new Date(endDate);
     const duration = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
-    const rl = checkRateLimit(session.user.id, "TRIP_GEN");
-    if (!rl.allowed) {
-      return NextResponse.json(
-        { error: "Too many trip generations. Try again later.", retryAfter: rl.retryAfter, remaining: rl.remaining },
-        { status: 429 }
-      );
-    }
-
-    let realTrains: Awaited<ReturnType<typeof findTrains>> = [];
-    try {
-      realTrains = await findTrains(origin, destination);
-    } catch (err) {
-      console.warn('[generate-trip] findTrains failed, using AI-only transport:', err);
-    }
+    // Look up real Indian Railways trains for this route (major cities only —
+    // see src/lib/trains/cityStationMap.ts). When available, these are
+    // injected into the prompt so the AI picks a REAL train number/name/timing
+    // instead of inventing one, the same way it currently invents flight numbers.
+    const realTrains = await findTrains(origin, destination);
     const trainPromptBlock = formatTrainsForPrompt(realTrains);
 
-    // ── Determine transport mode for prompt ──
-    const prefs: string[] = (transportPreferences ?? []) as string[];
-    const isTrain = prefs.some(p => ['TRAIN', 'RAIL'].includes(p.toUpperCase()));
-    const isFlight = prefs.some(p => p.toUpperCase() === 'FLIGHT');
+    const systemPrompt = `Expert travel planner who knows every destination intimately. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose ?? 'general travel'}. Hotel: ${hotelPreference}. You have deep real-world knowledge of ${destination} — use it for every section.`;
 
-    const systemPrompt = `Expert travel planner. Return ONLY valid JSON, no markdown. Costs in ${currency ?? 'INR'}. Food: ${FOOD_LABEL[foodPreference] ?? 'any'}. Style: ${PURPOSE_LABEL[purpose] ?? purpose ?? 'general travel'}. Hotel: ${hotelPreference}.`;
-
-    // ── Dynamic transport example based on user choice ──
-    const transportExampleTitle = isTrain
-      ? `Train: ${origin} to ${destination}`
-      : `Flight: ${origin} to ${destination}`;
-    const transportExampleDesc = isTrain
-      ? `Shatabdi Express dep 06:00 → arr 08:15 · Confirm seats on IRCTC`
-      : `IndiGo 6E-204 · T2 Departure · Arrives T1`;
-    const transportExampleLoc = isTrain
-      ? `${origin} Junction Railway Station`
-      : `${origin} Airport`;
-    const transportExampleNote = isTrain
-      ? 'Reach station 30min early · Carry valid ID'
-      : 'Reach airport 2hrs early';
-
-    const userPrompt = `${duration}-day ${destination} trip. Budget: ${budget} ${currency ?? 'INR'}, ${travelers ?? 1} traveler(s), ${startDate} to ${endDate}. Transport pref: ${prefs.join('/') || 'any'}.${specialRequests ? ` Notes: ${specialRequests}.` : ''}
- ${trainPromptBlock ? `\n${trainPromptBlock}\n` : ''}
+    const userPrompt = `${duration}-day ${destination} trip. Budget: ${budget} ${currency ?? 'INR'}, ${travelers ?? 1} traveler(s), ${startDate} to ${endDate}. Transport pref: ${(transportPreferences ?? []).join('/') || 'any'}.${specialRequests ? ` Notes: ${specialRequests}.` : ''}
+${trainPromptBlock ? `\n${trainPromptBlock}\n` : ''}
 STRICT JSON (no markdown, no text):
-{"destination":"${destination}","title":"...","summary":"2-3 lines","totalDays":${duration},"itinerary":[{"day":1,"date":"${startDate}","theme":"Theme","activities":[{"time":"06:00-08:15","type":"TRANSPORT","title":"${transportExampleTitle}","description":"${transportExampleDesc}","location":"${transportExampleLoc}","lat":28.5562,"lng":77.1000,"cost":0,"duration":135,"notes":"${transportExampleNote}"},{"time":"09:00","type":"SIGHTSEEING","title":"Visit Place","description":"Details","location":"Exact Place Name, ${destination}","lat":11.6234,"lng":92.7265,"cost":0,"duration":90,"notes":"tip"}]}],"hotels":[{"name":"Hotel Name","area":"Area","lat":11.6234,"lng":92.7265,"pricePerNight":2000,"rating":4,"amenities":["WiFi"],"diet":"${foodPreference || 'all'}"}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","diet":"${foodPreference || 'all'}","lat":11.6234,"lng":92.7265,"pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","lat":11.6234,"lng":92.7265,"when":"Early morning","cost":0}],"transportGuide":{"overview":"Brief transport overview","legs":[{"from":"${origin}","to":"${destination}","mode":"${prefs[0] || 'FLIGHT'}","duration":"2h","cost":0,"operator":"Operator","vehicleNo":"Code","vehicle":"Vehicle"}]},"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"item":"Comfortable shoes","reason":"For walking","category":"clothing","essential":true}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"],"forecast":[{"date":"${startDate}","condition":"Sunny","high":32,"low":22}]},"safety":{"overallScore":8,"tips":["Stay aware"],"emergencyNumber":"112","scamAlerts":["Common scam"],"hospitals":[{"name":"Nearest Hospital","distance":"2km","phone":"0"}]}}
+{"destination":"${destination}","title":"...","summary":"2-3 lines","totalDays":${duration},"itinerary":[{"day":1,"date":"${startDate}","theme":"Theme","activities":[{"time":"06:00-08:15","type":"TRANSPORT","title":"Flight: ${origin} to ${destination}","description":"IndiGo 6E-204 · T2 Departure · Arrives T1","location":"${origin} Airport","lat":28.5562,"lng":77.1000,"cost":0,"duration":135,"notes":"Reach airport 2hrs early"},{"time":"09:00","type":"SIGHTSEEING","title":"Visit Place","description":"Details","location":"Exact Place Name, ${destination}","lat":11.6234,"lng":92.7265,"cost":0,"duration":90,"notes":"tip"}]}],"hotels":[{"name":"Hotel Name","area":"Area","lat":11.6234,"lng":92.7265,"pricePerNight":2000,"rating":4,"amenities":["WiFi"],"diet":"${foodPreference || 'all'}"}],"restaurants":[{"name":"Restaurant Name","cuisine":"Food type","diet":"${foodPreference || 'all'}","lat":11.6234,"lng":92.7265,"pricePerPerson":300,"rating":4,"mustTry":["dish"]}],"hiddenGems":[{"name":"Offbeat Spot","description":"Why it's special","lat":11.6234,"lng":92.7265,"when":"Early morning","cost":0}],"transportGuide":{"overview":"Brief transport overview","legs":[{"from":"${origin}","to":"${destination}","mode":"${(transportPreferences ?? ['FLIGHT'])[0]}","duration":"2h","cost":0,"operator":"Airline/Railway","vehicleNo":"6E-204","vehicle":"A320neo"}]},"budgetBreakdown":{"accommodation":0,"food":0,"transport":0,"activities":0,"misc":0,"total":${budget}},"packingList":[{"category":"Clothing","items":[{"name":"Breathable cotton shirts","reason":"Rajasthan summer temperatures exceed 40°C","essential":true,"quantity":3}]},{"category":"Essentials","items":[{"name":"Sunscreen SPF 50+","reason":"Desert sun is extremely harsh; UV index very high","essential":true,"quantity":1}]}],"weatherForecast":{"expected":"Pleasant","avgTemp":"28°C","tips":["Carry water"],"forecast":[{"date":"${startDate}","condition":"Sunny","high":32,"low":22}]},"safety":{"overallScore":7,"tips":["Avoid isolated areas after dark near the fort boundaries","Keep bottled water with you at all times — dehydration is common","Dress modestly when visiting temples and religious sites"],"emergencyNumber":"112","scamAlerts":["Fake guides at major tourist spots may demand excessive fees — only hire guides from the official government counter at the entrance","Some auto-rickshaw drivers may overcharge — insist on meter or agree on a price before boarding"],"hospitals":[{"name":"SMS Hospital","distance":"3km from city centre","phone":"0141-2518121"}],"safeAreas":["MI Road and surrounding areas","Old City market area during daytime"],"avoidAreas":["Isolated stretches near forts after sunset","Unlit narrow lanes in the old city at night"],"vaccinations":[]}}
 
 RULES:
 1. Return ONLY valid JSON. No markdown fences, no comments, no trailing commas.
-2. Each day has an activities array. If city changed from previous day, add transport activity FIRST: {type:"transport", title:"Train/Flight to [City]", description:"[Train Name] [Number] ([Class]) dep [HH:MM] → arr [HH:MM]" or "[Airline] [Code] dep [HH:MM] → arr [HH:MM]", time:"HH:MM", duration:"Xh Ym", cost:Number}.
+2. Each day has an activities array. If city changed from previous day, add transport activity FIRST: {type:"transport", title:"Flight/Train to [City]", description:"[Airline] [Code] dep [HH:MM] → arr [HH:MM]" or "[Train Name] [Number] ([Class]) dep [HH:MM] → arr [HH:MM]", time:"HH:MM", duration:"Xh Ym", cost:Number}.
 3. If real trains were given above, use one of THOSE EXACTLY for any train leg — do not invent a different train number/name/timing for this route. If no real trains were given, or the user prefers flights, use REAL flight codes: Delhi→Mumbai: 6E-2116/6E-2647/UK-917/AI-865 | Rajdhani 12952(2A). Delhi→Bangalore: 6E-2191/6E-6036/AI-509 | Rajdhani 22691(2A). Delhi→Goa: 6E-2072/6E-5467/SG-325. Mumbai→Goa: 6E-6134/6E-5261/SG-673 | Jan Shatabdi 12051(CC). Mumbai→Jaipur: 6E-6358/UK-731/AI-647 | 12955(SL). Mumbai→Bangalore: 6E-5072/6E-2175/AI-614 | 16529(SL). Delhi→Jaipur: 6E-6231/UK-627 | Shatabdi 12015(CC). Delhi→Kolkata: 6E-2507/UK-705/AI-701 | 12302(2A). Delhi→Hyderabad: 6E-2841/AI-839 | 12724(2A). Mumbai→Kolkata: 6E-5053/UK-781 | 12859(SL). Any other route: pick plausible 6E-xxxx/UK-xxx/AI-xxx.
 4. Local transport (auto,bus,walk) goes in tips notes, NOT as activities.
 5. Budget must sum correctly across all days.
 6. Include 3-5 activities per day with real places, real timings, real costs in INR.
 7. "location" must ALWAYS be a plain string like "Taj Mahal, Agra". NEVER use GeoJSON objects.
 8. CRITICAL: Every activity, hotel, restaurant and hiddenGem MUST have real lat/lng coordinates — the ACTUAL GPS coordinates of that specific place. NEVER use 0,0. Example: Taj Mahal = lat:27.1751,lng:78.0421 | Gateway of India = lat:18.9220,lng:72.8347 | Hawa Mahal = lat:26.9239,lng:75.8267 | Radhanagar Beach = lat:12.0579,lng:92.9764. Use your knowledge to provide accurate coordinates for every location.
-9. TRANSPORT MODE: User explicitly chose "${prefs.join('/') || 'any'}".${isTrain ? ' You MUST use train for ALL inter-city travel. Do NOT suggest flights. Use real train numbers from the provided train data.' : isFlight ? ' Use flights for inter-city legs with real airline codes.' : ' Use appropriate transport for each leg.'}`;
+9. PACKING LIST — must be genuinely useful and specific to ${destination} during ${startDate} to ${endDate}:
+   a) Format: array of category objects, each with "category" (Title Case string) and "items" (array).
+   b) Each item has "name" (specific item), "reason" (WHY it is needed for THIS trip), "essential" (boolean), "quantity" (number).
+   c) Categories MUST be Title Case: "Clothing", "Essentials", "Toiletries", "Documents", "Electronics", "Destination-Specific", "Health & First Aid".
+   d) Items must reflect the ACTUAL season/weather at ${destination} during ${startDate} to ${endDate}. Do NOT suggest woolens for a summer Goa trip or cotton for a winter Himalayan trip.
+   e) Include destination-specific items based on what ${destination} is known for (temples? beaches? trekking? desert? nightlife?). For example: modest clothing for religious sites, trekking poles for mountain trips, rain gear for monsoon destinations, snorkeling mask for beach destinations.
+   f) Each "reason" must explain why the item is needed for THIS specific destination and season — NOT generic reasons like "for walking" or "useful". Be specific: "Rajasthan temples require covered shoulders and knees" or "Goa beaches have sharp coral — water shoes prevent cuts".
+   g) Include 15-25 items total across all categories. At least 3-4 items per category.
+   h) Mark truly essential items (passport, medications,适配器) as essential:true. Nice-to-haves as essential:false.
+10. SAFETY — must be genuinely researched and specific to ${destination}:
+    a) overallScore: Use your real knowledge of ${destination}'s actual safety conditions. Consider crime rates against tourists, political stability, health hazards, road safety, and natural disaster risk. Do NOT default to 8. Examples: Singapore ≈ 9, Jaipur ≈ 7, Kashmir border areas ≈ 5, Manila ≈ 5, Zurich ≈ 9, Rio de Janeiro ≈ 5. Vary it based on reality.
+    b) tips: 5-8 practical, destination-specific safety tips. NOT generic advice like "stay aware". Instead: "Jodhpur fort area has steep uneven steps — wear sturdy shoes", "Avoid drinking tap water in ${destination}, always buy sealed bottled water", "Kashmir: Check local advisories before visiting areas near the Line of Control".
+    c) scamAlerts: 2-4 REAL, known scams at this specific destination. Not "Common scam". Research what tourists actually report: e.g., "Fake 'government-approved' gem shops in Jaipur that pressure tourists into buying overpriced stones", "Taxi drivers in Goa who claim your hotel is closed and take you to a commission-paying alternative".
+    d) hospitals: 2-3 REAL hospitals near this destination with their actual names, approximate distance, and phone numbers. NOT "Nearest Hospital, 2km, phone: 0".
+    e) safeAreas: 2-3 specific neighborhoods/areas in ${destination} that are well-lit, tourist-friendly, and safe. Use real area names.
+    f) avoidAreas: 1-3 specific areas tourists should avoid, especially at night, with a brief reason WHY. Use real area/road names.
+    g) vaccinations: Any recommended or required vaccinations for this specific region/country. Empty array [] if none are typically recommended.
+    h) emergencyNumber: The ACTUAL emergency phone number for this destination's country/state (e.g., 112 for India, 911 for USA, 999 for UK, 100 for Indonesia police).`;
 
     const result = await generateAIJson(userPrompt, systemPrompt);
     const trip   = result.data as Record<string, unknown>;
@@ -207,6 +212,7 @@ RULES:
 
     const rawDays = (trip.itinerary ?? trip.days ?? []) as Record<string, unknown>[];
 
+    // ── Normalise day/activity shapes ──
     let normalisedDays = rawDays.map((d, i) => ({
       dayNumber:  d.dayNumber ?? d.day ?? i + 1,
       date:       d.date ?? '',
@@ -223,6 +229,11 @@ RULES:
       })),
     }));
 
+    /* ── GEOCODE: fill in real lat/lng before saving ──
+       This runs server-side so Nominatim is never blocked.
+       For a 3-day / 12-stop trip, adds ~13s — acceptable at generation time.
+       The map will then render immediately from stored coords, no geocoding needed
+       on the client at all. */
     console.log('[generate-trip] Starting server-side geocoding...');
     normalisedDays = await geocodeItinerary(normalisedDays, destination);
     console.log('[generate-trip] Geocoding complete.');
@@ -253,7 +264,7 @@ RULES:
     const itineraryPayload = {
       title:         trip.title ?? null,
       summary:       trip.summary ?? null,
-      days:          normalisedDays,
+      days:          normalisedDays,   // ← now includes real lat/lng
       hotels:        trip.hotels ?? [],
       restaurants:   trip.restaurants ?? [],
       hiddenGems:    trip.hiddenGems ?? [],
