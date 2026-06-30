@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { generateAIResponse } from "@/lib/ai";
 import { checkRateLimit, LIMITS } from "@/lib/rateLimit";
+import prisma from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { messages, tripContext } = await req.json();
+    const { messages, tripContext, tripId } = await req.json();
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json(
@@ -58,6 +59,21 @@ STRICT RULES:
     }
 
     const reply = await generateAIResponse(lastUserMessage.content, systemPrompt);
+
+    // Persist both messages so chat history survives navigation/reloads.
+    // Best-effort: a save failure shouldn't break the chat response itself.
+    if (tripId) {
+      try {
+        await prisma.chatMessage.createMany({
+          data: [
+            { tripId, role: "USER", content: lastUserMessage.content },
+            { tripId, role: "ASSISTANT", content: reply.content },
+          ],
+        });
+      } catch (saveErr) {
+        console.error("Failed to save chat messages:", saveErr);
+      }
+    }
 
     return NextResponse.json({
       success: true,
