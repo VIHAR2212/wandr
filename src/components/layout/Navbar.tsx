@@ -24,13 +24,33 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const router = useRouter();
   const pathname = usePathname();
 
   const isLoggedIn = !!session?.user;
   const showBack = SHOW_BACK.some((p) => pathname.startsWith(p));
   const hideLinks = HIDE_NAV_LINKS.some((p) => pathname.startsWith(p));
+
+  // Guard: return a neutral skeleton while NextAuth session is loading
+  // This prevents React #310 ("Cannot update a component while rendering a different component")
+  if (sessionStatus === 'loading') {
+    return (
+      <header className="fixed top-0 left-0 right-0 z-50 py-5">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex items-center justify-between rounded-2xl px-6 py-2">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-muted animate-pulse" />
+              <div className="h-6 w-16 bg-muted rounded animate-pulse" />
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-muted animate-pulse" />
+            </div>
+          </div>
+        </div>
+      </header>
+    );
+  }
 
   async function handleSignOut() {
     setMenuOpen(false);
