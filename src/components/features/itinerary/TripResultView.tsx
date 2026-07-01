@@ -144,33 +144,17 @@ function normalizeTripData(raw: any, tripId: string): TripData {
   const dayCount = Math.max(days.length, 1);
   const travelerCount = Math.max(Number(raw.travelers), 1);
 
-  // ── Transport cost resolution from activities ──
-  const sectorKey = resolveSectorKey(raw.destination || '');
-  const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
-  let computedTransportCost = Number(bb.transport) || 0;
-  if (computedTransportCost === 0 && days.length > 0) {
-    computedTransportCost = days.reduce((sum: number, day: any) => {
-      return sum + (day.activities || []).reduce((aSum: number, act: any) => {
-        const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
-        const isTrain = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('railway') || act.title?.toLowerCase().includes('rail'));
-        if (isFlight && communityFlight) return communityFlight.avgPrice;
-        if (isTrain) return estimateTrainCost(act.title || '');
-        return 0;
-      }, 0);
-    }, 0);
-  }
-
   const budget: any = {
-    actualCost: budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund)),
-    total: budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund)),
-    perDay: Math.round((budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund))) / dayCount),
-    perPerson: Math.round((budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund))) / travelerCount),
-    transport: computedTransportCost,
+    actualCost: budgetTotal,
+    total: budgetTotal,
+    perDay: Math.round(budgetTotal / dayCount),
+    perPerson: Math.round(budgetTotal / travelerCount),
+    transport: Number(bb.transport) || 0,
     accommodation: Number(bb.accommodation) || 0,
     food: Number(bb.food) || 0,
     activities: Number(bb.activities) || 0,
     miscellaneous: Number(bb.misc) || 0,
-    emergencyFund: Number(bb.emergencyFund) || 0,
+    emergencyFund: 0,
     breakdown: [] as any[],
   };
 
