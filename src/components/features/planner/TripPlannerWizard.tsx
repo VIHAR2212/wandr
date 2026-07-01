@@ -8,7 +8,7 @@ import {
   Hotel, Train, ChevronRight, ChevronLeft, Sparkles, Loader2, Wand2, X
 } from 'lucide-react';
 import type { TripFormData, TripPurpose, FoodPreference, HotelType, TransportType } from '@/types';
-import { cn, formatCurrency } from '@/lib/utils';
+import { cn, formatCurrency, safeSetItem } from '@/lib/utils';
 import { GlassFilter } from '@/components/ui/button';
 
 const STEPS = ['Route', 'Budget & Travelers', 'Purpose & Food', 'Accommodation', 'Review'];
@@ -481,7 +481,7 @@ export function TripPlannerWizard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate trip');
-      localStorage.setItem('generating_trip_id', data.tripId);
+      safeSetItem('generating_trip_id', data.tripId);
       window.location.href = `/trip/${data.tripId}`;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Something went wrong';
