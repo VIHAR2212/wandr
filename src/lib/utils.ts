@@ -78,3 +78,31 @@ export function safetyScoreLabel(score: number): string {
 export function truncate(str: string, n: number): string {
   return str.length > n ? str.slice(0, n - 1) + '…' : str;
 }
+
+// localStorage can throw — private/incognito browsing (notably Safari),
+// blocked storage settings, enterprise browser policies, or quota errors.
+// These wrappers turn that into a silent no-op instead of a client-side
+// crash that takes down the whole page.
+export function safeGetItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function safeSetItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore — storage unavailable
+  }
+}
+
+export function safeRemoveItem(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore — storage unavailable
+  }
+}
