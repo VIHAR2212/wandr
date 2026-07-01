@@ -107,7 +107,7 @@ function mapFeedback(f: RawFeedback): DisplayTestimonial {
 }
 
 export function TestimonialsSection() {
-  const { data: session, status: sessionStatus } = useSession();
+  const { data: session } = useSession();
   const router = useRouter();
 
   const [liveFeedback, setLiveFeedback] = useState<DisplayTestimonial[]>([]);
@@ -174,41 +174,6 @@ export function TestimonialsSection() {
   }
 
   const combined = [...liveFeedback, ...seedTestimonials].slice(0, 9);
-
-  // Guard: don't render session-dependent UI while NextAuth is loading
-  // This prevents React #310 on the homepage
-  if (sessionStatus === 'loading') {
-    return (
-      <section className="py-32">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center mb-16">
-            <div className="h-4 w-40 bg-muted rounded animate-pulse mx-auto mb-4" />
-            <div className="h-10 w-80 bg-muted rounded animate-pulse mx-auto mb-6" />
-            <div className="h-10 w-52 bg-muted rounded-2xl animate-pulse mx-auto" />
-          </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="glass-card p-7 flex flex-col gap-4">
-                <div className="h-4 w-24 bg-muted rounded animate-pulse" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-3 w-full bg-muted rounded animate-pulse" />
-                  <div className="h-3 w-5/6 bg-muted rounded animate-pulse" />
-                  <div className="h-3 w-4/6 bg-muted rounded animate-pulse" />
-                </div>
-                <div className="flex items-center gap-3 pt-2 border-t border-border">
-                  <div className="w-10 h-10 rounded-full bg-muted animate-pulse" />
-                  <div className="space-y-1">
-                    <div className="h-3 w-24 bg-muted rounded animate-pulse" />
-                    <div className="h-3 w-32 bg-muted rounded animate-pulse" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-    );
-  }
 
   return (
     <section className="py-32">
