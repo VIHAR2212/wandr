@@ -31,6 +31,31 @@ interface TripData {
 
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
+// ── Helper: Title Case conversion ──
+function toTitleCase(str: string): string {
+  return str.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ── Helper: estimate Indian train cost ──
+function estimateTrainCost(title: string): number {
+  const t = title.toLowerCase();
+  if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('vande bharat')) return 2000;
+  if (t.includes('express') || t.includes('superfast')) return 1200;
+  return 800;
+}
+
+// ── Helper: resolve sector key from destination ──
+function resolveSectorKey(destination: string): string {
+  const d = destination.toLowerCase();
+  if (d.includes('kochi') || d.includes('kerala')) return 'BOM-COK';
+  if (d.includes('jaipur')) return 'DEL-JAI';
+  if (d.includes('leh') || d.includes('ladakh')) return 'DEL-IXL';
+  if (d.includes('kolkata') || d.includes('andaman')) return 'CCU-IXZ';
+  if (d.includes('lisbon')) return 'BOM-LIS';
+  if (d.includes('kyoto') || d.includes('osaka')) return 'DEL-KIX';
+  return '';
+}
+
 function normalizeTripData(raw: any, tripId: string): TripData {
   const itineraryObj: any =
     raw.itinerary && typeof raw.itinerary === 'object' && !Array.isArray(raw.itinerary)
@@ -119,48 +144,57 @@ function normalizeTripData(raw: any, tripId: string): TripData {
   const dayCount = Math.max(days.length, 1);
   const travelerCount = Math.max(Number(raw.travelers), 1);
 
+  // ── Transport cost resolution from activities ──
+  const sectorKey = resolveSectorKey(raw.destination || '');
+  const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
+  let computedTransportCost = Number(bb.transport) || 0;
+  if (computedTransportCost === 0 && days.length > 0) {
+    computedTransportCost = days.reduce((sum: number, day: any) => {
+      return sum + (day.activities || []).reduce((aSum: number, act: any) => {
+        const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
+        const isTrain = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('railway') || act.title?.toLowerCase().includes('rail'));
+        if (isFlight && communityFlight) return communityFlight.avgPrice;
+        if (isTrain) return estimateTrainCost(act.title || '');
+        return 0;
+      }, 0);
+    }, 0);
+  }
+
   const budget: any = {
-    actualCost: budgetTotal,
-    total: budgetTotal,
-    perDay: Math.round(budgetTotal / dayCount),
-    perPerson: Math.round(budgetTotal / travelerCount),
-    transport: Number(bb.transport) || 0,
+    actualCost: budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund)),
+    total: budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund)),
+    perDay: Math.round((budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund))) / dayCount),
+    perPerson: Math.round((budgetTotal || (computedTransportCost + Number(bb.accommodation) + Number(bb.food) + Number(bb.activities) + Number(bb.misc) + Number(bb.emergencyFund))) / travelerCount),
+    transport: computedTransportCost,
     accommodation: Number(bb.accommodation) || 0,
     food: Number(bb.food) || 0,
     activities: Number(bb.activities) || 0,
     miscellaneous: Number(bb.misc) || 0,
-    emergencyFund: 0,
+    emergencyFund: Number(bb.emergencyFund) || 0,
     breakdown: [] as any[],
   };
 
-  // ── Packing list normalization ──
-  // Supports both new grouped format and old flat format.
-  // Always capitalizes category names (Title Case).
+  // ── EDIT 1: Packing normalization with Title Case ──
   const rawPacking = Array.isArray(raw.packingList) ? raw.packingList : [];
   let packingList: any[];
-  if (rawPacking.length > 0 && Array.isArray(rawPacking[0]?.items)) {
-    // New grouped format: [{category:"Clothing", items:[{name, reason, essential, quantity}]}]
+  if (rawPacking.length > 0 && rawPacking[0]?.category) {
     packingList = rawPacking.map((cat: any) => ({
       ...cat,
-      category: cat.category
-        ? cat.category.replace(/\b\w/g, (c: string) => c.toUpperCase())
-        : 'Other',
+      category: toTitleCase(cat.category || ''),
+      items: (cat.items || []).map((it: any) => ({
+        ...it,
+        name: toTitleCase(it.name || it.item || ''),
+        essential: it.essential ?? true,
+        quantity: it.quantity || 1,
+      })),
     }));
-  } else if (rawPacking.length > 0) {
-    // Old flat format: [{item:"Shoes", category:"clothing", essential:true, ...}]
-    const byCategory = new Map<string, any[]>();
-    rawPacking.forEach((p: any) => {
-      const cat = (p.category || 'Other').replace(/\b\w/g, (c: string) => c.toUpperCase());
-      if (!byCategory.has(cat)) byCategory.set(cat, []);
-      byCategory.get(cat)!.push({
-        name: p.item || p.name || '',
-        essential: !!p.essential,
-        quantity: p.quantity || 1,
-      });
-    });
-    packingList = Array.from(byCategory.entries()).map(([category, items]) => ({ category, items }));
   } else {
-    packingList = [];
+    const essentials = rawPacking.filter((p: any) => p.essential);
+    const optional = rawPacking.filter((p: any) => !p.essential);
+    packingList = [
+      { category: 'Essentials', items: essentials.map((p: any) => ({ name: toTitleCase(p.item || p.name || ''), essential: true, quantity: p.quantity || 1 })) },
+      { category: 'Optional', items: optional.map((p: any) => ({ name: toTitleCase(p.item || p.name || ''), essential: false, quantity: p.quantity || 1 })) },
+    ].filter((c: any) => c.items.length > 0);
   }
 
   const si: any = raw.safetyInfo || raw.safety || {};
@@ -274,16 +308,10 @@ export function TripResultView({ tripId }: { tripId: string }) {
     { id: 'chat', label: 'AI Chat', icon: MessageCircle },
   ];
 
-  // ── Train cost estimation (same logic as generateTripPdf.ts) ──
-  const estimateTrainCost = (title: string): number => {
-    const t = title.toLowerCase();
-    if (t.includes('shatabdi') || t.includes('rajdhani') || t.includes('duronto') || t.includes('vande bharat')) return 2000;
-    if (t.includes('express') || t.includes('superfast')) return 1200;
-    return 800;
-  };
-
+  // ── EDIT 2: handleDownloadPDF with null guard, sector key, communityFlight, train costs, Rs. fix ──
   function handleDownloadPDF() {
     if (!tripData) return;
+
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
@@ -291,7 +319,12 @@ export function TripResultView({ tripId }: { tripId: string }) {
     const usableW = pageW - margin * 2;
     let y = 0;
 
-    const fmtCur = (amt: number) => formatCurrency(amt, fd.currency);
+    // Rs. instead of ₹ for jsPDF compatibility
+    const fmtCur = (amt: number) => formatCurrency(amt, fd.currency).replace(/₹/g, 'Rs.');
+
+    // ---------- Sector & Community Flight for cost resolution ----------
+    const pdfSectorKey = resolveSectorKey(fd.destination);
+    const pdfCommunityFlight: any = pdfSectorKey ? (COMMUNITY_ROUTE_DB as any)?.[pdfSectorKey]?.[0] : null;
 
     // ---------- Color Palette ----------
     const C: Record<string, [number, number, number]> = {
@@ -487,57 +520,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
     y += 12;
 
     // ==================== DAY-BY-DAY ITINERARY ====================
-    const destLower = fd.destination?.toLowerCase() || '';
-    let sectorKey = '';
-    if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
-    else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
-    else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
-    else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
-    else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
-    else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
-    const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
-
-    // Pre-calculate transport cost distribution for inline PDF
-    const allTransportActs: any[] = [];
-    (trip.days ?? []).forEach((day: any) => {
-      (day.activities ?? []).forEach((a: any) => {
-        if ((a.type || '').toLowerCase() === 'transport') allTransportActs.push(a);
-      });
-    });
-    const transportBudget = Number(trip.budget?.transport) || 0;
-    const resolvedCostsMap = new Map<any, number>();
-    let knownTransportTotal = 0;
-    let zeroCostTransportCount = 0;
-    allTransportActs.forEach((act: any) => {
-      const baseCost = Number(act.cost) || 0;
-      if (baseCost > 0) {
-        resolvedCostsMap.set(act, baseCost);
-        knownTransportTotal += baseCost;
-      } else {
-        const title = (act.title || '').toLowerCase();
-        if (communityFlight && (title.includes('flight') || title.includes('arrival'))) {
-          const c = Number(communityFlight.avgPrice) || 0;
-          resolvedCostsMap.set(act, c);
-          knownTransportTotal += c;
-        } else if (title.includes('train')) {
-          const c = estimateTrainCost(act.title || '');
-          resolvedCostsMap.set(act, c);
-          knownTransportTotal += c;
-        } else {
-          zeroCostTransportCount++;
-        }
-      }
-    });
-    const surplus = Math.max(0, transportBudget - knownTransportTotal);
-    const distributedPerAct = zeroCostTransportCount > 0 ? Math.round(surplus / zeroCostTransportCount) : 0;
-    const getActCost = (act: any): number => {
-      const base = Number(act.cost) || 0;
-      if (base > 0) return base;
-      const resolved = resolvedCostsMap.get(act);
-      if (resolved !== undefined && resolved > 0) return resolved;
-      return (act.type || '').toLowerCase() === 'transport' ? distributedPerAct : 0;
-    };
-
     const days = trip.days ?? [];
     days.forEach((day, dayIdx) => {
       checkPage(40);
@@ -562,14 +544,19 @@ export function TripResultView({ tripId }: { tripId: string }) {
         autoTable(doc, {
           startY: y,
           head: [['Time', 'Activity', 'Location', 'Duration', 'Cost', 'Type']],
-          body: acts.map((act) => [
-            act.time || '--',
-            act.title || '',
-            act.location || '',
-            act.duration ? `${act.duration}m` : '',
-            fmtCur(getActCost(act)),
-            act.type || '',
-          ]),
+          body: acts.map((act) => {
+            const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
+            const isTrain = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('railway') || act.title?.toLowerCase().includes('rail'));
+            const cost = isFlight && pdfCommunityFlight ? pdfCommunityFlight.avgPrice : isTrain ? estimateTrainCost(act.title || '') : (Number(act.cost) || 0);
+            return [
+              act.time || '--',
+              act.title || '',
+              act.location || '',
+              act.duration ? `${act.duration}m` : '',
+              fmtCur(cost),
+              act.type || '',
+            ];
+          }),
           margin: { left: margin, right: margin },
           styles: { fontSize: 7.5, cellPadding: 2.5, textColor: [C.dark[0], C.dark[1], C.dark[2]], lineColor: [225, 230, 240], lineWidth: 0.2 },
           headStyles: {
@@ -590,19 +577,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
             5: { cellWidth: 20, halign: 'center' },
           },
           didDrawCell: (data: any) => {
-            // --- FIX: Cover default black text in Type column, then draw colored ---
             if (data.section === 'body' && data.column.index === 5) {
-              const isAlt = data.row.index % 2 === 1;
-              const bg = isAlt ? C.rowAlt : C.bg;
-              doc.setFillColor(bg[0], bg[1], bg[2]);
-              doc.rect(
-                data.cell.x + 0.3,
-                data.cell.y + 0.3,
-                data.cell.width - 0.6,
-                data.cell.height - 0.6,
-                'F',
-              );
-
               const typeColors: Record<string, number[]> = {
                 TRANSPORT: C.primaryLight,
                 SIGHTSEEING: C.accent,
@@ -612,11 +587,11 @@ export function TripResultView({ tripId }: { tripId: string }) {
                 ACCOMMODATION: [59, 130, 246],
                 REST: C.light,
               };
-              const col = typeColors[String(data.cell.raw).toUpperCase()] || C.mid;
+              const col = typeColors[data.cell.raw] || C.mid;
               doc.setTextColor(col[0], col[1], col[2]);
               doc.setFontSize(6.5);
               doc.setFont('helvetica', 'bold');
-              doc.text(String(data.cell.raw), data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 1.2, { align: 'center' });
+              doc.text(data.cell.raw, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 + 1.2, { align: 'center' });
             }
             if (data.section === 'body' && data.column.index === 4) {
               doc.setTextColor(C.primary[0], C.primary[1], C.primary[2]);
@@ -850,29 +825,24 @@ export function TripResultView({ tripId }: { tripId: string }) {
           {activeTab === 'itinerary' && (
             <div className="space-y-4">
               {(trip.days ?? []).map((day: TripDay) => {
-                const destLower = fd.destination?.toLowerCase() || '';
-                let sectorKey = '';
-                if (destLower.includes('kochi') || destLower.includes('kerala')) sectorKey = 'BOM-COK';
-                else if (destLower.includes('jaipur')) sectorKey = 'DEL-JAI';
-                else if (destLower.includes('leh') || destLower.includes('ladakh')) sectorKey = 'DEL-IXL';
-                else if (destLower.includes('kolkata') || destLower.includes('andaman')) sectorKey = 'CCU-IXZ';
-                else if (destLower.includes('lisbon')) sectorKey = 'BOM-LIS';
-                else if (destLower.includes('kyoto') || destLower.includes('osaka')) sectorKey = 'DEL-KIX';
-                const communityFlight: any = sectorKey ? (COMMUNITY_ROUTE_DB as any)?.[sectorKey]?.[0] : null;
+                // ── Sector key & community flight (shared for this day) ──
+                const communityFlight: any = (() => {
+                  const sk = resolveSectorKey(fd.destination);
+                  return sk ? (COMMUNITY_ROUTE_DB as any)?.[sk]?.[0] : null;
+                })();
 
-                const displayDayCost = (day.activities ?? []).reduce((sum: number, act: any) => {
+                // ── EDIT 3: displayDayCost with train cost estimation ──
+                const displayDayCost = Number(day.totalCost) || (day.activities ?? []).reduce((sum: number, act: any) => {
                   const baseCost = Number(act.cost) || 0;
-                  if (baseCost > 0) return sum + baseCost;
-                  const title = (act.title || '').toLowerCase();
-                  const type = (act.type || '').toLowerCase();
-                  if (type !== 'transport') return sum;
-                  if (communityFlight && (title.includes('flight') || title.includes('arrival'))) {
-                    return sum + (Number(communityFlight.avgPrice) || 0);
+                  const isFlight = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
+                  const isTrain = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('railway') || act.title?.toLowerCase().includes('rail'));
+                  let cost = baseCost;
+                  if (isFlight && communityFlight) {
+                    cost = communityFlight.avgPrice;
+                  } else if (isTrain) {
+                    cost = estimateTrainCost(act.title || '');
                   }
-                  if (title.includes('train')) {
-                    return sum + estimateTrainCost(act.title || '');
-                  }
-                  return sum;
+                  return sum + cost;
                 }, 0);
 
                 return (
@@ -909,19 +879,16 @@ export function TripResultView({ tripId }: { tripId: string }) {
                               <p className="text-sm text-muted-foreground mb-6 pb-4 border-t border-border pt-4">{day.summary}</p>
                             )}
                             <div className="relative space-y-0">
+                              {/* ── EDIT 4: Activity rendering with isFlightRow + isTrainRow ── */}
                               {(day.activities ?? []).map((act: any, i: number) => {
                                 const isFlightRow = day.dayNumber === 1 && act.type === 'transport' && (act.title?.toLowerCase().includes('flight') || act.title?.toLowerCase().includes('arrival'));
-                                const isTrainRow = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('shatabdi') || act.title?.toLowerCase().includes('rajdhani') || act.title?.toLowerCase().includes('vande bharat') || act.title?.toLowerCase().includes('express'));
+                                const isTrainRow = act.type === 'transport' && (act.title?.toLowerCase().includes('train') || act.title?.toLowerCase().includes('railway') || act.title?.toLowerCase().includes('rail'));
 
-                                let finalTitle = act.title;
-                                let finalDesc = act.description;
-                                let finalCost = Number(act.cost) || 0;
+                                const finalTitle = isFlightRow && communityFlight ? `Flight via ${communityFlight.airline}` : act.title;
+                                const finalDesc = isFlightRow && communityFlight ? `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}` : act.description;
 
-                                if (isFlightRow && communityFlight) {
-                                  finalTitle = `Flight via ${communityFlight.airline}`;
-                                  finalDesc = `${communityFlight.flightNo} · ${communityFlight.aircraft} (${communityFlight.duration}). ${act.description}`;
-                                  finalCost = Number(communityFlight.avgPrice) || 0;
-                                } else if (isTrainRow && finalCost === 0) {
+                                let finalCost = isFlightRow && communityFlight ? communityFlight.avgPrice : (Number(act.cost) || 0);
+                                if (isTrainRow && finalCost === 0) {
                                   finalCost = estimateTrainCost(act.title || '');
                                 }
 
@@ -942,7 +909,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
                                           </div>
                                           <h4 className="font-medium text-foreground">{finalTitle}</h4>
                                         </div>
-                                        {(finalCost > 0 || act.type === 'transport') && (
+                                        {finalCost > 0 && (
                                           <span className="text-sm font-semibold text-primary whitespace-nowrap">{formatCurrency(finalCost, fd.currency)}</span>
                                         )}
                                       </div>
