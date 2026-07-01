@@ -11,7 +11,7 @@ import { TripChat } from '@/components/features/chat/TripChat';
 import SendToWhatsAppButton from "@/components/trip/SendToWhatsAppButton";
 import { TrackingOverlay } from '@/components/features/tracking/TrackingOverlay';
 import LiquidLoading from '@/components/features/itinerary/LiquidLoading';
-import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safetyScoreColor, safetyScoreLabel } from '@/lib/utils';
+import { formatCurrency, formatDate, activityTypeIcon, activityTypeColor, safetyScoreColor, safetyScoreLabel, safeGetItem, safeRemoveItem } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import type { TripFormData, GeneratedTrip, TripDay } from '@/types';
 import COMMUNITY_ROUTE_DB from '@/lib/flightDatabase.json';
@@ -28,6 +28,8 @@ interface TripData {
   destLat?: number | null;
   destLng?: number | null;
 }
+
+
 
 type Tab = 'itinerary' | 'map' | 'budget' | 'hotels' | 'food' | 'packing' | 'safety' | 'chat';
 
@@ -199,9 +201,9 @@ export function TripResultView({ tripId }: { tripId: string }) {
         if (d.trip) {
           const normalized = normalizeTripData(d.trip, tripId);
           setTripData(normalized);
-          localStorage.removeItem('generating_trip_id');
+          safeRemoveItem('generating_trip_id');
         } else {
-          const generatingId = localStorage.getItem('generating_trip_id');
+          const generatingId = safeGetItem('generating_trip_id');
           if (generatingId === tripId) {
             setError('__GENERATING__');
           } else {
@@ -221,7 +223,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
     const timeout = setTimeout(() => {
       clearInterval(timer);
       setError('Trip generation is taking too long. Please try again.');
-      localStorage.removeItem('generating_trip_id');
+      safeRemoveItem('generating_trip_id');
     }, 5 * 60 * 1000);
     return () => { clearInterval(timer); clearTimeout(timeout); };
   }, [error, loadTrip]);
