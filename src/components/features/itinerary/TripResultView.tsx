@@ -297,6 +297,9 @@ export function TripResultView({ tripId }: { tripId: string }) {
 
   const { formData: fd, generatedTrip: trip } = tripData;
 
+  // TripChat shared message state
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'itinerary', label: 'Itinerary', icon: Calendar },
     { id: 'map', label: 'Map', icon: MapPin },
@@ -1373,7 +1376,7 @@ export function TripResultView({ tripId }: { tripId: string }) {
           })()}
 
           {/* CHAT */}
-          {activeTab === 'chat' && <TripChat tripId={tripId} tripContext={fd} />}
+          {activeTab === 'chat' && <TripChat tripId={tripId} tripContext={fd} messages={chatMessages} setMessages={setChatMessages} />}
         </motion.div>
       </AnimatePresence>
 
