@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { Toaster } from 'sonner';
 import { SessionProvider } from 'next-auth/react';
+import { SessionWrapper } from '@/components/SessionWrapper';
 import '@/styles/globals.css';
 
 const inter = Inter({
@@ -49,15 +50,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <body className="min-h-screen">
         <SessionProvider>
-          <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange={false}>
-            {children}
-            <Toaster
-              position="top-right"
-              expand
-              richColors
-              toastOptions={{ style: { borderRadius: '16px', backdropFilter: 'blur(24px)' } }}
-            />
-          </ThemeProvider>
+          <SessionWrapper>
+            <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange={false}>
+              {children}
+              <Toaster
+                position="top-right"
+                expand
+                richColors
+                toastOptions={{ style: { borderRadius: '16px', backdropFilter: 'blur(24px)' } }}
+              />
+            </ThemeProvider>
+          </SessionWrapper>
         </SessionProvider>
       </body>
     </html>
