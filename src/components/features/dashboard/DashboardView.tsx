@@ -333,11 +333,22 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
 
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 export function DashboardView() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // Guard: don't render session-dependent UI while NextAuth is loading
+  if (sessionStatus === 'loading') {
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-20">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => <div key={i} className="skeleton h-64 rounded-3xl" />)}
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     fetch('/api/trips')
