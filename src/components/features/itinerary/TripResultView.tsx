@@ -56,6 +56,13 @@ function resolveSectorKey(destination: string): string {
   return '';
 }
 
+function str(v: any): string {
+  if (typeof v === 'string') return v;
+  if (v == null) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
 function normalizeTripData(raw: any, tripId: string): TripData {
   const itineraryObj: any =
     raw.itinerary && typeof raw.itinerary === 'object' && !Array.isArray(raw.itinerary)
@@ -84,18 +91,18 @@ function normalizeTripData(raw: any, tripId: string): TripData {
   const days: TripDay[] = rawDays.map((d: any, i: number) => ({
     dayNumber: d.day || i + 1,
     date: d.date || '',
-    theme: d.theme || `Day ${i + 1}`,
-    summary: d.summary || '',
+    theme: str(d.theme) || `Day ${i + 1}`,
+    summary: str(d.summary) || '',
     totalCost: (d.activities || []).reduce((s: number, a: any) => s + (Number(a.cost) || 0), 0),
     activities: (d.activities || []).map((a: any) => ({
-      time: a.time || '',
-      title: a.title || '',
-      description: a.description || '',
-      location: a.location || '',
+      time: str(a.time),
+      title: str(a.title),
+      description: str(a.description),
+      location: str(a.location),
       cost: Number(a.cost) || 0,
       type: a.type || 'sightseeing',
       duration: a.duration || null,
-      notes: a.tips || a.notes || '',
+      notes: str(a.tips || a.notes),
       lat: a.lat || null,
       lng: a.lng || null,
     })),
@@ -103,40 +110,40 @@ function normalizeTripData(raw: any, tripId: string): TripData {
 
   const rawHotels = Array.isArray(itineraryObj.hotels) ? itineraryObj.hotels : [];
   const hotels = rawHotels.map((h: any) => ({
-    name: h.name || '',
-    type: h.area || h.type || '',
+    name: str(h.name),
+    type: str(h.area || h.type),
     pricePerNight: Number(h.pricePerNight) || 0,
-    location: h.area || h.location || '',
+    location: str(h.area || h.location),
     rating: Number(h.rating) || 0,
     amenities: Array.isArray(h.amenities) ? h.amenities : [],
-    pros: h.description ? [h.description] : (Array.isArray(h.pros) ? h.pros : []),
-    cons: Array.isArray(h.cons) ? h.cons : [],
-    bookingUrl: h.bookingUrl || '',
+    pros: h.description ? [str(h.description)] : (Array.isArray(h.pros) ? h.pros.map(str) : []),
+    cons: Array.isArray(h.cons) ? h.cons.map(str) : [],
+    bookingUrl: str(h.bookingUrl),
     lat: h.lat || null,
     lng: h.lng || null,
   }));
 
   const rawRestaurants = Array.isArray(itineraryObj.restaurants) ? itineraryObj.restaurants : [];
   const restaurants = rawRestaurants.map((r: any) => ({
-    name: r.name || '',
-    cuisine: r.cuisine || '',
-    priceRange: r.priceRange || '',
-    location: r.location || '',
+    name: str(r.name),
+    cuisine: str(r.cuisine),
+    priceRange: str(r.priceRange),
+    location: str(r.location),
     rating: Number(r.rating) || 0,
-    openingHours: r.openingHours || '',
-    mustTry: Array.isArray(r.mustTry) ? r.mustTry : (typeof r.mustTry === 'string' ? [r.mustTry] : []),
+    openingHours: str(r.openingHours),
+    mustTry: Array.isArray(r.mustTry) ? r.mustTry.map(str) : (typeof r.mustTry === 'string' ? [r.mustTry] : []),
     lat: r.lat || null,
     lng: r.lng || null,
   }));
 
   const rawGems = Array.isArray(itineraryObj.hiddenGems) ? itineraryObj.hiddenGems : [];
   const hiddenGems = rawGems.map((g: any) => ({
-    name: g.name || '',
-    crowdLevel: g.crowdLevel || 'LOW',
-    description: g.description || '',
-    location: g.howToReach || g.location || '',
-    bestTime: g.bestTime || '',
-    insiderTip: g.whySpecial || g.insiderTip || g.why || '',
+    name: str(g.name),
+    crowdLevel: str(g.crowdLevel) || 'LOW',
+    description: str(g.description),
+    location: str(g.howToReach || g.location),
+    bestTime: str(g.bestTime),
+    insiderTip: str(g.whySpecial || g.insiderTip || g.why),
   }));
 
   const bb: any = raw.budgetBreakdown || {};
@@ -164,10 +171,10 @@ function normalizeTripData(raw: any, tripId: string): TripData {
   if (rawPacking.length > 0 && rawPacking[0]?.category) {
     packingList = rawPacking.map((cat: any) => ({
       ...cat,
-      category: toTitleCase(cat.category || ''),
+      category: toTitleCase(str(cat.category)),
       items: (cat.items || []).map((it: any) => ({
         ...it,
-        name: toTitleCase(it.name || it.item || ''),
+        name: toTitleCase(str(it.name || it.item)),
         essential: it.essential ?? true,
         quantity: it.quantity || 1,
       })),
@@ -184,18 +191,18 @@ function normalizeTripData(raw: any, tripId: string): TripData {
   const si: any = raw.safetyInfo || raw.safety || {};
   const safety: any = {
     overallScore: Number(si.overallScore) || 0,
-    scamAlerts: Array.isArray(si.scamAlerts) ? si.scamAlerts : [],
-    emergencyContacts: Array.isArray(si.emergencyContacts) ? si.emergencyContacts : (si.emergencyNumber ? [{ name: 'Emergency', number: String(si.emergencyNumber) }] : []),
-    hospitals: Array.isArray(si.hospitals) ? si.hospitals : [],
-    safeAreas: Array.isArray(si.safeAreas) ? si.safeAreas : [],
-    avoidAreas: Array.isArray(si.avoidAreas) ? si.avoidAreas : [],
-    vaccinations: Array.isArray(si.vaccinations) ? si.vaccinations : [],
-    tips: Array.isArray(si.tips) ? si.tips : [],
+    scamAlerts: Array.isArray(si.scamAlerts) ? si.scamAlerts.map(str) : [],
+    emergencyContacts: Array.isArray(si.emergencyContacts) ? si.emergencyContacts.map((c: any) => ({ name: str(c.name), number: str(c.number) })) : (si.emergencyNumber ? [{ name: 'Emergency', number: String(si.emergencyNumber) }] : []),
+    hospitals: Array.isArray(si.hospitals) ? si.hospitals.map(str) : [],
+    safeAreas: Array.isArray(si.safeAreas) ? si.safeAreas.map(str) : [],
+    avoidAreas: Array.isArray(si.avoidAreas) ? si.avoidAreas.map(str) : [],
+    vaccinations: Array.isArray(si.vaccinations) ? si.vaccinations.map(str) : [],
+    tips: Array.isArray(si.tips) ? si.tips.map(str) : [],
   };
 
   const generatedTrip: GeneratedTrip = {
-    title: itineraryObj.title || raw.title || `Trip to ${raw.destination || 'Unknown'}`,
-    summary: itineraryObj.summary || `A ${dayCount}-day trip to ${raw.destination || 'Unknown'}`,
+    title: str(itineraryObj.title || raw.title) || `Trip to ${raw.destination || 'Unknown'}`,
+    summary: str(itineraryObj.summary) || `A ${dayCount}-day trip to ${raw.destination || 'Unknown'}`,
     days,
     hotels,
     restaurants,
