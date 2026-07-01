@@ -193,6 +193,11 @@ export function TripResultView({ tripId }: { tripId: string }) {
   const [showTracking, setShowTracking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Must be declared here, before any early return below — hooks can never
+  // run conditionally. Declaring this after the early returns caused React
+  // error #310 (hook count mismatch between the loading render and the
+  // loaded render).
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
 
   const loadTrip = useCallback(() => {
     fetch(`/api/trips/${tripId}`)
@@ -247,9 +252,6 @@ export function TripResultView({ tripId }: { tripId: string }) {
   );
 
   const { formData: fd, generatedTrip: trip } = tripData;
-
-  // TripChat shared message state
-  const [chatMessages, setChatMessages] = useState<any[]>([]);
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'itinerary', label: 'Itinerary', icon: Calendar },
