@@ -167,33 +167,22 @@ function LiquidGlassTrashZone({ isDragging, onDrop }: TrashZoneProps) {
           <div
             className={cn(
               'relative w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 overflow-hidden',
-              // The frosted glass base
               'bg-white/[0.06] dark:bg-white/[0.04]',
-              // Inset highlight ring
               isOver
                 ? 'ring-2 ring-red-400/60 ring-inset'
                 : 'ring-1 ring-white/20 ring-inset',
-              // Deep shadow stack mimicking the LiquidButton from 21st.dev
               isOver
                 ? 'shadow-[0_0_6px_rgba(239,68,68,0.05),0_2px_8px_rgba(239,68,68,0.15),inset_3px_3px_0.5px_-3px_rgba(0,0,0,0.9),inset_-3px_-3px_0.5px_-3px_rgba(0,0,0,0.85),inset_0_0_6px_6px_rgba(239,68,68,0.08),inset_0_0_2px_2px_rgba(239,68,68,0.04),0_0_16px_rgba(239,68,68,0.2)]'
                 : 'shadow-[0_0_6px_rgba(0,0,0,0.03),0_2px_6px_rgba(0,0,0,0.08),inset_3px_3px_0.5px_-3px_rgba(0,0,0,0.9),inset_-3px_-3px_0.5px_-3px_rgba(0,0,0,0.85),inset_1px_1px_1px_-0.5px_rgba(0,0,0,0.6),inset_-1px_-1px_1px_-0.5px_rgba(0,0,0,0.6),inset_0_0_6px_6px_rgba(0,0,0,0.12),inset_0_0_2px_2px_rgba(0,0,0,0.06),0_0_12px_rgba(255,255,255,0.1)]',
-              // Scale up slightly on hover
               isOver ? 'scale-110' : 'scale-100'
             )}
           >
-            {/* Backdrop blur distortion layer — the actual "liquid glass" lens */}
             <div
               className="absolute inset-0 rounded-full"
               style={{ backdropFilter: 'url("#trash-glass") blur(8px)' }}
             />
-
-            {/* Top specular highlight — the glass "shine" */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-5 rounded-b-full bg-gradient-to-b from-white/25 to-transparent pointer-events-none" />
-
-            {/* Bottom inner shadow */}
             <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-4 rounded-t-full bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
-
-            {/* Trash icon */}
             <motion.div
               className="relative z-10 pointer-events-none"
               animate={
@@ -215,7 +204,6 @@ function LiquidGlassTrashZone({ isDragging, onDrop }: TrashZoneProps) {
             </motion.div>
           </div>
 
-          {/* Drop hint label */}
           <motion.p
             className={cn(
               'absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-medium transition-colors duration-200',
@@ -255,12 +243,10 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
   const handleDragEnd = () => {
     setIsDraggingThis(false);
     onDragEnd();
-    // Reset after a tick so click handler sees correct value
     setTimeout(() => { didDragRef.current = false; }, 50);
   };
 
   const handleClick = () => {
-    // Only navigate if we didn't just drag
     if (!didDragRef.current) {
       router.push(`/trip/${trip.id}`);
     }
@@ -283,7 +269,6 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
         )}
         style={{ userSelect: 'none' }}
       >
-      {/* Status + Purpose */}
       <div className="flex items-center justify-between mb-4">
         <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', STATUS_COLORS[trip.status] ?? STATUS_COLORS.PLANNING)}>
           {trip.status}
@@ -291,7 +276,6 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
         <span className="text-xl">{PURPOSE_EMOJI[trip.purpose] ?? '✈️'}</span>
       </div>
 
-      {/* Route */}
       <h3 className="font-bold text-foreground text-lg mb-1 group-hover:text-primary transition-colors">
         {trip.title || `${trip.origin} → ${trip.destination}`}
       </h3>
@@ -300,7 +284,6 @@ function DraggableTripCard({ trip, index, onDragStart, onDragEnd }: DraggableTri
         {trip.origin} → {trip.destination}
       </div>
 
-      {/* Details */}
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div>
           <div className="text-2xs text-muted-foreground flex items-center gap-1 mb-0.5">
@@ -339,17 +322,6 @@ export function DashboardView() {
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
-  // Guard: don't render session-dependent UI while NextAuth is loading
-  if (sessionStatus === 'loading') {
-    return (
-      <div className="max-w-7xl mx-auto px-6 py-20">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3].map(i => <div key={i} className="skeleton h-64 rounded-3xl" />)}
-        </div>
-      </div>
-    );
-  }
-
   useEffect(() => {
     fetch('/api/trips')
       .then(r => r.json())
@@ -359,14 +331,11 @@ export function DashboardView() {
   }, []);
 
   const handleDeleteTrip = async (tripId: string) => {
-    // Optimistic removal
     setTrips(prev => prev.filter(t => t.id !== tripId));
     setDraggingId(null);
-
     try {
       await fetch(`/api/trips/${tripId}`, { method: 'DELETE' });
     } catch {
-      // Optionally: refetch to restore if API fails
       fetch('/api/trips')
         .then(r => r.json())
         .then(d => setTrips(d.trips ?? []));
@@ -383,26 +352,34 @@ export function DashboardView() {
     totalBudget: trips.reduce((s, t) => s + t.budget, 0),
   };
 
+  // Show skeleton while session is still loading (handled by SessionWrapper at root,
+  // but this is a safe fallback)
+  if (sessionStatus === 'loading') {
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-20">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => <div key={i} className="skeleton h-64 rounded-3xl" />)}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      {/* Hidden SVG filter — must be in DOM for backdrop-filter to reference */}
       <GlassFilter />
 
-      {/* Floating liquid glass trash zone */}
       <LiquidGlassTrashZone
         isDragging={draggingId !== null}
         onDrop={handleDeleteTrip}
       />
 
       <div className="max-w-7xl mx-auto px-6">
-        {/* Greeting */}
         <div className="mb-8">
           <p className="text-lg text-muted-foreground">
             {getGreeting(session?.user?.name || '')}
           </p>
         </div>
 
-        {/* Header */}
         <div className="flex items-center justify-between mb-10">
           <div>
             <h1 className="text-display text-3xl sm:text-4xl font-bold text-foreground mb-2">My Trips</h1>
@@ -414,7 +391,6 @@ export function DashboardView() {
           </Link>
         </div>
 
-        {/* Stats */}
         <motion.div
           className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8"
           initial={{ opacity: 0, y: 16 }}
@@ -435,7 +411,6 @@ export function DashboardView() {
           ))}
         </motion.div>
 
-        {/* Filter tabs */}
         <div className="flex gap-1 mb-6 overflow-x-auto pb-1">
           {filters.map(f => (
             <button
@@ -458,7 +433,6 @@ export function DashboardView() {
           ))}
         </div>
 
-        {/* Drag hint — shows when there are trips */}
         {!loading && trips.length > 0 && (
           <p className="text-xs text-muted-foreground/50 mb-4 flex items-center gap-1.5">
             <Trash2 className="w-3 h-3" />
@@ -466,7 +440,6 @@ export function DashboardView() {
           </p>
         )}
 
-        {/* Trip Grid */}
         {loading ? (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => <div key={i} className="skeleton h-64 rounded-3xl" />)}
